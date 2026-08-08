@@ -16,10 +16,57 @@
 
 static std::string G_DefaultReadEncoding = "UTF-8";
 
+// 严格校验 UTF-8 序列（含多字节字符的完整性与合法性）
+static bool isValidUTF8(const unsigned char *raw, size_t size) {
+    size_t i = 0;
+    while(i < size) {
+        unsigned char c = raw[i];
+        if(c < 0x80) {
+            i++;
+        } else if(c >= 0xC2 && c <= 0xDF) {
+            if(i + 1 >= size || (raw[i + 1] & 0xC0) != 0x80)
+                return false;
+            i += 2;
+        } else if(c >= 0xE0 && c <= 0xEF) {
+            if(i + 2 >= size || (raw[i + 1] & 0xC0) != 0x80 ||
+               (raw[i + 2] & 0xC0) != 0x80)
+                return false;
+            if(c == 0xE0 && raw[i + 1] < 0xA0)
+                return false;
+            if(c == 0xED && raw[i + 1] >= 0xA0)
+                return false;
+            i += 3;
+        } else if(c >= 0xF0 && c <= 0xF4) {
+            if(i + 3 >= size || (raw[i + 1] & 0xC0) != 0x80 ||
+               (raw[i + 2] & 0xC0) != 0x80 || (raw[i + 3] & 0xC0) != 0x80)
+                return false;
+            if(c == 0xF0 && raw[i + 1] < 0x90)
+                return false;
+            if(c == 0xF4 && raw[i + 1] >= 0x90)
+                return false;
+            i += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::string checkTextEncoding(const void *buf, size_t size,
                               std::uint8_t &bomSize) {
     auto raw = static_cast<const unsigned char *>(buf);
     std::string encoding;
+    // uchardet 对几乎纯 ASCII 的短文本（如立绘 .stand 配置）经常无法判定
+    // 或误判。若内容含非 ASCII 高位字节，说明是日文 SJIS/cp932 编码
+    // （日本游戏脚本常见），按 cp932 解析更稳妥；全 ASCII 才按 ASCII 处理。
+    auto hasHighByte = [&]() {
+        for(size_t i = 0; i < size; ++i) {
+            if(raw[i] >= 0x80) {
+                return true;
+            }
+        }
+        return false;
+    };
     // --- 检查 BOM ---
     if(size >= 2 && raw[0] == 0xFF && raw[1] == 0xFE) {
         // UTF-16LE BOM
@@ -52,18 +99,17 @@ std::string checkTextEncoding(const void *buf, size_t size,
         uchardet_delete(ud);
         if(encoding == "SHIFT_JIS") {
             encoding = "cp932";
-        } else if(encoding == "WINDOWS-1252") {
-            // uchardet 对几乎纯 ASCII 的短文本（如立绘 .stand 配置）常误判
-            // 为 WINDOWS-1252。此时若有非 ASCII 高位字节，说明是日文
-            // SJIS/cp932 编码（日本游戏脚本常见），按 cp932 解析更稳妥。
-            bool hasHighByte = false;
-            for(size_t i = 0; i < size; ++i) {
-                if(raw[i] >= 0x80) {
-                    hasHighByte = true;
-                    break;
-                }
+        } else if(encoding == "WINDOWS-1252" || encoding.empty()) {
+            // WINDOWS-1252 是 uchardet 的常见误判；空则是完全无法判定。
+            // 两者都按内容决定：严格合法 UTF-8 → UTF-8；含高位字节的
+            // 日文 SJIS → cp932；否则 ASCII。
+            if(!hasHighByte()) {
+                encoding = "ASCII";
+            } else if(isValidUTF8(raw, size)) {
+                encoding = "UTF-8";
+            } else {
+                encoding = "cp932";
             }
-            encoding = hasHighByte ? "cp932" : "ASCII";
         }
     }
 
