@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cmake/**'
+      - 'cpp/**'
+      - 'platforms/**'
+      - 'vcpkg/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'cmake/**'
+      - 'cpp/**'
+      - 'platforms/**'
+      - 'vcpkg/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format-check:
+    uses: ./.github/workflows/code-format-check.yml
+
+  build-linux:
+    needs: format-check
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+
+  build-windows:
+    needs: format-check
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+
+  build-android:
+    needs: format-check
+    uses: ./.github/workflows/build-android.yml
+    secrets: inherit

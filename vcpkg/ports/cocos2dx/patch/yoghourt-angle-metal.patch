@@ -1,0 +1,615 @@
+diff --git a/cocos/platform/CCGLView.h b/cocos/platform/CCGLView.h
+index 36f2fdf..8ebba52 100644
+--- a/cocos/platform/CCGLView.h
++++ b/cocos/platform/CCGLView.h
+@@ -433,7 +433,6 @@ public:
+ 
+ #if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
+     virtual id getCocoaWindow() = 0;
+-    virtual id getNSGLContext() = 0; // stevetranby: added
+ #endif /* (CC_TARGET_PLATFORM == CC_PLATFORM_MAC) */
+ 
+     /**
+diff --git a/cocos/platform/desktop/CCGLViewImpl-desktop.cpp b/cocos/platform/desktop/CCGLViewImpl-desktop.cpp
+index 74e2ca7..e0b2671 100644
+--- a/cocos/platform/desktop/CCGLViewImpl-desktop.cpp
++++ b/cocos/platform/desktop/CCGLViewImpl-desktop.cpp
+@@ -27,8 +27,16 @@ THE SOFTWARE.
+ #include "platform/desktop/CCGLViewImpl-desktop.h"
+ 
+ #include <cmath>
++#include <cstring>
+ #include <unordered_map>
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++#import <AppKit/AppKit.h>
++#import <QuartzCore/QuartzCore.h>
++#include <EGL/eglext.h>
++#include <EGL/eglext_angle.h>
++#endif
++
+ #include "platform/CCApplication.h"
+ #include "base/CCDirector.h"
+ #include "base/CCTouch.h"
+@@ -226,6 +234,14 @@ GLViewImpl::~GLViewImpl()
+ {
+     CCLOGINFO("deallocing GLViewImpl: %p", this);
+     GLFWEventHandler::setGLViewImpl(nullptr);
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    destroyANGLEMetal();
++#endif
++    if (_mainWindow)
++    {
++        glfwDestroyWindow(_mainWindow);
++        _mainWindow = nullptr;
++    }
+     glfwTerminate();
+ }
+ 
+@@ -285,14 +301,17 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+     _frameZoomFactor = frameZoomFactor;
+ 
+     glfwWindowHint(GLFW_RESIZABLE,resizable?GL_TRUE:GL_FALSE);
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
++#else
+     glfwWindowHint(GLFW_RED_BITS,_glContextAttrs.redBits);
+     glfwWindowHint(GLFW_GREEN_BITS,_glContextAttrs.greenBits);
+     glfwWindowHint(GLFW_BLUE_BITS,_glContextAttrs.blueBits);
+     glfwWindowHint(GLFW_ALPHA_BITS,_glContextAttrs.alphaBits);
+     glfwWindowHint(GLFW_DEPTH_BITS,_glContextAttrs.depthBits);
+     glfwWindowHint(GLFW_STENCIL_BITS,_glContextAttrs.stencilBits);
+-    
+     glfwWindowHint(GLFW_SAMPLES, _glContextAttrs.multisamplingCount);
++#endif
+ 
+     int neededWidth = rect.size.width * _frameZoomFactor;
+     int neededHeight = rect.size.height * _frameZoomFactor;
+@@ -333,7 +352,12 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+         rect.size.height = realH / _frameZoomFactor;
+     }
+ 
++    if (!initANGLEMetal())
++    {
++        MessageBox("ANGLE Metal renderer initialization failed. See stderr for EGL diagnostics.",
++                   "Renderer initialization failed");
++        return false;
++    }
+-    glfwMakeContextCurrent(_mainWindow);
+ 
+     glfwSetMouseButtonCallback(_mainWindow, GLFWEventHandler::onGLFWMouseCallBack);
+     glfwSetCursorPosCallback(_mainWindow, GLFWEventHandler::onGLFWMouseMoveCallBack);
+@@ -346,12 +374,14 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+     glfwSetWindowIconifyCallback(_mainWindow, GLFWEventHandler::onGLFWWindowIconifyCallback);
+     glfwSetWindowFocusCallback(_mainWindow, GLFWEventHandler::onGLFWWindowFocusCallback);
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    if (!updateANGLESurfaceSize())
++        return false;
++#else
+     setFrameSize(rect.size.width, rect.size.height);
+ 
+-    // check OpenGL version at first
+     const GLubyte* glVersion = glGetString(GL_VERSION);
+-
+-    if ( utils::atof((const char*)glVersion) < 1.5 )
++    if (utils::atof((const char*)glVersion) < 1.5)
+     {
+         char strComplain[256] = {0};
+         sprintf(strComplain,
+@@ -362,12 +392,10 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+     }
+ 
+     initGlew();
+-
+-    // Enable point size by default.
+     glEnable(GL_VERTEX_PROGRAM_POINT_SIZE);
+-    
+     if(_glContextAttrs.multisamplingCount > 0)
+         glEnable(GL_MULTISAMPLE);
++#endif
+ 
+ //    // GLFW v3.2 no longer emits "onGLFWWindowSizeFunCallback" at creation time. Force default viewport:
+ //    setViewPortInPoints(0, 0, neededWidth, neededHeight);
+@@ -375,6 +403,196 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+     return true;
+ }
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++bool GLViewImpl::initANGLEMetal()
++{
++    auto getPlatformDisplay = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
++        eglGetProcAddress("eglGetPlatformDisplayEXT"));
++    if (!getPlatformDisplay)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: eglGetPlatformDisplayEXT unavailable\n");
++        return false;
++    }
++
++    const EGLint displayAttributes[] = {
++        EGL_PLATFORM_ANGLE_TYPE_ANGLE,
++        EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE,
++        EGL_NONE
++    };
++    _eglDisplay = getPlatformDisplay(
++        EGL_PLATFORM_ANGLE_ANGLE,
++        nullptr,
++        displayAttributes);
++    if (_eglDisplay == EGL_NO_DISPLAY)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: ANGLE Metal display unavailable error=0x%x\n",
++                eglGetError());
++        return false;
++    }
++
++    EGLint major = 0;
++    EGLint minor = 0;
++    if (!eglInitialize(_eglDisplay, &major, &minor) || !eglBindAPI(EGL_OPENGL_ES_API))
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: EGL initialize/bind failed error=0x%x\n",
++                eglGetError());
++        return false;
++    }
++
++    const EGLint configAttributes[] = {
++        EGL_SURFACE_TYPE, EGL_WINDOW_BIT | EGL_PBUFFER_BIT,
++        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
++        EGL_RED_SIZE, 8,
++        EGL_GREEN_SIZE, 8,
++        EGL_BLUE_SIZE, 8,
++        EGL_ALPHA_SIZE, 8,
++        EGL_DEPTH_SIZE, 24,
++        EGL_STENCIL_SIZE, 8,
++        EGL_NONE
++    };
++    EGLint configCount = 0;
++    if (!eglChooseConfig(_eglDisplay, configAttributes, &_eglConfig, 1, &configCount)
++        || configCount != 1)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: no EGL config error=0x%x\n",
++                eglGetError());
++        return false;
++    }
++
++    const EGLint contextAttributes[] = {
++        EGL_CONTEXT_CLIENT_VERSION, 2,
++        EGL_NONE
++    };
++    _eglContext = eglCreateContext(
++        _eglDisplay,
++        _eglConfig,
++        EGL_NO_CONTEXT,
++        contextAttributes);
++    if (_eglContext == EGL_NO_CONTEXT)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: EGL context error=0x%x\n",
++                eglGetError());
++        return false;
++    }
++
++    NSWindow* cocoaWindow = glfwGetCocoaWindow(_mainWindow);
++    NSView* contentView = cocoaWindow.contentView;
++    if (!contentView)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: GLFW Cocoa content view unavailable\n");
++        return false;
++    }
++    contentView.wantsLayer = YES;
++    [contentView layoutSubtreeIfNeeded];
++    CALayer* backingLayer = contentView.layer;
++    if (!backingLayer)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: AppKit backing CALayer unavailable\n");
++        return false;
++    }
++
++    _eglSurface = eglCreateWindowSurface(
++        _eglDisplay,
++        _eglConfig,
++        (EGLNativeWindowType)(__bridge void*)backingLayer,
++        nullptr);
++    if (_eglSurface == EGL_NO_SURFACE
++        || !eglMakeCurrent(_eglDisplay, _eglSurface, _eglSurface, _eglContext))
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: EGL window surface error=0x%x\n",
++                eglGetError());
++        return false;
++    }
++
++    eglSwapInterval(_eglDisplay, 1);
++    if (!updateANGLESurfaceSize())
++        return false;
++
++    const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
++    const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
++    const bool isANGLEMetal = renderer
++        && std::strstr(renderer, "ANGLE")
++        && std::strstr(renderer, "Metal");
++    if (!isANGLEMetal)
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: expected ANGLE Metal, got %s\n",
++                renderer ? renderer : "(null)");
++        return false;
++    }
++
++    EGLint surfaceWidth = 0;
++    EGLint surfaceHeight = 0;
++    eglQuerySurface(_eglDisplay, _eglSurface, EGL_WIDTH, &surfaceWidth);
++    eglQuerySurface(_eglDisplay, _eglSurface, EGL_HEIGHT, &surfaceHeight);
++    const CGFloat backingScale = cocoaWindow.backingScaleFactor;
++    fprintf(stdout,
++            "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f\n",
++            major, minor, version ? version : "unknown", renderer,
++            surfaceWidth, surfaceHeight, backingScale);
++    fflush(stdout);
++    return true;
++}
++
++bool GLViewImpl::updateANGLESurfaceSize()
++{
++    if (_eglDisplay == EGL_NO_DISPLAY || _eglSurface == EGL_NO_SURFACE)
++        return false;
++
++    EGLint surfaceWidth = 0;
++    EGLint surfaceHeight = 0;
++    if (!eglQuerySurface(_eglDisplay, _eglSurface, EGL_WIDTH, &surfaceWidth)
++        || !eglQuerySurface(_eglDisplay, _eglSurface, EGL_HEIGHT, &surfaceHeight))
++    {
++        fprintf(stderr, "[Yoghourt] ERROR renderer surface query failed error=0x%x\n", eglGetError());
++        _eglDrawable = false;
++        return false;
++    }
++
++    _eglDrawable = surfaceWidth > 0 && surfaceHeight > 0;
++    if (!_eglDrawable)
++        return true;
++
++    int windowWidth = 0;
++    int windowHeight = 0;
++    glfwGetWindowSize(_mainWindow, &windowWidth, &windowHeight);
++    _isInRetinaMonitor = windowWidth > 0 && windowHeight > 0
++        && (surfaceWidth > windowWidth || surfaceHeight > windowHeight);
++    _retinaFactor = 1;
++    const Size previousFrameSize = _screenSize;
++    const bool surfaceSizeChanged = previousFrameSize.width != surfaceWidth
++        || previousFrameSize.height != surfaceHeight;
++    GLView::setFrameSize(static_cast<float>(surfaceWidth), static_cast<float>(surfaceHeight));
++    if (surfaceSizeChanged && _resolutionPolicy != ResolutionPolicy::UNKNOWN)
++    {
++        const Size designSize = _designResolutionSize;
++        const ResolutionPolicy policy = _resolutionPolicy;
++        setDesignResolutionSize(designSize.width, designSize.height, policy);
++        auto director = Director::getInstance();
++        if (director->getOpenGLView() == this)
++            director->setViewport();
++    }
++    return true;
++}
++
++void GLViewImpl::destroyANGLEMetal()
++{
++    if (_eglDisplay == EGL_NO_DISPLAY)
++        return;
++
++    eglMakeCurrent(_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
++    if (_eglSurface != EGL_NO_SURFACE)
++        eglDestroySurface(_eglDisplay, _eglSurface);
++    if (_eglContext != EGL_NO_CONTEXT)
++        eglDestroyContext(_eglDisplay, _eglContext);
++    eglTerminate(_eglDisplay);
++    _eglSurface = EGL_NO_SURFACE;
++    _eglContext = EGL_NO_CONTEXT;
++    _eglDisplay = EGL_NO_DISPLAY;
++    _eglConfig = nullptr;
++    _eglDrawable = false;
++}
++#endif
++
+ bool GLViewImpl::initWithFullScreen(const std::string& viewName)
+ {
+     //Create fullscreen window on primary monitor at its current video mode.
+@@ -404,7 +610,14 @@ bool GLViewImpl::initWithFullscreen(const std::string &viewname, const GLFWvidmo
+ 
+ bool GLViewImpl::isOpenGLReady()
+ {
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    return _mainWindow != nullptr
++        && _eglDisplay != EGL_NO_DISPLAY
++        && _eglContext != EGL_NO_CONTEXT
++        && _eglSurface != EGL_NO_SURFACE;
++#else
+     return nullptr != _mainWindow;
++#endif
+ }
+ 
+ void GLViewImpl::end()
+@@ -412,6 +625,10 @@ void GLViewImpl::end()
+     if(_mainWindow)
+     {
+         glfwSetWindowShouldClose(_mainWindow,1);
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++        destroyANGLEMetal();
++#endif
++        glfwDestroyWindow(_mainWindow);
+         _mainWindow = nullptr;
+     }
+     // Release self. Otherwise, GLViewImpl could not be freed.
+@@ -420,8 +634,11 @@ void GLViewImpl::end()
+ 
+ void GLViewImpl::swapBuffers()
+ {
+-    if(_mainWindow)
++    if (_mainWindow && updateANGLESurfaceSize() && _eglDrawable)
++    {
++        if (!eglSwapBuffers(_eglDisplay, _eglSurface))
++            fprintf(stderr, "[Yoghourt] ERROR renderer present failed error=0x%x\n", eglGetError());
++    }
+-        glfwSwapBuffers(_mainWindow);
+ }
+ 
+ bool GLViewImpl::windowShouldClose()
+@@ -642,6 +867,9 @@ Size GLViewImpl::getMonitorSize() const {
+ 
+ void GLViewImpl::updateFrameSize()
+ {
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    updateANGLESurfaceSize();
++#else
+     if (_screenSize.width > 0 && _screenSize.height > 0)
+     {
+         int w = 0, h = 0;
+@@ -675,12 +903,28 @@ void GLViewImpl::updateFrameSize()
+             _isInRetinaMonitor = false;
+         }
+     }
++#endif
+ }
+ 
+ void GLViewImpl::setFrameSize(float width, float height)
+ {
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    if (_mainWindow && width > 0 && height > 0)
++    {
++        glfwSetWindowSize(_mainWindow,
++                          static_cast<int>(width / _frameZoomFactor),
++                          static_cast<int>(height / _frameZoomFactor));
++        glfwPollEvents();
++        updateANGLESurfaceSize();
++    }
++    else
++    {
++        GLView::setFrameSize(width, height);
++    }
++#else
+     GLView::setFrameSize(width, height);
+     updateFrameSize();
++#endif
+ }
+ 
+ void GLViewImpl::setViewPortInPoints(float x , float y , float w , float h)
+@@ -888,6 +1132,12 @@ void GLViewImpl::onGLFWWindowPosCallback(GLFWwindow* /*window*/, int /*x*/, int
+ 
+ void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
+ {
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    (void)window;
++    (void)w;
++    (void)h;
++    updateANGLESurfaceSize();
++#else
+     float frameSizeW = _screenSize.width;
+     float frameSizeH = _screenSize.height;
+     float factorX = frameSizeW / w * _retinaFactor * _frameZoomFactor;
+@@ -913,6 +1163,7 @@ void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
+         _retinaFactor = 1;
+         glfwSetWindowSize(window, static_cast<int>(frameSizeW * _retinaFactor * _frameZoomFactor), static_cast<int>(frameSizeH * _retinaFactor * _frameZoomFactor));
+     }
++#endif
+ }
+ 
+ void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width, int height)
+@@ -922,9 +1173,13 @@ void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width,
+         Size baseDesignSize = _designResolutionSize;
+         ResolutionPolicy baseResolutionPolicy = _resolutionPolicy;
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++        updateANGLESurfaceSize();
++#else
+         int frameWidth = width / _frameZoomFactor;
+         int frameHeight = height / _frameZoomFactor;
+         setFrameSize(frameWidth, frameHeight);
++#endif
+         setDesignResolutionSize(baseDesignSize.width, baseDesignSize.height, baseResolutionPolicy);
+         Director::getInstance()->setViewport();
+         Director::getInstance()->getEventDispatcher()->dispatchCustomEvent(GLViewImpl::EVENT_WINDOW_RESIZED, nullptr);
+diff --git a/cocos/platform/desktop/CCGLViewImpl-desktop.h b/cocos/platform/desktop/CCGLViewImpl-desktop.h
+index 4e3394d..e0cb9cd 100644
+--- a/cocos/platform/desktop/CCGLViewImpl-desktop.h
++++ b/cocos/platform/desktop/CCGLViewImpl-desktop.h
+@@ -30,8 +30,13 @@ THE SOFTWARE.
+ #include "base/CCRef.h"
+ #include "platform/CCCommon.h"
+ #include "platform/CCGLView.h"
++#define GLFW_INCLUDE_NONE
+ #include <GLFW/glfw3.h>
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++#include <EGL/egl.h>
++#endif
++
+ #if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32)
+ #ifndef GLFW_EXPOSE_NATIVE_WIN32
+ #define GLFW_EXPOSE_NATIVE_WIN32
+@@ -43,9 +48,6 @@ THE SOFTWARE.
+ #endif /* (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32) */
+ 
+ #if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
+-#ifndef GLFW_EXPOSE_NATIVE_NSGL
+-#define GLFW_EXPOSE_NATIVE_NSGL
+-#endif
+ #ifndef GLFW_EXPOSE_NATIVE_COCOA
+ #define GLFW_EXPOSE_NATIVE_COCOA
+ #endif
+@@ -138,7 +140,6 @@ public:
+     
+ #if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
+     id getCocoaWindow() override { return glfwGetCocoaWindow(_mainWindow); }
+-    id getNSGLContext() override { return glfwGetNSGLContext(_mainWindow); } // stevetranby: added
+ #endif // #if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
+ 
+ protected:
+@@ -149,6 +150,12 @@ protected:
+     bool initWithFullScreen(const std::string& viewName);
+     bool initWithFullscreen(const std::string& viewname, const GLFWvidmode &videoMode, GLFWmonitor *monitor);
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    bool initANGLEMetal();
++    bool updateANGLESurfaceSize();
++    void destroyANGLEMetal();
++#endif
++
+     bool initGlew();
+ 
+     void updateFrameSize();
+@@ -184,6 +191,14 @@ protected:
+ 
+     GLFWcursor* _cursor;
+ 
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    EGLDisplay _eglDisplay = EGL_NO_DISPLAY;
++    EGLConfig _eglConfig = nullptr;
++    EGLContext _eglContext = EGL_NO_CONTEXT;
++    EGLSurface _eglSurface = EGL_NO_SURFACE;
++    bool _eglDrawable = false;
++#endif
++
+     friend class GLFWEventHandler;
+     
+ public:
+diff --git a/cocos/platform/mac/CCApplication-mac.mm b/cocos/platform/mac/CCApplication-mac.mm
+index 12bae71..41f8b1a 100644
+--- a/cocos/platform/mac/CCApplication-mac.mm
++++ b/cocos/platform/mac/CCApplication-mac.mm
+@@ -80,20 +80,10 @@ static long getCurrentMillSecond()
+     // Retain glview to avoid glview being released in the while loop
+     glview->retain();
+ 
+-    unsigned int ctx_updated_count = 0;
+-
+     while (!glview->windowShouldClose())
+     {
+         lastTime = getCurrentMillSecond();
+ 
+-        // hack to fix issue #19080, black screen on macOS 10.14
+-        // stevetranby: look into doing this outside loop to get rid of condition test per frame
+-        if(ctx_updated_count < 2) {
+-            ctx_updated_count++;
+-            NSOpenGLContext* ctx = (NSOpenGLContext*)glview->getNSGLContext();
+-            [ctx update];
+-        }
+-
+         director->mainLoop();
+         glview->pollEvents();
+ 
+diff --git a/cocos/platform/mac/CCGL-mac.h b/cocos/platform/mac/CCGL-mac.h
+index 949648a..e4f4c0f 100644
+--- a/cocos/platform/mac/CCGL-mac.h
++++ b/cocos/platform/mac/CCGL-mac.h
+@@ -30,18 +30,24 @@ THE SOFTWARE.
+ #include "platform/CCPlatformConfig.h"
+ #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+ 
+-#import <OpenGL/gl.h>
+-#import <OpenGL/glu.h>
+-#import <OpenGL/glext.h>
+-
+-#define CC_GL_DEPTH24_STENCIL8      -1
+-
+-
+-#define glDeleteVertexArrays            glDeleteVertexArraysAPPLE
+-#define glGenVertexArrays               glGenVertexArraysAPPLE
+-#define glBindVertexArray               glBindVertexArrayAPPLE
+-#define glClearDepthf                   glClearDepth
+-#define glDepthRangef                   glDepthRange
++#ifndef GL_GLEXT_PROTOTYPES
++#define GL_GLEXT_PROTOTYPES 1
++#endif
++#include <GLES2/gl2.h>
++#include <GLES2/gl2ext.h>
++
++#define CC_GL_DEPTH24_STENCIL8 GL_DEPTH24_STENCIL8_OES
++#define GL_DEPTH24_STENCIL8 GL_DEPTH24_STENCIL8_OES
++#define GL_BGRA GL_BGRA_EXT
++#define GL_WRITE_ONLY GL_WRITE_ONLY_OES
++
++#define glDeleteVertexArrays glDeleteVertexArraysOES
++#define glGenVertexArrays glGenVertexArraysOES
++#define glBindVertexArray glBindVertexArrayOES
++#define glMapBuffer glMapBufferOES
++#define glUnmapBuffer glUnmapBufferOES
++#define glClearDepth glClearDepthf
++#define glDepthRange glDepthRangef
+ #define glReleaseShaderCompiler(xxx)
+ 
+ 
+
+diff --git a/cocos/3d/CCTerrain.cpp b/cocos/3d/CCTerrain.cpp
+index 65cb874..dc008e0 100644
+--- a/cocos/3d/CCTerrain.cpp
++++ b/cocos/3d/CCTerrain.cpp
+@@ -138,7 +138,7 @@ void Terrain::onDraw(const Mat4 &transform, uint32_t flags)
+ 
+     auto glProgram = getGLProgram();
+     glProgram->use();
+-#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC) || (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32) || (CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32) || (CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
+     if(_isDrawWire)
+     {
+         glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);
+@@ -216,7 +216,7 @@ void Terrain::onDraw(const Mat4 &transform, uint32_t flags)
+     }
+     glActiveTexture(GL_TEXTURE0);
+ 
+-#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC) || (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32) || (CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32) || (CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
+     if(_isDrawWire)//reset state.
+     {
+         glPolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+
+diff --git a/cocos/base/CCStencilStateManager.cpp b/cocos/base/CCStencilStateManager.cpp
+index 68081d2..e8c38dd 100644
+--- a/cocos/base/CCStencilStateManager.cpp
++++ b/cocos/base/CCStencilStateManager.cpp
+@@ -30,6 +30,6 @@ THE SOFTWARE.
+ #include "renderer/CCRenderer.h"
+ #include "renderer/CCRenderState.h"
+-#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC || CC_TARGET_PLATFORM == CC_PLATFORM_WIN32 || CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32 || CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
+ #define CC_CLIPPING_NODE_OPENGLES 0
+ #else
+ #define CC_CLIPPING_NODE_OPENGLES 1
+diff --git a/cocos/renderer/CCGLProgram.cpp b/cocos/renderer/CCGLProgram.cpp
+--- a/cocos/renderer/CCGLProgram.cpp
++++ b/cocos/renderer/CCGLProgram.cpp
+@@ -490,6 +490,6 @@
+ // Changed shader data types mediump to highp to remove possible sprite joggling on some Android phones.
+ #elif CC_TARGET_PLATFORM == CC_PLATFORM_ANDROID
+         headersDef = "#version 100\n precision highp float;\n precision highp int;\n";
+-#elif (CC_TARGET_PLATFORM != CC_PLATFORM_WIN32 && CC_TARGET_PLATFORM != CC_PLATFORM_LINUX && CC_TARGET_PLATFORM != CC_PLATFORM_MAC)
++#elif (CC_TARGET_PLATFORM != CC_PLATFORM_WIN32 && CC_TARGET_PLATFORM != CC_PLATFORM_LINUX)
+         headersDef = (type == GL_VERTEX_SHADER ? "precision highp float;\n precision highp int;\n" : "precision mediump float;\n precision mediump int;\n");
+ #endif
+
+diff --git a/cocos/2d/CCClippingNode.cpp b/cocos/2d/CCClippingNode.cpp
+index 8eb4984..0b928a1 100644
+--- a/cocos/2d/CCClippingNode.cpp
++++ b/cocos/2d/CCClippingNode.cpp
+@@ -35,7 +35,7 @@ THE SOFTWARE.
+ #include "base/CCDirector.h"
+ #include "base/CCStencilStateManager.h"
+ 
+-#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC || CC_TARGET_PLATFORM == CC_PLATFORM_WIN32 || CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32 || CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
+ #define CC_CLIPPING_NODE_OPENGLES 0
+ #else
+ #define CC_CLIPPING_NODE_OPENGLES 1

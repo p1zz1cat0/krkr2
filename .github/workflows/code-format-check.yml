@@ -1,0 +1,16 @@
+name: Code Format Check
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  format-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DoozyX/clang-format-lint-action@v0.20
+        with:
+          source: 'cpp platforms'
+          extensions: 'cpp,cc,h,hpp,inc'
+          clangFormatVersion: 20

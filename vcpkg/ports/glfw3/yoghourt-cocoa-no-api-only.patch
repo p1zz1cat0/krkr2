@@ -1,0 +1,127 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 01f1911..7f043de 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -31,8 +31,7 @@ set_target_properties(update_mappings PROPERTIES FOLDER "GLFW3")
+ 
+ if (GLFW_BUILD_COCOA)
+-    target_compile_definitions(glfw PRIVATE _GLFW_COCOA)
++    target_compile_definitions(glfw PRIVATE _GLFW_COCOA GLFW_COCOA_NO_API_ONLY)
+     target_sources(glfw PRIVATE cocoa_platform.h cocoa_joystick.h cocoa_init.m
+-                                cocoa_joystick.m cocoa_monitor.m cocoa_window.m
+-                                nsgl_context.m)
++                                cocoa_joystick.m cocoa_monitor.m cocoa_window.m)
+ endif()
+ 
+ if (GLFW_BUILD_WIN32)
+diff --git a/src/cocoa_init.m b/src/cocoa_init.m
+index 53f65de..a3419a5 100644
+--- a/src/cocoa_init.m
++++ b/src/cocoa_init.m
+@@ -684,7 +684,6 @@ void _glfwTerminateCocoa(void)
+ 
+     _glfw_free(_glfw.ns.clipboardString);
+ 
+-    _glfwTerminateNSGL();
+     _glfwTerminateEGL();
+     _glfwTerminateOSMesa();
+ 
+diff --git a/src/cocoa_window.m b/src/cocoa_window.m
+index 54a448b..2eb954d 100644
+--- a/src/cocoa_window.m
++++ b/src/cocoa_window.m
+@@ -928,35 +928,9 @@ GLFWbool _glfwCreateWindowCocoa(_GLFWwindow* window,
+ 
+     if (ctxconfig->client != GLFW_NO_API)
+     {
+-        if (ctxconfig->source == GLFW_NATIVE_CONTEXT_API)
+-        {
+-            if (!_glfwInitNSGL())
+-                return GLFW_FALSE;
+-            if (!_glfwCreateContextNSGL(window, ctxconfig, fbconfig))
+-                return GLFW_FALSE;
+-        }
+-        else if (ctxconfig->source == GLFW_EGL_CONTEXT_API)
+-        {
+-            // EGL implementation on macOS use CALayer* EGLNativeWindowType so we
+-            // need to get the layer for EGL window surface creation.
+-            [window->ns.view setWantsLayer:YES];
+-            window->ns.layer = [window->ns.view layer];
+-
+-            if (!_glfwInitEGL())
+-                return GLFW_FALSE;
+-            if (!_glfwCreateContextEGL(window, ctxconfig, fbconfig))
+-                return GLFW_FALSE;
+-        }
+-        else if (ctxconfig->source == GLFW_OSMESA_CONTEXT_API)
+-        {
+-            if (!_glfwInitOSMesa())
+-                return GLFW_FALSE;
+-            if (!_glfwCreateContextOSMesa(window, ctxconfig, fbconfig))
+-                return GLFW_FALSE;
+-        }
+-
+-        if (!_glfwRefreshContextAttribs(window, ctxconfig))
+-            return GLFW_FALSE;
++        _glfwInputError(GLFW_API_UNAVAILABLE,
++                        "Cocoa: This GLFW build only supports GLFW_NO_API windows");
++        return GLFW_FALSE;
+     }
+ 
+     if (wndconfig->mousePassthrough)
+diff --git a/src/context.c b/src/context.c
+index acf9326..57e764f 100644
+--- a/src/context.c
++++ b/src/context.c
+@@ -345,5 +345,10 @@ GLFWbool _glfwRefreshContextAttribs(_GLFWwindow* window,
+                                     const _GLFWctxconfig* ctxconfig)
+ {
++#if defined(GLFW_COCOA_NO_API_ONLY)
++    _glfwInputError(GLFW_API_UNAVAILABLE,
++                    "Cocoa: This GLFW build only supports GLFW_NO_API windows");
++    return GLFW_FALSE;
++#else
+     int i;
+     _GLFWwindow* previous;
+     const char* version;
+@@ -578,6 +583,7 @@ GLFWbool _glfwRefreshContextAttribs(_GLFWwindow* window,
+ 
+     glfwMakeContextCurrent((GLFWwindow*) previous);
+     return GLFW_TRUE;
++#endif
+ }
+ 
+ // Searches an extension string for the specified extension
+@@ -613,6 +613,7 @@ GLFWbool _glfwStringInExtensionString(const char* string, const char* extensions)
+ //////                        GLFW public API                       //////
+ //////////////////////////////////////////////////////////////////////////
+ 
++#if !defined(GLFW_COCOA_NO_API_ONLY)
+ GLFWAPI void glfwMakeContextCurrent(GLFWwindow* handle)
+ {
+     _GLFWwindow* window = (_GLFWwindow*) handle;
+@@ -681,6 +682,7 @@ GLFWAPI void glfwSwapInterval(int interval)
+ 
+     window->context.swapInterval(interval);
+ }
++#endif
+ 
+ GLFWAPI int glfwExtensionSupported(const char* extension)
+ {
+diff --git a/src/window.c b/src/window.c
+index 19f1274..736ad1f 100644
+--- a/src/window.c
++++ b/src/window.c
+@@ -478,10 +478,12 @@ GLFWAPI void glfwDestroyWindow(GLFWwindow* handle)
+     // Clear all callbacks to avoid exposing a half torn-down window object
+     memset(&window->callbacks, 0, sizeof(window->callbacks));
+ 
++#if !defined(GLFW_COCOA_NO_API_ONLY)
+     // The window's context must not be current on another thread when the
+     // window is destroyed
+     if (window == _glfwPlatformGetTls(&_glfw.contextSlot))
+         glfwMakeContextCurrent(NULL);
++#endif
+ 
+     _glfw.platform.destroyWindow(window);
+ 
