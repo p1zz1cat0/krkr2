@@ -26,6 +26,13 @@ public:
 
 #if defined(__APPLE__)
 extern "C" void YoghourtApplyWindowPresentation(void *) {}
+extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(unsigned int, int, int,
+                                                         float, float, bool) {}
+extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
+                                           void *) {
+    return false;
+}
+extern "C" void YoghourtKrKrSpatialShutdown() {}
 #endif
 
 
@@ -70,6 +77,14 @@ TEST_CASE("exec tjs2 script") {
 
     SECTION("exec test_with.tjs") { SCRIPT("test_with.tjs"); }
 
+    SECTION("exec UTF-8 BOM script without exposing the BOM to TJS") {
+        SCRIPT("test_utf8_bom.tjs");
+        tTJSVariant result;
+        REQUIRE_NOTHROW(tvPScriptEngine->EvalExpression(
+            TJS_W("utf8BomScriptExecuted"), &result));
+        REQUIRE(result.AsInteger() != 0);
+    }
+
     // SECTION("exec test.tjs") {
     //     SCRIPT("test.tjs");
     // }
@@ -104,8 +119,8 @@ TEST_CASE("KAG parser exposes source tag member names") {
               "  tag.taglist.find(\"file\") >= 0 &&"
               "  tag.taglist.find(\"zorder\") >= 0;")));
     tTJSVariant result;
-    REQUIRE_NOTHROW(scriptEngine->EvalExpression(TJS_W("tagListValid"),
-                                                 &result));
+    REQUIRE_NOTHROW(
+        scriptEngine->EvalExpression(TJS_W("tagListValid"), &result));
     REQUIRE(result.AsInteger() != 0);
 
     scriptEngine->Release();

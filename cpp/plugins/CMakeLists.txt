@@ -27,6 +27,11 @@ target_sources(${PROJECT_NAME} PUBLIC
     xp3filter.cpp
 )
 
+# This compatibility shim belongs only to the aggregate plugin library.  The
+# historical PUBLIC source list is inherited by child plugin targets, which
+# would otherwise compile and register these System methods multiple times.
+target_sources(${PROJECT_NAME} PRIVATE getLangName.cpp)
+
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${KRKR2CORE_PATH}/
     ${KRKR2CORE_PATH}/base

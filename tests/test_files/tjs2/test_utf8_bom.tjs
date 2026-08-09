@@ -1,0 +1,2 @@
+﻿// A UTF-8 BOM must be consumed by the text stream before TJS parsing.
+var utf8BomScriptExecuted = true;

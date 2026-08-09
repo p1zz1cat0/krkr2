@@ -68,7 +68,17 @@ std::string checkTextEncoding(const void *buf, size_t size,
         return false;
     };
     // --- 检查 BOM ---
-    if(size >= 2 && raw[0] == 0xFF && raw[1] == 0xFE) {
+    if(size >= 4 && raw[0] == 0xFF && raw[1] == 0xFE && raw[2] == 0x00 &&
+       raw[3] == 0x00) {
+        // UTF-32LE BOM
+        bomSize = 4;
+        encoding = "UTF-32LE";
+    } else if(size >= 4 && raw[0] == 0x00 && raw[1] == 0x00 && raw[2] == 0xFE &&
+              raw[3] == 0xFF) {
+        // UTF-32BE BOM
+        bomSize = 4;
+        encoding = "UTF-32BE";
+    } else if(size >= 2 && raw[0] == 0xFF && raw[1] == 0xFE) {
         // UTF-16LE BOM
         bomSize = 2;
         encoding = "UTF-16LE";
@@ -80,16 +90,6 @@ std::string checkTextEncoding(const void *buf, size_t size,
         // UTF-8 BOM
         bomSize = 3;
         encoding = "UTF-8";
-    } else if(size >= 4 && raw[0] == 0xFF && raw[1] == 0xFE && raw[2] == 0x00 &&
-              raw[3] == 0x00) {
-        // UTF-32LE BOM
-        bomSize = 4;
-        encoding = "UTF-32LE";
-    } else if(size >= 4 && raw[0] == 0x00 && raw[1] == 0x00 && raw[2] == 0xFE &&
-              raw[3] == 0xFF) {
-        // UTF-32BE BOM
-        bomSize = 4;
-        encoding = "UTF-32BE";
     } else {
         // ---------- 普通文本：用 uchardet 检测编码 ----------
         uchardet_t ud = uchardet_new();
@@ -139,9 +139,10 @@ public:
         if(size >= 3 && raw[0] == 0xFE && raw[1] == 0xFE) {
             std::uint8_t m = raw[2];
             if(m == 0 || m == 1) {
-                // Layout: FE FE mode FF FE | UTF-16 payload (mode 0/1 scramble).
-                // Mode 2 already used offset 5; mode 0/1 incorrectly started at 4
-                // and included the trailing BOM byte in the first code unit.
+                // Layout: FE FE mode FF FE | UTF-16 payload (mode 0/1
+                // scramble). Mode 2 already used offset 5; mode 0/1 incorrectly
+                // started at 4 and included the trailing BOM byte in the first
+                // code unit.
                 const auto *src =
                     reinterpret_cast<const char16_t *>(raw.data() + 5);
                 size_t len = (size - 5) / 2;
@@ -194,6 +195,7 @@ public:
         std::uint8_t bomSize = 0;
         std::string encoding = checkTextEncoding(raw.data(), size, bomSize);
         raw.erase(raw.begin(), raw.begin() + bomSize);
+        size = raw.size();
 
         if(encoding.empty())
             encoding = G_DefaultReadEncoding; // 默认回退
