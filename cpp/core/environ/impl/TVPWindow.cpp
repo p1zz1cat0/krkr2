@@ -16,6 +16,10 @@
 #include "SystemImpl.h"
 #include "vkdefine.h"
 
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+#include "YoghourtSpatialAdapter.h"
+#endif
+
 tTJSNI_Window *TVPWindowLayer::TVPGetActiveWindow() {
     if(!_currentWindowLayer)
         return nullptr;
@@ -495,6 +499,17 @@ void TVPWindowLayer::UpdateDrawBuffer(iTVPTexture2D *tex) {
         DrawSprite->setBlendFunc(cocos2d::BlendFunc::DISABLE);
         ResetDrawSprite();
     }
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    if(newtex) {
+        YoghourtKrKrSpatialRegisterSourceTexture(
+            newtex->getName(),
+            LayerWidth,
+            LayerHeight,
+            newtex->getMaxS(),
+            newtex->getMaxT(),
+            DrawSprite->isFlippedY());
+    }
+#endif
 }
 
 void TVPWindowLayer::toggleFillScale() {

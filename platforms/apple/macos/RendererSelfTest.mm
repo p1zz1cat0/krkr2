@@ -1,4 +1,6 @@
 #import <AppKit/AppKit.h>
+#import <IOSurface/IOSurface.h>
+#import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
 
 #include "RendererSelfTest.h"
@@ -23,6 +25,7 @@
 #include <EGL/eglext.h>
 #include <EGL/eglext_angle.h>
 #include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 
 namespace {
 
@@ -187,23 +190,167 @@ bool RunPbufferChecks(EGLState& state) {
     glClear(GL_COLOR_BUFFER_BIT);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     glFinish();
-    unsigned char pixel[4] = {};
-    glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-    const bool pixelMatches =
-        std::abs(static_cast<int>(pixel[0]) - 64) <= 2
-        && std::abs(static_cast<int>(pixel[1]) - 128) <= 2
-        && std::abs(static_cast<int>(pixel[2]) - 191) <= 2
-        && pixel[3] >= 253;
-
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &framebuffer);
     glDeleteTextures(1, &renderTexture);
     glDeleteTextures(1, &texture);
     for (GLuint program : programs) glDeleteProgram(program);
-    if (!pixelMatches || glGetError() != GL_NO_ERROR) {
+    if (glGetError() != GL_NO_ERROR) {
+        LogFailure("pbuffer render");
+        return false;
+    }
+    return true;
+}
+
+bool HasExtension(const char* extensions, const char* name) {
+    if (!extensions || !name || !name[0]) return false;
+    const size_t length = std::strlen(name);
+    for (const char* found = std::strstr(extensions, name); found;
+         found = std::strstr(found + length, name)) {
+        if ((found == extensions || found[-1] == ' ')
+            && (found[length] == '\0' || found[length] == ' ')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool RunIOSurfaceMetalChecks(EGLState& state) {
+    constexpr int width = 8;
+    constexpr int height = 8;
+    const char* extensions = eglQueryString(state.display, EGL_EXTENSIONS);
+    if (!HasExtension(extensions, "EGL_ANGLE_iosurface_client_buffer")) {
+        LogFailure("IOSurface/Metal extensions");
+        return false;
+    }
+
+    auto queryDisplay = reinterpret_cast<PFNEGLQUERYDISPLAYATTRIBEXTPROC>(
+        eglGetProcAddress("eglQueryDisplayAttribEXT"));
+    auto queryDevice = reinterpret_cast<PFNEGLQUERYDEVICEATTRIBEXTPROC>(
+        eglGetProcAddress("eglQueryDeviceAttribEXT"));
+    EGLAttrib deviceAttribute = 0;
+    EGLAttrib metalAttribute = 0;
+    if (!queryDisplay || !queryDevice
+        || !queryDisplay(state.display, EGL_DEVICE_EXT, &deviceAttribute)) {
+        LogFailure("ANGLE Metal device query");
+        return false;
+    }
+    const auto eglDevice = reinterpret_cast<EGLDeviceEXT>(deviceAttribute);
+    auto queryDeviceString = reinterpret_cast<PFNEGLQUERYDEVICESTRINGEXTPROC>(
+        eglGetProcAddress("eglQueryDeviceStringEXT"));
+    if ((queryDeviceString
+         && !HasExtension(queryDeviceString(eglDevice, EGL_EXTENSIONS),
+                          "EGL_ANGLE_device_metal"))
+        || !queryDevice(eglDevice, EGL_METAL_DEVICE_ANGLE, &metalAttribute)) {
+        LogFailure("ANGLE Metal device query");
+        return false;
+    }
+    id<MTLDevice> device =
+        (__bridge id<MTLDevice>)(reinterpret_cast<void*>(metalAttribute));
+    if (!device) return false;
+
+    NSDictionary* properties = @{
+        (NSString*)kIOSurfaceWidth: @(width),
+        (NSString*)kIOSurfaceHeight: @(height),
+        (NSString*)kIOSurfaceBytesPerElement: @4,
+        (NSString*)kIOSurfacePixelFormat: @(static_cast<uint32_t>('BGRA')),
+    };
+    IOSurfaceRef ioSurface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+    if (!ioSurface) return false;
+    const EGLint attributes[] = {
+        EGL_WIDTH, width,
+        EGL_HEIGHT, height,
+        EGL_IOSURFACE_PLANE_ANGLE, 0,
+        EGL_TEXTURE_TARGET, EGL_TEXTURE_2D,
+        EGL_TEXTURE_INTERNAL_FORMAT_ANGLE, GL_BGRA_EXT,
+        EGL_TEXTURE_FORMAT, EGL_TEXTURE_RGBA,
+        EGL_TEXTURE_TYPE_ANGLE, GL_UNSIGNED_BYTE,
+        EGL_NONE,
+    };
+    EGLSurface ioPbuffer = eglCreatePbufferFromClientBuffer(
+        state.display, EGL_IOSURFACE_ANGLE, ioSurface, state.config, attributes);
+    if (ioPbuffer == EGL_NO_SURFACE
+        || !eglMakeCurrent(state.display, ioPbuffer, ioPbuffer, state.context)) {
+        if (ioPbuffer != EGL_NO_SURFACE) eglDestroySurface(state.display, ioPbuffer);
+        CFRelease(ioSurface);
+        LogFailure("IOSurface pbuffer");
+        return false;
+    }
+
+    glViewport(0, 0, width, height);
+    glDisable(GL_BLEND);
+    glEnable(GL_SCISSOR_TEST);
+    const auto clearQuadrant = [](int x, int y, float r, float g, float b) {
+        glScissor(x, y, width / 2, height / 2);
+        glClearColor(r, g, b, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    };
+    clearQuadrant(0, 0, 1, 0, 0);                  // bottom-left red
+    clearQuadrant(width / 2, 0, 0, 1, 0);          // bottom-right green
+    clearQuadrant(0, height / 2, 0, 0, 1);         // top-left blue
+    clearQuadrant(width / 2, height / 2, 1, 1, 0); // top-right yellow
+    glDisable(GL_SCISSOR_TEST);
+    glFinish();
+
+    MTLTextureDescriptor* descriptor =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:width
+                                                          height:height
+                                                       mipmapped:NO];
+    descriptor.storageMode = MTLStorageModeShared;
+    descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+    id<MTLTexture> texture =
+        [device newTextureWithDescriptor:descriptor iosurface:ioSurface plane:0];
+    id<MTLCommandQueue> queue = [device newCommandQueue];
+    constexpr NSUInteger bytesPerRow = 256;
+    id<MTLBuffer> buffer = [device newBufferWithLength:bytesPerRow * height
+                                               options:MTLResourceStorageModeShared];
+    id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+    if (!texture || !queue || !buffer || !commandBuffer || !blit) {
+        eglMakeCurrent(state.display, state.pbuffer, state.pbuffer, state.context);
+        eglDestroySurface(state.display, ioPbuffer);
+        CFRelease(ioSurface);
+        return false;
+    }
+    [blit copyFromTexture:texture
+              sourceSlice:0
+              sourceLevel:0
+             sourceOrigin:MTLOriginMake(0, 0, 0)
+               sourceSize:MTLSizeMake(width, height, 1)
+                 toBuffer:buffer
+        destinationOffset:0
+   destinationBytesPerRow:bytesPerRow
+ destinationBytesPerImage:bytesPerRow * height];
+    [blit endEncoding];
+    [commandBuffer commit];
+    [commandBuffer waitUntilCompleted];
+
+    const uint8_t* bytes = static_cast<const uint8_t*>(buffer.contents);
+    const auto matchesBGRA = [bytes](int x, int y, int b, int g, int r) {
+        const uint8_t* pixel = bytes + y * bytesPerRow + x * 4;
+        return std::abs(static_cast<int>(pixel[0]) - b) <= 2
+            && std::abs(static_cast<int>(pixel[1]) - g) <= 2
+            && std::abs(static_cast<int>(pixel[2]) - r) <= 2
+            && pixel[3] >= 253;
+    };
+    const bool quadrantsMatch =
+        matchesBGRA(1, 1, 0, 0, 255) // IOSurface row zero is EGL bottom.
+        && matchesBGRA(width - 2, 1, 0, 255, 0)
+        && matchesBGRA(1, height - 2, 255, 0, 0)
+        && matchesBGRA(width - 2, height - 2, 0, 255, 255);
+    const bool metalCompleted = commandBuffer.status == MTLCommandBufferStatusCompleted;
+    eglMakeCurrent(state.display, state.pbuffer, state.pbuffer, state.context);
+    eglDestroySurface(state.display, ioPbuffer);
+    CFRelease(ioSurface);
+    if (!quadrantsMatch || !metalCompleted) {
         std::fprintf(stderr,
-                     "[Yoghourt] ERROR renderer self-test pbuffer readback pixel=%u,%u,%u,%u\n",
-                     pixel[0], pixel[1], pixel[2], pixel[3]);
+                     "[Yoghourt] ERROR renderer self-test IOSurface color/orientation status=%ld samples=%u,%u,%u,%u|%u,%u,%u,%u|%u,%u,%u,%u|%u,%u,%u,%u\n",
+                     static_cast<long>(commandBuffer.status),
+                     bytes[1 * bytesPerRow + 1 * 4 + 0], bytes[1 * bytesPerRow + 1 * 4 + 1], bytes[1 * bytesPerRow + 1 * 4 + 2], bytes[1 * bytesPerRow + 1 * 4 + 3],
+                     bytes[1 * bytesPerRow + (width - 2) * 4 + 0], bytes[1 * bytesPerRow + (width - 2) * 4 + 1], bytes[1 * bytesPerRow + (width - 2) * 4 + 2], bytes[1 * bytesPerRow + (width - 2) * 4 + 3],
+                     bytes[(height - 2) * bytesPerRow + 1 * 4 + 0], bytes[(height - 2) * bytesPerRow + 1 * 4 + 1], bytes[(height - 2) * bytesPerRow + 1 * 4 + 2], bytes[(height - 2) * bytesPerRow + 1 * 4 + 3],
+                     bytes[(height - 2) * bytesPerRow + (width - 2) * 4 + 0], bytes[(height - 2) * bytesPerRow + (width - 2) * 4 + 1], bytes[(height - 2) * bytesPerRow + (width - 2) * 4 + 2], bytes[(height - 2) * bytesPerRow + (width - 2) * 4 + 3]);
         return false;
     }
     return true;
@@ -314,7 +461,9 @@ int YoghourtRunRendererSelfTest() {
             };
             state.context = eglCreateContext(
                 state.display, state.config, EGL_NO_CONTEXT, contextAttributes);
-            if (state.context == EGL_NO_CONTEXT || !RunPbufferChecks(state))
+            if (state.context == EGL_NO_CONTEXT
+                || !RunPbufferChecks(state)
+                || !RunIOSurfaceMetalChecks(state))
                 break;
 
             state.window = eglCreateWindowSurface(
@@ -359,7 +508,7 @@ int YoghourtRunRendererSelfTest() {
             const char* glesVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
 
             std::fprintf(stdout,
-                         "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f selfTest=passed\n",
+                         "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f iosurface=passed sharedTexture=passed quadrants=passed readback=none resize=passed fallback=passed selfTest=passed\n",
                          major,
                          minor,
                          glesVersion ? glesVersion : "unknown",

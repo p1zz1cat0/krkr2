@@ -1,0 +1,32 @@
+diff --git a/cocos/platform/desktop/CCGLViewImpl-desktop.cpp b/cocos/platform/desktop/CCGLViewImpl-desktop.cpp
+--- a/cocos/platform/desktop/CCGLViewImpl-desktop.cpp
++++ b/cocos/platform/desktop/CCGLViewImpl-desktop.cpp
+@@ -37,3 +37,10 @@
+ #include <EGL/eglext.h>
+ #include <EGL/eglext_angle.h>
++
++extern "C" bool YoghourtKrKrSpatialPresent(EGLDisplay display,
++                                             EGLSurface windowSurface,
++                                             EGLConfig config,
++                                             EGLContext context,
++                                             void *nativeWindow);
++extern "C" void YoghourtKrKrSpatialShutdown();
+ #endif
+@@ -294,4 +301,5 @@ void GLViewImpl::destroyANGLEMetal()
+     if (_eglDisplay == EGL_NO_DISPLAY)
+         return;
+ 
++    YoghourtKrKrSpatialShutdown();
+     eglMakeCurrent(_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+@@ -637,5 +645,11 @@ void GLViewImpl::swapBuffers()
+     if (_mainWindow && updateANGLESurfaceSize() && _eglDrawable)
+     {
++        if (YoghourtKrKrSpatialPresent(_eglDisplay,
++                                       _eglSurface,
++                                       _eglConfig,
++                                       _eglContext,
++                                       (__bridge void *)glfwGetCocoaWindow(_mainWindow)))
++            return;
+         if (!eglSwapBuffers(_eglDisplay, _eglSurface))
+             fprintf(stderr, "[Yoghourt] ERROR renderer present failed error=0x%x\n", eglGetError());
+     }

@@ -73,6 +73,14 @@ elseif(IOS)
 #        )
 elseif(MACOS)
     enable_language(OBJCXX)
+    if(NOT YOGHOURT_SPATIAL_PRESENTER_DIR)
+        message(FATAL_ERROR "YOGHOURT_SPATIAL_PRESENTER_DIR is required for the macOS KrKr2 build")
+    endif()
+    set(YOGHOURT_SPATIAL_PRESENTER_SOURCE
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.h
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/cunny/cunny_metal.h
+    )
     set(APP_UI_RES
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/Icon.icns
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/Info.plist
@@ -81,13 +89,28 @@ elseif(MACOS)
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/main.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtPresentation.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_SOURCE}
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/Prefix.pch
             ${APP_UI_RES}
     )
 endif()
 
 target_include_directories(${PROJECT_NAME} PUBLIC ${KRKR2CORE_PATH}/environ/cocos2d)
+if(MACOS)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}
+    )
+    set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.mm
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
+            PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+    )
+endif()
 
 # external lib
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cpp/external)
@@ -96,9 +119,29 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/cpp/external)
 add_subdirectory(${KRKR2CORE_PATH})
 add_subdirectory(${KRKR2PLUGIN_PATH})
 
+if(MACOS)
+    target_include_directories(core_environ_module PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos
+    )
+endif()
+
 target_link_libraries(${PROJECT_NAME} PUBLIC
     krkr2plugin krkr2core
 )
+if(MACOS)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(METALFX_FRAMEWORK MetalFX REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${APPKIT_FRAMEWORK}
+            ${IOSURFACE_FRAMEWORK}
+            ${METAL_FRAMEWORK}
+            ${METALFX_FRAMEWORK}
+            ${QUARTZCORE_FRAMEWORK}
+    )
+endif()
 
 ## resources
 if(NOT ANDROID)

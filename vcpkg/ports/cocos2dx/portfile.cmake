@@ -28,6 +28,7 @@ vcpkg_extract_source_archive(
         patch/fix-mac-glew.patch
         patch/fix-mac-glfw3.patch
         patch/yoghourt-angle-metal.patch
+        patch/yoghourt-spatial-present.patch
         patch/fix-unzip.patch
         patch/fix-chipmunk-Hasty.patch
         patch/fix-win64.patch
