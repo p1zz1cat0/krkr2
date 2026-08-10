@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(TestPlugins LANGUAGES CXX)
 
 set(SOURCES
+        getLangName-dll.cpp
         psbfile-dll.cpp
 )
 
