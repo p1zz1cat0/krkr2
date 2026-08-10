@@ -223,12 +223,34 @@ static void AlphaBlendScaled(iTVPTexture2D *dest, const tTVPRect &destRect,
                                        tRenderTexRectArray(src_tex));
 }
 
+// Draw a textured quad with the official rotate* source mapping: source full
+// image (srcpt) -> destination parallelogram (dstpt, 3 corners + computed 4th).
+static void PerspectiveQuad(iTVPTexture2D *dest, iTVPTexture2D *src,
+                            const tTVPPointD dstpt[4], const tTVPRect &clip) {
+    if(!dest || !src)
+        return;
+    static iTVPRenderMethod *method =
+        TVPGetRenderManager()->GetRenderMethod("PerspectiveAlphaBlend_a");
+    static int opaID = method->EnumParameterID("opacity");
+    method->SetParameterOpa(opaID, 255);
+    tjs_int w = src->GetWidth(), h = src->GetHeight();
+    tTVPPointD srcpt[4] = {
+        {0, 0},
+        {(double)w - 1, 0},
+        {0, (double)h - 1},
+        {(double)w - 1, (double)h - 1}
+    };
+    tRenderTexQuadArray::Element src_tex[] = {
+        tRenderTexQuadArray::Element(src, srcpt) };
+    TVPGetRenderManager()->OperatePerspective(
+        method, 1, dest, nullptr, clip, dstpt,
+        tRenderTexQuadArray(src_tex));
+}
+
 enum class ExEffect {
     Wave,
     Ripple,
     Mosaic,
-    Twist,
-    TwistAccel,
     Turn,
     RotateZoom,
     RotateSwap,
@@ -268,6 +290,14 @@ protected:
     tjs_uint32 CurBGColor = 0;
     // mosaic (official extrans semantics)
     tjs_int MaxBlockSize = 30;
+    // rotate (official extrans semantics)
+    double TargetFactor = 1.0;
+    tjs_uint32 RotateBGColor = 0;
+    bool FixSrc1 = false;
+    tTVPPointD Quad1[4];
+    tTVPPointD Quad2[4];
+    bool DrawQuad1 = false;
+    bool DrawQuad2 = false;
     tTVPBaseTexture *Mask = nullptr;
     tTVPBaseTexture *Mosaic1 = nullptr;
     tTVPBaseTexture *Mosaic2 = nullptr;
@@ -287,10 +317,36 @@ public:
             Options->AddRef();
         if(Time < 2)
             Time = 2;
-        Factor = ReadReal(Options, TJS_W("factor"), 1.0);
-        Accel = ReadReal(Options, TJS_W("accel"), 0.0);
-        Twist = ReadReal(Options, TJS_W("twist"), 1.0);
-        TwistAccel = ReadReal(Options, TJS_W("twistaccel"), 0.0);
+        // Official parameter defaults per effect (SamplePlugin/extrans).
+        switch(Effect) {
+            case ExEffect::RotateZoom:
+                Factor = ReadReal(Options, TJS_W("factor"), 1.0);
+                Accel = ReadReal(Options, TJS_W("accel"), 0.0);
+                Twist = ReadReal(Options, TJS_W("twist"), 2.0);
+                TwistAccel = ReadReal(Options, TJS_W("twistaccel"), -2.0);
+                TargetFactor = 1.0;
+                FixSrc1 = true;
+                break;
+            case ExEffect::RotateVanish:
+                Factor = 1.0;
+                TargetFactor = 0.0;
+                Accel = ReadReal(Options, TJS_W("accel"), 2.0);
+                Twist = ReadReal(Options, TJS_W("twist"), 2.0);
+                TwistAccel = ReadReal(Options, TJS_W("twistaccel"), 2.0);
+                FixSrc1 = false;
+                break;
+            case ExEffect::RotateSwap:
+                RotateBGColor =
+                    (tjs_uint32)ReadNumber(Options, TJS_W("bgcolor"), 0);
+                Twist = ReadReal(Options, TJS_W("twist"), 1.0);
+                break;
+            default:
+                Factor = ReadReal(Options, TJS_W("factor"), 1.0);
+                Accel = ReadReal(Options, TJS_W("accel"), 0.0);
+                Twist = ReadReal(Options, TJS_W("twist"), 1.0);
+                TwistAccel = ReadReal(Options, TJS_W("twistaccel"), 0.0);
+                break;
+        }
         CenterX = (tjs_int)ReadNumber(Options, TJS_W("centerx"), w / 2);
         CenterY = (tjs_int)ReadNumber(Options, TJS_W("centery"), h / 2);
         WaveType = (tjs_int)ReadNumber(Options, TJS_W("wavetype"), 0);
@@ -360,8 +416,13 @@ public:
             t = 0;
         if(t > 1)
             t = 1;
-        // Optional acceleration curve (extrans accel)
-        if(Accel != 0.0) {
+        // Optional acceleration curve (extrans accel). rotate* effects use
+        // their own official power curves in BlendRotate, so skip the global
+        // remap for them.
+        bool isRotate = Effect == ExEffect::RotateZoom ||
+                        Effect == ExEffect::RotateSwap ||
+                        Effect == ExEffect::RotateVanish;
+        if(!isRotate && Accel != 0.0) {
             double a = Accel;
             if(a < -0.99)
                 a = -0.99;
@@ -377,6 +438,21 @@ public:
         Phase = (tjs_int)(t * PhaseMax + 0.5);
         if(Phase > PhaseMax)
             Phase = PhaseMax;
+        // rotate: official per-frame quad positions (tTVPBaseRotateTransHandler)
+        if(isRotate) {
+            const double p = (double)curtime / (double)Time;
+            switch(Effect) {
+                case ExEffect::RotateZoom:
+                case ExEffect::RotateVanish:
+                    CalcRotateZoomPos(p);
+                    break;
+                case ExEffect::RotateSwap:
+                    CalcRotateSwapPos(p);
+                    break;
+                default:
+                    break;
+            }
+        }
         // wave: official extrans per-frame parameters
         if(Effect == ExEffect::Wave) {
             tjs_int64 half = Time / 2;
@@ -446,17 +522,13 @@ public:
             case ExEffect::Mosaic:
                 BlendMosaic(data);
                 break;
-            case ExEffect::Twist:
-            case ExEffect::TwistAccel:
-                BlendTwist(data);
-                break;
             case ExEffect::Turn:
                 BlendTurn(data);
                 break;
             case ExEffect::RotateZoom:
             case ExEffect::RotateSwap:
             case ExEffect::RotateVanish:
-                BlendRotateZoom(data);
+                BlendRotate(data);
                 break;
         }
         return TJS_S_OK;
@@ -669,52 +741,6 @@ private:
             opa, DestLayerType);
     }
 
-    void BlendTwist(tTVPDivisibleData *data) {
-        // Angular wipe with spiral bias (twist)
-        double p = Progress();
-        if(Effect == ExEffect::TwistAccel) {
-            double ta = TwistAccel;
-            p = p + ta * p * p * (1.0 - p);
-            if(p < 0)
-                p = 0;
-            if(p > 1)
-                p = 1;
-        }
-        const double twistAmt = Twist * 2.5;
-        const double open = p * (2.0 * kPi + std::fabs(twistAmt));
-        const tjs_int block = 3;
-
-        BeginMask(data);
-        for(tjs_int y = 0; y < data->Height; y += block) {
-            tjs_int h = std::min(block, data->Height - y);
-            for(tjs_int x = 0; x < data->Width; x += block) {
-                tjs_int w = std::min(block, data->Width - x);
-                double cx = (double)(data->Left + x) + w * 0.5 - CenterX;
-                double cy = (double)(data->Top + y) + h * 0.5 - CenterY;
-                double ang = std::atan2(cy, cx); // -pi..pi
-                if(ang < 0)
-                    ang += 2.0 * kPi;
-                double r = std::sqrt(cx * cx + cy * cy);
-                double maxR =
-                    std::sqrt((double)Width * Width + (double)Height * Height);
-                double spiral = ang + twistAmt * (r / (maxR + 1.0));
-                while(spiral < 0)
-                    spiral += 2.0 * kPi;
-                while(spiral >= 2.0 * kPi)
-                    spiral -= 2.0 * kPi;
-                tjs_int opa = (spiral < open) ? 255 : 0;
-                // soft edge
-                double edge = open - spiral;
-                if(edge > 0 && edge < 0.15)
-                    opa = (tjs_int)((edge / 0.15) * 255.0);
-                if(spiral >= open && spiral - open < 0.15)
-                    opa = 255 - (tjs_int)(((spiral - open) / 0.15) * 255.0);
-                SetMaskBlock(data, x, y, w, h, opa);
-            }
-        }
-        ApplyMask(data);
-    }
-
     void BlendTurn(tTVPDivisibleData *data) {
         // Vertical door / page-turn style: reveal src2 from left with curved
         // edge.
@@ -738,39 +764,143 @@ private:
         ApplyMask(data);
     }
 
-    void BlendRotateZoom(tTVPDivisibleData *data) {
-        // Approximate rotate-zoom: circular iris + overall crossfade.
-        // Full perspective rotate would need a custom shader; this gives a
-        // clear zoom-ish reveal that is more than a flat fade.
-        const double p = Progress();
-        const tjs_int opa = (tjs_int)(p * 255.0 + 0.5);
-        double maxR =
-            std::sqrt((double)Width * Width + (double)Height * Height) * 0.55;
-        double radius = (Effect == ExEffect::RotateVanish)
-            ? (1.0 - p) * maxR
-            : p * maxR * (0.7 + 0.5 * Factor);
-        const tjs_int block = 4;
+    // Official tTVPRotateZoomTransHandler::CalcPosition (shared by
+    // rotatezoom/rotatevanish). Fixed source covers the whole layer, the
+    // other source is rotated+scaled around center with accel/twist curves.
+    void CalcRotateZoomPos(double p) {
+        tjs_int scx = Width / 2, scy = Height / 2;
+        double zm = p, tm = p;
+        if(Accel < 0) {
+            zm = 1.0 - zm;
+            zm = pow(zm, -Accel);
+            zm = 1.0 - zm;
+        } else if(Accel > 0) {
+            zm = pow(zm, Accel);
+        }
+        tjs_int cx = (tjs_int)((scx - CenterX) * zm + CenterX);
+        tjs_int cy = (tjs_int)((scy - CenterY) * zm + CenterY);
+        if(TwistAccel < 0) {
+            tm = 1.0 - tm;
+            tm = pow(tm, -TwistAccel);
+            tm = 1.0 - tm;
+        } else if(TwistAccel > 0) {
+            tm = pow(tm, TwistAccel);
+        }
+        double rad = (p >= 1.0) ? 0 : 2.0 * 3.14159265368979 * Twist * tm;
+        zm = (TargetFactor - Factor) * zm + Factor;
+        double s = sin(rad) * zm, c = cos(rad) * zm;
+        tTVPPointD pts[4];
+        pts[0].x = -cx * c + -cy * s + scx;
+        pts[0].y = -cx * -s + -cy * c + scy;
+        pts[1].x = (Width - 1 - cx) * c + -cy * s + scx;
+        pts[1].y = (Width - 1 - cx) * -s + -cy * c + scy;
+        pts[2].x = -cx * c + (Height - 1 - cy) * s + scx;
+        pts[2].y = -cx * -s + (Height - 1 - cy) * c + scy;
+        // 4th corner = parallelogram (points[1] - points[0] + points[2])
+        pts[3].x = pts[1].x - pts[0].x + pts[2].x;
+        pts[3].y = pts[1].y - pts[0].y + pts[2].y;
+        if(FixSrc1) {
+            DrawQuad1 = false; // src1 fixed full-screen
+            memcpy(Quad2, pts, sizeof(Quad2));
+            DrawQuad2 = true;
+        } else {
+            DrawQuad2 = false; // src2 fixed full-screen
+            memcpy(Quad1, pts, sizeof(Quad1));
+            DrawQuad1 = true;
+        }
+    }
 
-        BeginMask(data);
-        for(tjs_int y = 0; y < data->Height; y += block) {
-            tjs_int h = std::min(block, data->Height - y);
-            for(tjs_int x = 0; x < data->Width; x += block) {
-                tjs_int w = std::min(block, data->Width - x);
-                double cx = (double)(data->Left + x) + w * 0.5 - CenterX;
-                double cy = (double)(data->Top + y) + h * 0.5 - CenterY;
-                double r = std::sqrt(cx * cx + cy * cy);
-                // cheap angular swirl for "rotate" feel
-                double ang = std::atan2(cy, cx) + p * Factor * 2.0;
-                r += 4.0 * std::sin(ang * 3.0);
-                tjs_int blockOpacity = opa;
-                if(Effect == ExEffect::RotateVanish)
-                    blockOpacity = r > radius ? 255 : opa;
-                else
-                    blockOpacity = r < radius ? 255 : opa;
-                SetMaskBlock(data, x, y, w, h, blockOpacity);
+    // Official tTVPRotateSwapTransHandler::CalcPosition: both sources rotate,
+    // which one ends up on top depends on the half of the transition.
+    void CalcRotateSwapPos(double p) {
+        tjs_int scx = Width / 2, scy = Height / 2;
+        double zm = p;
+        double twist = Twist * 2.0 * 3.14159265368979; // official ctor
+        double tm, rad, s, c;
+        tjs_int cx, cy;
+        tTVPPointD q1[4], q2[4];
+
+        // src1
+        tm = zm * zm;
+        cx = (tjs_int)((-scx) * tm + scx + sin(tm * 3.14159265368979) * scx * 1.5);
+        cy = (tjs_int)((-scy) * tm + scy);
+        rad = tm * twist;
+        tm = 1.0 - tm;
+        s = sin(rad) * tm;
+        c = cos(rad) * tm;
+        q1[0].x = -scx * c + -scy * s + cx;
+        q1[0].y = (-scx * -s + -scy * c) * tm + cy;
+        q1[1].x = (Width - 1 - scx) * c + -scy * s + cx;
+        q1[1].y = ((Width - 1 - scx) * -s + -scy * c) * tm + cy;
+        q1[2].x = -scx * c + (Height - 1 - scy) * s + cx;
+        q1[2].y = (-scx * -s + (Height - 1 - scy) * c) * tm + cy;
+        q1[3].x = q1[1].x - q1[0].x + q1[2].x;
+        q1[3].y = q1[1].y - q1[0].y + q1[2].y;
+
+        // src2
+        tm = 1.0 - (1.0 - zm) * (1.0 - zm);
+        cx = (tjs_int)((scx - (Width - 1)) * tm + (Width - 1) -
+                       sin(tm * 3.14159265368979) * scx * 1.5);
+        cy = (tjs_int)((scy - (Height - 1)) * tm + (Height - 1));
+        rad = (-1.0 + tm) * twist;
+        s = sin(rad) * tm;
+        c = cos(rad) * tm;
+        q2[0].x = -scx * c + -scy * s + cx;
+        q2[0].y = (-scx * -s + -scy * c) * tm + cy;
+        q2[1].x = (Width - 1 - scx) * c + -scy * s + cx;
+        q2[1].y = ((Width - 1 - scx) * -s + -scy * c) * tm + cy;
+        q2[2].x = -scx * c + (Height - 1 - scy) * s + cx;
+        q2[2].y = (-scx * -s + (Height - 1 - scy) * c) * tm + cy;
+        q2[3].x = q2[1].x - q2[0].x + q2[2].x;
+        q2[3].y = q2[1].y - q2[0].y + q2[2].y;
+
+        memcpy(Quad1, q1, sizeof(Quad1));
+        memcpy(Quad2, q2, sizeof(Quad2));
+        DrawQuad1 = DrawQuad2 = true;
+    }
+
+    void BlendRotate(tTVPDivisibleData *data) {
+        // GPU port of official tTVPBaseRotateTransHandler::Process: fill the
+        // background first, then draw sources in AddSource order so the later
+        // one covers the earlier one. Fixed full-screen sources are plain
+        // copies, the moving one uses a perspective quad.
+        iTVPTexture2D *dest = data->Dest->GetTextureForRender();
+        iTVPTexture2D *s1 = const_cast<iTVPScanLineProvider *>(data->Src1)
+                                ->GetTexture();
+        iTVPTexture2D *s2 = const_cast<iTVPScanLineProvider *>(data->Src2)
+                                ->GetTexture();
+        tTVPRect clip(data->DestLeft, data->DestTop,
+                      data->DestLeft + data->Width,
+                      data->DestTop + data->Height);
+
+        if(Effect == ExEffect::RotateSwap) {
+            FillRectColor(dest, clip.left, clip.top, data->Width, data->Height,
+                          RotateBGColor);
+        }
+
+        if(Effect == ExEffect::RotateZoom) {
+            // src1 fixed, src2 rotates on top
+            CopyRectTex(dest, data->DestLeft, data->DestTop, s1,
+                        data->Src1Left, data->Src1Top, data->Width,
+                        data->Height);
+            PerspectiveQuad(dest, s2, Quad2, clip);
+        } else if(Effect == ExEffect::RotateVanish) {
+            // src2 fixed, src1 rotates on top (vanish)
+            CopyRectTex(dest, data->DestLeft, data->DestTop, s2,
+                        data->Src2Left, data->Src2Top, data->Width,
+                        data->Height);
+            PerspectiveQuad(dest, s1, Quad1, clip);
+        } else {
+            // RotateSwap: first half src1 covers src2, second half reversed
+            const double p = Progress();
+            if(p < 0.5) {
+                PerspectiveQuad(dest, s2, Quad2, clip);
+                PerspectiveQuad(dest, s1, Quad1, clip);
+            } else {
+                PerspectiveQuad(dest, s1, Quad1, clip);
+                PerspectiveQuad(dest, s2, Quad2, clip);
             }
         }
-        ApplyMask(data);
     }
 };
 
@@ -857,8 +987,6 @@ static void InitPlugin_Extrans() {
     RegisterOne(TJS_W("wavetype"), ExEffect::Wave);
     RegisterOne(TJS_W("ripple"), ExEffect::Ripple);
     RegisterOne(TJS_W("mosaic"), ExEffect::Mosaic);
-    RegisterOne(TJS_W("twist"), ExEffect::Twist);
-    RegisterOne(TJS_W("twistaccel"), ExEffect::TwistAccel);
     RegisterOne(TJS_W("turn"), ExEffect::Turn);
     RegisterOne(TJS_W("rotatezoom"), ExEffect::RotateZoom);
     RegisterOne(TJS_W("rotateswap"), ExEffect::RotateSwap);
@@ -866,7 +994,7 @@ static void InitPlugin_Extrans() {
 
     TVPAddImportantLog(
         TJS_W("extrans: native transition providers registered "
-              "(wave/ripple/mosaic/twist/turn/rotate*)"));
+              "(wave/ripple/mosaic/turn/rotate*)"));
 }
 
 } // namespace
