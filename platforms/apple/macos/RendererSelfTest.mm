@@ -4,6 +4,8 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include "RendererSelfTest.h"
+#include "YoghourtSpatialAdapter.h"
+#include "YoghourtSpatialPresenter.h"
 
 #include <algorithm>
 #include <atomic>
@@ -13,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -28,6 +31,12 @@
 #include <GLES2/gl2ext.h>
 
 namespace {
+
+using yoghourt_spatial::MetalTextureFrame;
+using yoghourt_spatial::Options;
+using yoghourt_spatial::PixelFormat;
+using yoghourt_spatial::Presenter;
+using yoghourt_spatial::ScalerMode;
 
 constexpr auto kSelfTestTimeout = std::chrono::seconds(12);
 
@@ -189,7 +198,7 @@ bool RunPbufferChecks(EGLState& state) {
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glFinish();
+    glFlush();
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &framebuffer);
     glDeleteTextures(1, &renderTexture);
@@ -375,6 +384,151 @@ bool WaitForWindowSize(EGLState& state, EGLint expectedWidth, EGLint expectedHei
     return false;
 }
 
+id<MTLDevice> QuerySelfTestMetalDevice(EGLDisplay display) {
+    auto queryDisplay = reinterpret_cast<PFNEGLQUERYDISPLAYATTRIBEXTPROC>(
+        eglGetProcAddress("eglQueryDisplayAttribEXT"));
+    auto queryDevice = reinterpret_cast<PFNEGLQUERYDEVICEATTRIBEXTPROC>(
+        eglGetProcAddress("eglQueryDeviceAttribEXT"));
+    EGLAttrib deviceAttribute = 0;
+    EGLAttrib metalAttribute = 0;
+    if (!queryDisplay || !queryDevice ||
+        !queryDisplay(display, EGL_DEVICE_EXT, &deviceAttribute) ||
+        !queryDevice(reinterpret_cast<EGLDeviceEXT>(deviceAttribute),
+                     EGL_METAL_DEVICE_ANGLE,
+                     &metalAttribute)) {
+        return nil;
+    }
+    return (__bridge id<MTLDevice>)(reinterpret_cast<void *>(metalAttribute));
+}
+
+struct AsyncCompletionState {
+    std::atomic_bool completed{false};
+    std::atomic_bool succeeded{false};
+};
+
+void RecordAsyncCompletion(void *context, bool succeeded) {
+    auto *state = static_cast<AsyncCompletionState *>(context);
+    state->succeeded.store(succeeded, std::memory_order_release);
+    state->completed.store(true, std::memory_order_release);
+}
+
+bool RunDeterministicAsyncSubmitTest(EGLState &state,
+                                     NSView *view,
+                                     ScalerMode scaler,
+                                     int drawableSize) {
+    id<MTLDevice> device = QuerySelfTestMetalDevice(state.display);
+    if (!device || !view.layer) return false;
+    CAMetalLayer *layer = [CAMetalLayer layer];
+    layer.device = device;
+    layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+    layer.framebufferOnly = NO;
+    layer.frame = CGRectMake(0, 0, drawableSize, drawableSize);
+    layer.drawableSize = CGSizeMake(drawableSize, drawableSize);
+    [view.layer addSublayer:layer];
+
+    MTLTextureDescriptor *descriptor =
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                           width:8
+                                                          height:8
+                                                       mipmapped:NO];
+    descriptor.storageMode = MTLStorageModeShared;
+    descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
+                       MTLTextureUsageRenderTarget;
+    id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
+    id<MTLSharedEvent> waitEvent = [device newSharedEvent];
+    id<MTLSharedEvent> signalEvent = [device newSharedEvent];
+    Options options;
+    options.scaler = scaler;
+    Presenter presenter((__bridge void *)layer, 8, 8, options);
+    AsyncCompletionState completion;
+    MetalTextureFrame frame((__bridge void *)texture,
+                            8,
+                            8,
+                            PixelFormat::bgra8Unorm,
+                            (__bridge void *)waitEvent,
+                            41,
+                            (__bridge void *)signalEvent,
+                            73,
+                            RecordAsyncCompletion,
+                            &completion);
+    const auto start = std::chrono::steady_clock::now();
+    const bool submitted = presenter.present(frame);
+    const auto submitElapsed = std::chrono::steady_clock::now() - start;
+    const bool returnedBeforeSignal = submitted &&
+        submitElapsed < std::chrono::seconds(1) &&
+        !completion.completed.load(std::memory_order_acquire) &&
+        waitEvent.signaledValue < 41;
+    waitEvent.signaledValue = 41;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!completion.completed.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+        glfwPollEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const bool completed = completion.completed.load(std::memory_order_acquire) &&
+                           completion.succeeded.load(std::memory_order_acquire) &&
+                           signalEvent.signaledValue >= 73;
+    presenter.drain();
+    [layer removeFromSuperlayer];
+    return returnedBeforeSignal && completed;
+}
+
+bool RunSpatialRingTest(EGLState &state, GLFWwindow *window, NSWindow *cocoaWindow) {
+    const unsigned char pixels[8 * 8 * 4] = {};
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    if (!texture || glGetError() != GL_NO_ERROR) return false;
+
+    const char *oldScaler = std::getenv("YOGHOURT_SPATIAL_SCALER");
+    std::string savedScaler = oldScaler ? oldScaler : "";
+    setenv("YOGHOURT_SPATIAL_SCALER", "metalfx", 1);
+    YoghourtKrKrSpatialRegisterSourceTexture(texture, 8, 8, 1.0f, 1.0f, false);
+    YoghourtKrKrSpatialTestingHoldCompletions(true);
+    bool submitted = true;
+    for (int i = 0; i < 4; ++i) {
+        submitted = submitted && YoghourtKrKrSpatialPresent(
+            state.display, state.window, state.config, state.context,
+            (__bridge void *)cocoaWindow);
+    }
+    const bool saturated = submitted &&
+        YoghourtKrKrSpatialTestingSubmittedFrames() == 3 &&
+        YoghourtKrKrSpatialTestingDroppedFrames() == 1 &&
+        YoghourtKrKrSpatialTestingMaxInFlight() == 3;
+    YoghourtKrKrSpatialTestingHoldCompletions(false);
+
+    const auto recoveryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (YoghourtKrKrSpatialTestingSubmittedFrames() == 3 &&
+           std::chrono::steady_clock::now() < recoveryDeadline) {
+        glfwPollEvents();
+        YoghourtKrKrSpatialPresent(state.display, state.window, state.config, state.context,
+                                   (__bridge void *)cocoaWindow);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const bool recovered = YoghourtKrKrSpatialTestingSubmittedFrames() > 3;
+
+    const auto beforeResize = YoghourtKrKrSpatialTestingSubmittedFrames();
+    glfwSetWindowSize(window, 112, 88);
+    const bool resized = WaitForWindowSize(state, 112, 88);
+    const auto resizeDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (YoghourtKrKrSpatialTestingSubmittedFrames() == beforeResize &&
+           std::chrono::steady_clock::now() < resizeDeadline) {
+        glfwPollEvents();
+        YoghourtKrKrSpatialPresent(state.display, state.window, state.config, state.context,
+                                   (__bridge void *)cocoaWindow);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const bool submittedAfterResize = YoghourtKrKrSpatialTestingSubmittedFrames() > beforeResize;
+    YoghourtKrKrSpatialShutdown();
+    glDeleteTextures(1, &texture);
+    if (savedScaler.empty()) unsetenv("YOGHOURT_SPATIAL_SCALER");
+    else setenv("YOGHOURT_SPATIAL_SCALER", savedScaler.c_str(), 1);
+    return saturated && recovered && resized && submittedAfterResize;
+}
+
 } // namespace
 
 int YoghourtRunRendererSelfTest() {
@@ -478,6 +632,14 @@ int YoghourtRunRendererSelfTest() {
             }
             eglSwapInterval(state.display, 1);
 
+            if (!RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::metalFX, 32) ||
+                !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::cuNNy, 16) ||
+                !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::metalFX, 8) ||
+                !RunSpatialRingTest(state, glfwWindow, cocoaWindow)) {
+                LogFailure("asynchronous shared texture ring");
+                break;
+            }
+
             EGLint width = 0;
             EGLint height = 0;
             eglQuerySurface(state.display, state.window, EGL_WIDTH, &width);
@@ -508,7 +670,7 @@ int YoghourtRunRendererSelfTest() {
             const char* glesVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
 
             std::fprintf(stdout,
-                         "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f iosurface=passed sharedTexture=passed quadrants=passed readback=none resize=passed fallback=passed selfTest=passed\n",
+                         "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f iosurface=passed sharedTexture=passed quadrants=passed ring=3 sync=passed backpressure=passed asyncSubmit=passed lastReadPoints=passed readback=none glFinish=none externalWait=none resize=passed fallback=passed selfTest=passed\n",
                          major,
                          minor,
                          glesVersion ? glesVersion : "unknown",

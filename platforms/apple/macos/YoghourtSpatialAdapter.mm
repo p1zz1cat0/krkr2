@@ -12,10 +12,14 @@
 #include <GLES2/gl2ext.h>
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <limits>
 
 namespace {
 
@@ -32,6 +36,22 @@ struct SourceTexture {
     float maxS = 1.0f;
     float maxT = 1.0f;
     bool flippedY = false;
+};
+
+enum class SlotOwnership : uint8_t {
+    free = 0,
+    angleQueued = 1,
+    metalQueued = 2,
+};
+
+struct SharedSlot {
+    IOSurfaceRef ioSurface = nullptr;
+    EGLSurface pbuffer = EGL_NO_SURFACE;
+    id<MTLTexture> texture = nil;
+    std::atomic<uint8_t> ownership{static_cast<uint8_t>(SlotOwnership::free)};
+    std::atomic_bool completionHeld{false};
+    uint64_t angleReadyValue = 0;
+    uint64_t metalDoneValue = 0;
 };
 
 struct GLState {
@@ -60,19 +80,45 @@ struct GLState {
 
 SourceTexture gSource;
 EGLDisplay gDisplay = EGL_NO_DISPLAY;
-EGLSurface gPbuffer = EGL_NO_SURFACE;
 EGLContext gContext = EGL_NO_CONTEXT;
-IOSurfaceRef gIOSurface = nullptr;
 id<MTLDevice> gDevice = nil;
-id<MTLTexture> gMetalTexture = nil;
+id<MTLSharedEvent> gAngleReadyEvent = nil;
+id<MTLSharedEvent> gMetalDoneEvent = nil;
 CAMetalLayer *gOverlayLayer = nil;
 std::unique_ptr<Presenter> gPresenter;
+std::array<SharedSlot, 3> gSlots;
+size_t gNextSlot = 0;
+uint64_t gNextAngleReadyValue = 1;
+uint64_t gNextMetalDoneValue = 1;
+PFNEGLCREATESYNCPROC gCreateSync = nullptr;
+PFNEGLDESTROYSYNCPROC gDestroySync = nullptr;
+PFNEGLWAITSYNCPROC gWaitSync = nullptr;
+PFNEGLCOPYMETALSHAREDEVENTANGLEPROC gCopyMetalSharedEvent = nullptr;
 GLuint gProgram = 0;
 GLint gPosition = -1;
 GLint gTexCoord = -1;
 int gResourceWidth = 0;
 int gResourceHeight = 0;
 bool gLogged = false;
+bool gGenerationDisabled = false;
+EGLDisplay gDisabledDisplay = EGL_NO_DISPLAY;
+EGLContext gDisabledContext = EGL_NO_CONTEXT;
+int gDisabledWidth = 0;
+int gDisabledHeight = 0;
+std::atomic_bool gAsyncFailure{false};
+std::atomic_bool gTestHoldCompletions{false};
+uint64_t gSubmittedFrames = 0;
+std::atomic<uint64_t> gCompletedFrames{0};
+uint64_t gDroppedScalingFrames = 0;
+uint64_t gRingSaturations = 0;
+uint64_t gFallbacks = 0;
+uint64_t gMaxInFlight = 0;
+std::array<double, 256> gSubmitSamples{};
+size_t gSubmitSampleCount = 0;
+size_t gSubmitSampleCursor = 0;
+std::chrono::steady_clock::time_point gMetricsEpoch;
+uint64_t gMetricsSubmittedBase = 0;
+uint64_t gMetricsCompletedBase = 0;
 
 bool HasExtension(const char *extensions, const char *name) {
     if (!extensions || !name || !name[0]) return false;
@@ -112,20 +158,51 @@ void HideOverlay() {
     if (gOverlayLayer) gOverlayLayer.hidden = YES;
 }
 
+void MarkFallback(const char *reason) {
+    if (!gGenerationDisabled) {
+        ++gFallbacks;
+        std::fprintf(stderr, "[Yoghourt] KrKr spatial disabled: %s\n", reason);
+    }
+    gGenerationDisabled = true;
+    gDisabledDisplay = gDisplay;
+    gDisabledContext = gContext;
+    gDisabledWidth = gSource.width;
+    gDisabledHeight = gSource.height;
+    HideOverlay();
+}
+
 void ReleaseResources() {
+    if (gPresenter) {
+        gPresenter->drain();
+    }
     gPresenter.reset();
-    gMetalTexture = nil;
-    if (gIOSurface) {
-        CFRelease(gIOSurface);
-        gIOSurface = nullptr;
+    for (auto &slot : gSlots) {
+        slot.texture = nil;
+        if (slot.pbuffer != EGL_NO_SURFACE && gDisplay != EGL_NO_DISPLAY) {
+            eglDestroySurface(gDisplay, slot.pbuffer);
+        }
+        slot.pbuffer = EGL_NO_SURFACE;
+        if (slot.ioSurface) {
+            CFRelease(slot.ioSurface);
+            slot.ioSurface = nullptr;
+        }
+        slot.angleReadyValue = 0;
+        slot.metalDoneValue = 0;
+        slot.ownership.store(static_cast<uint8_t>(SlotOwnership::free), std::memory_order_release);
+        slot.completionHeld.store(false, std::memory_order_release);
     }
-    if (gPbuffer != EGL_NO_SURFACE && gDisplay != EGL_NO_DISPLAY) {
-        eglDestroySurface(gDisplay, gPbuffer);
-    }
-    gPbuffer = EGL_NO_SURFACE;
+    gAngleReadyEvent = nil;
+    gMetalDoneEvent = nil;
     gDisplay = EGL_NO_DISPLAY;
     gContext = EGL_NO_CONTEXT;
     gDevice = nil;
+    gCreateSync = nullptr;
+    gDestroySync = nullptr;
+    gWaitSync = nullptr;
+    gCopyMetalSharedEvent = nullptr;
+    gNextSlot = 0;
+    gNextAngleReadyValue = 1;
+    gNextMetalDoneValue = 1;
     gResourceWidth = 0;
     gResourceHeight = 0;
 }
@@ -222,6 +299,7 @@ bool EnsureOverlay(void *nativeWindow, id<MTLDevice> device) {
         gOverlayLayer = [CAMetalLayer layer];
         gOverlayLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         gOverlayLayer.framebufferOnly = NO;
+        gOverlayLayer.maximumDrawableCount = 3;
         gOverlayLayer.opaque = YES;
         gOverlayLayer.hidden = YES;
         [view.layer addSublayer:gOverlayLayer];
@@ -240,6 +318,90 @@ bool EnsureOverlay(void *nativeWindow, id<MTLDevice> device) {
     return true;
 }
 
+EGLAttrib ValueLow(uint64_t value) {
+    return static_cast<EGLAttrib>(static_cast<uint32_t>(value));
+}
+
+EGLAttrib ValueHigh(uint64_t value) {
+    return static_cast<EGLAttrib>(static_cast<uint32_t>(value >> 32));
+}
+
+bool LoadSharedEventSync(EGLDisplay display) {
+    const char *extensions = eglQueryString(display, EGL_EXTENSIONS);
+    if (!HasExtension(extensions, "EGL_ANGLE_metal_shared_event_sync")) return false;
+    gCreateSync = reinterpret_cast<PFNEGLCREATESYNCPROC>(eglGetProcAddress("eglCreateSync"));
+    gDestroySync = reinterpret_cast<PFNEGLDESTROYSYNCPROC>(eglGetProcAddress("eglDestroySync"));
+    gWaitSync = reinterpret_cast<PFNEGLWAITSYNCPROC>(eglGetProcAddress("eglWaitSync"));
+    gCopyMetalSharedEvent = reinterpret_cast<PFNEGLCOPYMETALSHAREDEVENTANGLEPROC>(
+        eglGetProcAddress("eglCopyMetalSharedEventANGLE"));
+    return gCreateSync && gDestroySync && gWaitSync && gCopyMetalSharedEvent;
+}
+
+bool CreateGenerationEvents(EGLDisplay display, id<MTLDevice> device) {
+    const EGLAttrib attributes[] = {
+        EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_LO_ANGLE, 0,
+        EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_HI_ANGLE, 0,
+        EGL_NONE,
+    };
+    EGLSync sync = gCreateSync(display, EGL_SYNC_METAL_SHARED_EVENT_ANGLE, attributes);
+    if (sync == EGL_NO_SYNC) return false;
+    void *event = gCopyMetalSharedEvent(display, sync);
+    const bool destroyed = gDestroySync(display, sync) == EGL_TRUE;
+    if (!event || !destroyed) {
+        if (event) CFRelease(event);
+        return false;
+    }
+    gAngleReadyEvent = (__bridge_transfer id<MTLSharedEvent>)event;
+    gMetalDoneEvent = [device newSharedEvent];
+    const auto eventCompatible = [](id<MTLSharedEvent> event, id<MTLDevice> rhs) {
+        id<MTLDevice> lhs = event.device;
+        if (!lhs) return true;
+        return lhs && rhs && (lhs == rhs || lhs.registryID == rhs.registryID);
+    };
+    return gAngleReadyEvent && gMetalDoneEvent &&
+           eventCompatible(gAngleReadyEvent, device) &&
+           eventCompatible(gMetalDoneEvent, device);
+}
+
+bool EnqueueMetalDoneWait(SharedSlot &slot) {
+    if (slot.metalDoneValue == 0) return true;
+    const EGLAttrib attributes[] = {
+        EGL_SYNC_METAL_SHARED_EVENT_OBJECT_ANGLE,
+        reinterpret_cast<EGLAttrib>((__bridge void *)gMetalDoneEvent),
+        EGL_SYNC_CONDITION, EGL_SYNC_METAL_SHARED_EVENT_SIGNALED_ANGLE,
+        EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_LO_ANGLE, ValueLow(slot.metalDoneValue),
+        EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_HI_ANGLE, ValueHigh(slot.metalDoneValue),
+        EGL_NONE,
+    };
+    EGLSync sync = gCreateSync(gDisplay, EGL_SYNC_METAL_SHARED_EVENT_ANGLE, attributes);
+    if (sync == EGL_NO_SYNC) return false;
+    const bool waited = gWaitSync(gDisplay, sync, 0) == EGL_TRUE;
+    const bool destroyed = gDestroySync(gDisplay, sync) == EGL_TRUE;
+    return waited && destroyed;
+}
+
+bool EnqueueAngleReadySignal(SharedSlot &slot) {
+    if (gNextAngleReadyValue == 0 ||
+        gNextAngleReadyValue == std::numeric_limits<uint64_t>::max()) {
+        return false;
+    }
+    const uint64_t value = gNextAngleReadyValue++;
+    const EGLAttrib attributes[] = {
+        EGL_SYNC_METAL_SHARED_EVENT_OBJECT_ANGLE,
+        reinterpret_cast<EGLAttrib>((__bridge void *)gAngleReadyEvent),
+        EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_LO_ANGLE, ValueLow(value),
+        EGL_SYNC_METAL_SHARED_EVENT_SIGNAL_VALUE_HI_ANGLE, ValueHigh(value),
+        EGL_NONE,
+    };
+    EGLSync sync = gCreateSync(gDisplay, EGL_SYNC_METAL_SHARED_EVENT_ANGLE, attributes);
+    if (sync == EGL_NO_SYNC) return false;
+    const bool destroyed = gDestroySync(gDisplay, sync) == EGL_TRUE;
+    if (!destroyed) return false;
+    glFlush();
+    slot.angleReadyValue = value;
+    return true;
+}
+
 bool CreateSharedResources(EGLDisplay display,
                            EGLConfig config,
                            EGLContext context,
@@ -248,9 +410,9 @@ bool CreateSharedResources(EGLDisplay display,
     id<MTLDevice> device = QueryMetalDevice(display);
     if (!device || !EnsureOverlay(nativeWindow, device)) return false;
 
-    if (gPbuffer != EGL_NO_SURFACE && gDisplay == display && gContext == context &&
+    if (gSlots[0].pbuffer != EGL_NO_SURFACE && gDisplay == display && gContext == context &&
         gResourceWidth == gSource.width && gResourceHeight == gSource.height &&
-        gDevice == device) {
+        gDevice == device && gPresenter && !gGenerationDisabled) {
         return true;
     }
     ReleaseResources();
@@ -258,6 +420,13 @@ bool CreateSharedResources(EGLDisplay display,
     gDisplay = display;
     gContext = context;
     gDevice = device;
+    gGenerationDisabled = false;
+
+    if (!LoadSharedEventSync(display) || !CreateGenerationEvents(display, device)) {
+        MarkFallback("EGL_ANGLE_metal_shared_event_sync unavailable");
+        ReleaseResources();
+        return false;
+    }
 
     NSDictionary *properties = @{
         (NSString *)kIOSurfaceWidth: @(gSource.width),
@@ -265,9 +434,6 @@ bool CreateSharedResources(EGLDisplay display,
         (NSString *)kIOSurfaceBytesPerElement: @4,
         (NSString *)kIOSurfacePixelFormat: @(static_cast<uint32_t>('BGRA')),
     };
-    gIOSurface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
-    if (!gIOSurface) return false;
-
     const EGLint attributes[] = {
         EGL_WIDTH, gSource.width,
         EGL_HEIGHT, gSource.height,
@@ -278,14 +444,6 @@ bool CreateSharedResources(EGLDisplay display,
         EGL_TEXTURE_TYPE_ANGLE, GL_UNSIGNED_BYTE,
         EGL_NONE,
     };
-    gPbuffer = eglCreatePbufferFromClientBuffer(
-        display, EGL_IOSURFACE_ANGLE, gIOSurface, config, attributes);
-    if (gPbuffer == EGL_NO_SURFACE) {
-        std::fprintf(stderr, "[Yoghourt] KrKr spatial fallback: IOSurface pbuffer creation failed egl=0x%x\n", eglGetError());
-        ReleaseResources();
-        return false;
-    }
-
     MTLTextureDescriptor *descriptor =
         [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                            width:gSource.width
@@ -296,10 +454,26 @@ bool CreateSharedResources(EGLDisplay display,
     descriptor.storageMode = MTLStorageModeShared;
     descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
                        MTLTextureUsageRenderTarget;
-    gMetalTexture = [device newTextureWithDescriptor:descriptor iosurface:gIOSurface plane:0];
-    if (!gMetalTexture) {
-        ReleaseResources();
-        return false;
+    for (auto &slot : gSlots) {
+        slot.ioSurface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+        if (!slot.ioSurface) {
+            MarkFallback("IOSurface allocation failed");
+            ReleaseResources();
+            return false;
+        }
+        slot.pbuffer = eglCreatePbufferFromClientBuffer(
+            display, EGL_IOSURFACE_ANGLE, slot.ioSurface, config, attributes);
+        if (slot.pbuffer == EGL_NO_SURFACE) {
+            MarkFallback("IOSurface EGL pbuffer creation failed");
+            ReleaseResources();
+            return false;
+        }
+        slot.texture = [device newTextureWithDescriptor:descriptor iosurface:slot.ioSurface plane:0];
+        if (!slot.texture) {
+            MarkFallback("IOSurface Metal texture creation failed");
+            ReleaseResources();
+            return false;
+        }
     }
     Options options;
     options.scaler = ScalerFromEnvironment();
@@ -309,6 +483,7 @@ bool CreateSharedResources(EGLDisplay display,
                                              gSource.height,
                                              options);
     if (!gPresenter->isActive()) {
+        MarkFallback("SpatialPresenter initialization failed");
         ReleaseResources();
         return false;
     }
@@ -359,25 +534,41 @@ void RestoreGLState(const GLState &state) {
     glColorMask(state.colorMask[0], state.colorMask[1], state.colorMask[2], state.colorMask[3]);
     for (const auto &attribute : state.attributes) {
         glBindBuffer(GL_ARRAY_BUFFER, attribute.buffer);
-        glVertexAttribPointer(attribute.index,
-                              attribute.size,
-                              attribute.type,
-                              attribute.normalized,
-                              attribute.stride,
-                              attribute.pointer);
+        // A disabled attribute's default null client pointer is not a valid
+        // glVertexAttribPointer input on ANGLE. Its pointer is irrelevant
+        // while disabled, so only restore concrete attribute bindings.
+        if (attribute.enabled || attribute.buffer != 0 || attribute.pointer != nullptr) {
+            glVertexAttribPointer(attribute.index,
+                                  attribute.size,
+                                  attribute.type,
+                                  attribute.normalized,
+                                  attribute.stride,
+                                  attribute.pointer);
+        }
         attribute.enabled ? glEnableVertexAttribArray(attribute.index)
                           : glDisableVertexAttribArray(attribute.index);
     }
     glBindBuffer(GL_ARRAY_BUFFER, state.arrayBuffer);
 }
 
-bool CopySourceToIOSurface(EGLDisplay display,
+bool CopySourceToIOSurface(SharedSlot &slot,
+                           EGLDisplay display,
                            EGLSurface windowSurface,
                            EGLContext context) {
-    if (!EnsureProgram()) return false;
+    if (!EnsureProgram()) {
+        std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: GL program\n");
+        return false;
+    }
     GLState state;
     CaptureGLState(state);
-    if (!eglMakeCurrent(display, gPbuffer, gPbuffer, context)) return false;
+    if (!EnqueueMetalDoneWait(slot)) {
+        std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: metalDone wait egl=0x%x\n", eglGetError());
+        return false;
+    }
+    if (!eglMakeCurrent(display, slot.pbuffer, slot.pbuffer, context)) {
+        std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: pbuffer makeCurrent egl=0x%x\n", eglGetError());
+        return false;
+    }
 
     // ANGLE's IOSurface bridge exposes EGL row zero (the bottom row) to
     // Metal as texture y=0. The shared Metal presenter samples uv.y=0 at
@@ -408,16 +599,102 @@ bool CopySourceToIOSurface(EGLDisplay display,
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glEnableVertexAttribArray(gPosition);
     glEnableVertexAttribArray(gTexCoord);
+    while (glGetError() != GL_NO_ERROR) {}
     glVertexAttribPointer(gPosition, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), vertices);
     glVertexAttribPointer(gTexCoord, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), vertices + 2);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glFinish();
     glDisableVertexAttribArray(gPosition);
     glDisableVertexAttribArray(gTexCoord);
-    const bool drew = glGetError() == GL_NO_ERROR;
+    const GLenum drawError = glGetError();
+    const bool signaled = drawError == GL_NO_ERROR && EnqueueAngleReadySignal(slot);
+    const bool drew = drawError == GL_NO_ERROR && signaled;
     const bool restored = eglMakeCurrent(display, windowSurface, windowSurface, context) == EGL_TRUE;
+    if (!drew || !restored) {
+        std::fprintf(stderr,
+                     "[Yoghourt] KrKr spatial copy failed: draw=0x%x readySignal=%d restore=%d egl=0x%x\n",
+                     drawError, signaled, restored, eglGetError());
+    }
     RestoreGLState(state);
     return drew && restored;
+}
+
+SharedSlot *AcquireFreeSlot() {
+    for (size_t offset = 0; offset < gSlots.size(); ++offset) {
+        const size_t index = (gNextSlot + offset) % gSlots.size();
+        auto &slot = gSlots[index];
+        uint8_t expected = static_cast<uint8_t>(SlotOwnership::free);
+        if (slot.ownership.compare_exchange_strong(
+                expected,
+                static_cast<uint8_t>(SlotOwnership::angleQueued),
+                std::memory_order_acq_rel)) {
+            gNextSlot = (index + 1) % gSlots.size();
+            uint64_t inFlight = 0;
+            for (const auto &candidate : gSlots) {
+                if (candidate.ownership.load(std::memory_order_acquire) !=
+                    static_cast<uint8_t>(SlotOwnership::free)) {
+                    ++inFlight;
+                }
+            }
+            gMaxInFlight = std::max(gMaxInFlight, inFlight);
+            return &slot;
+        }
+    }
+    return nullptr;
+}
+
+void SpatialCompletion(void *context, bool succeeded) {
+    auto *slot = static_cast<SharedSlot *>(context);
+    if (!succeeded) gAsyncFailure.store(true, std::memory_order_release);
+    gCompletedFrames.fetch_add(1, std::memory_order_relaxed);
+    if (gTestHoldCompletions.load(std::memory_order_acquire)) {
+        slot->completionHeld.store(true, std::memory_order_release);
+        return;
+    }
+    slot->ownership.store(static_cast<uint8_t>(SlotOwnership::free), std::memory_order_release);
+}
+
+void RecordSubmitTime(double milliseconds) {
+    gSubmitSamples[gSubmitSampleCursor] = milliseconds;
+    gSubmitSampleCursor = (gSubmitSampleCursor + 1) % gSubmitSamples.size();
+    gSubmitSampleCount = std::min(gSubmitSampleCount + 1, gSubmitSamples.size());
+}
+
+void LogMetricsIfDue() {
+    const auto now = std::chrono::steady_clock::now();
+    if (gMetricsEpoch.time_since_epoch().count() == 0) {
+        gMetricsEpoch = now;
+        return;
+    }
+    const double seconds = std::chrono::duration<double>(now - gMetricsEpoch).count();
+    if (seconds < 1.0) return;
+    std::array<double, 256> sorted = gSubmitSamples;
+    std::sort(sorted.begin(), sorted.begin() + gSubmitSampleCount);
+    const auto percentile = [&](double fraction) {
+        if (gSubmitSampleCount == 0) return 0.0;
+        const size_t index = std::min(gSubmitSampleCount - 1,
+                                      static_cast<size_t>((gSubmitSampleCount - 1) * fraction));
+        return sorted[index];
+    };
+    uint64_t inFlight = 0;
+    for (const auto &slot : gSlots) {
+        if (slot.ownership.load(std::memory_order_acquire) !=
+            static_cast<uint8_t>(SlotOwnership::free)) ++inFlight;
+    }
+    const uint64_t completed = gCompletedFrames.load(std::memory_order_relaxed);
+    std::fprintf(stdout,
+                 "[Yoghourt] KrKr spatial metrics submitCPU.p50=%.3fms submitCPU.p95=%.3fms submittedFPS=%.1f completedFPS=%.1f droppedScalingFrames=%llu ringSaturation=%llu fallback=%llu inFlight=%llu maxInFlight=%llu\n",
+                 percentile(0.50), percentile(0.95),
+                 (gSubmittedFrames - gMetricsSubmittedBase) / seconds,
+                 (completed - gMetricsCompletedBase) / seconds,
+                 (unsigned long long)gDroppedScalingFrames,
+                 (unsigned long long)gRingSaturations,
+                 (unsigned long long)gFallbacks,
+                 (unsigned long long)inFlight,
+                 (unsigned long long)gMaxInFlight);
+    std::fflush(stdout);
+    gMetricsEpoch = now;
+    gMetricsSubmittedBase = gSubmittedFrames;
+    gMetricsCompletedBase = completed;
 }
 
 } // namespace
@@ -449,23 +726,73 @@ extern "C" bool YoghourtKrKrSpatialPresent(
         HideOverlay();
         return false;
     }
-    if (!CreateSharedResources(display, config, context, nativeWindow) ||
-        !CopySourceToIOSurface(display, windowSurface, context)) {
-        HideOverlay();
+    if (gGenerationDisabled) {
+        const bool generationChanged = display != gDisabledDisplay ||
+            context != gDisabledContext || gSource.width != gDisabledWidth ||
+            gSource.height != gDisabledHeight;
+        if (!generationChanged) return false;
+        ReleaseResources();
+        gGenerationDisabled = false;
+    }
+    if (gAsyncFailure.exchange(false, std::memory_order_acq_rel)) {
+        MarkFallback("asynchronous Metal submission failed");
         return false;
     }
-    MetalTextureFrame frame((__bridge void *)gMetalTexture,
+    if ((gNextAngleReadyValue == std::numeric_limits<uint64_t>::max() ||
+         gNextMetalDoneValue == std::numeric_limits<uint64_t>::max()) &&
+        gSlots[0].pbuffer != EGL_NO_SURFACE) {
+        // Counter rollover is a generation boundary, never a frame-path wait.
+        ReleaseResources();
+    }
+    if (!CreateSharedResources(display, config, context, nativeWindow)) {
+        if (!gGenerationDisabled) MarkFallback("shared resource creation failed");
+        return false;
+    }
+    SharedSlot *slot = AcquireFreeSlot();
+    if (!slot) {
+        ++gDroppedScalingFrames;
+        ++gRingSaturations;
+        LogMetricsIfDue();
+        return true;
+    }
+    const auto submitStart = std::chrono::steady_clock::now();
+    if (!CopySourceToIOSurface(*slot, display, windowSurface, context)) {
+        slot->ownership.store(static_cast<uint8_t>(SlotOwnership::free), std::memory_order_release);
+        MarkFallback("ANGLE shared-texture copy or synchronization failed");
+        return false;
+    }
+    if (gNextMetalDoneValue == 0 ||
+        gNextMetalDoneValue == std::numeric_limits<uint64_t>::max()) {
+        slot->ownership.store(static_cast<uint8_t>(SlotOwnership::free), std::memory_order_release);
+        MarkFallback("shared-event counter exhausted; resource generation rebuild required");
+        return false;
+    }
+    slot->metalDoneValue = gNextMetalDoneValue++;
+    slot->ownership.store(static_cast<uint8_t>(SlotOwnership::metalQueued),
+                          std::memory_order_release);
+    MetalTextureFrame frame((__bridge void *)slot->texture,
                             gSource.width,
                             gSource.height,
-                            PixelFormat::bgra8Unorm);
+                            PixelFormat::bgra8Unorm,
+                            (__bridge void *)gAngleReadyEvent,
+                            slot->angleReadyValue,
+                            (__bridge void *)gMetalDoneEvent,
+                            slot->metalDoneValue,
+                            SpatialCompletion,
+                            slot);
     gOverlayLayer.hidden = NO;
     if (!gPresenter->present(frame)) {
-        HideOverlay();
+        slot->ownership.store(static_cast<uint8_t>(SlotOwnership::free), std::memory_order_release);
+        MarkFallback("SpatialPresenter external submission rejected");
         return false;
     }
+    ++gSubmittedFrames;
+    RecordSubmitTime(std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - submitStart).count());
+    LogMetricsIfDue();
     if (!gLogged) {
         std::fprintf(stdout,
-                     "[Yoghourt] SPATIAL engine=kirikiri bridge=iosurface-metal source=%dx%d readback=none sync=glFinish scaler=%s\n",
+                     "[Yoghourt] SPATIAL engine=kirikiri bridge=iosurface-metal source=%dx%d sync=metal-shared-event buffers=3 glFinish=none externalWait=none readback=none scaler=%s\n",
                      gSource.width,
                      gSource.height,
                      ScalerName());
@@ -488,4 +815,46 @@ extern "C" void YoghourtKrKrSpatialShutdown() {
     ReleaseResources();
     gSource = {};
     gLogged = false;
+    gGenerationDisabled = false;
+    gDisabledDisplay = EGL_NO_DISPLAY;
+    gDisabledContext = EGL_NO_CONTEXT;
+    gDisabledWidth = 0;
+    gDisabledHeight = 0;
+    gAsyncFailure.store(false, std::memory_order_release);
+    gTestHoldCompletions.store(false, std::memory_order_release);
+    gSubmittedFrames = 0;
+    gCompletedFrames.store(0, std::memory_order_release);
+    gDroppedScalingFrames = 0;
+    gRingSaturations = 0;
+    gFallbacks = 0;
+    gMaxInFlight = 0;
+    gSubmitSampleCount = 0;
+    gSubmitSampleCursor = 0;
+    gMetricsEpoch = {};
+    gMetricsSubmittedBase = 0;
+    gMetricsCompletedBase = 0;
+}
+
+extern "C" void YoghourtKrKrSpatialTestingHoldCompletions(bool hold) {
+    gTestHoldCompletions.store(hold, std::memory_order_release);
+    if (!hold) {
+        for (auto &slot : gSlots) {
+            if (slot.completionHeld.exchange(false, std::memory_order_acq_rel)) {
+                slot.ownership.store(static_cast<uint8_t>(SlotOwnership::free),
+                                     std::memory_order_release);
+            }
+        }
+    }
+}
+
+extern "C" unsigned long long YoghourtKrKrSpatialTestingDroppedFrames() {
+    return gDroppedScalingFrames;
+}
+
+extern "C" unsigned long long YoghourtKrKrSpatialTestingMaxInFlight() {
+    return gMaxInFlight;
+}
+
+extern "C" unsigned long long YoghourtKrKrSpatialTestingSubmittedFrames() {
+    return gSubmittedFrames;
 }
