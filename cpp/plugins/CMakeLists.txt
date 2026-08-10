@@ -23,7 +23,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     fftgraph.cpp
     LayerExBase.cpp
     PackinOne.cpp
-    ExtransNative.cpp
+    Extrans.cpp
     xp3filter.cpp
 )
 
