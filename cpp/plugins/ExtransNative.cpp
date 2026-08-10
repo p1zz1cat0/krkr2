@@ -52,6 +52,51 @@ static double ReadReal(iTVPSimpleOptionProvider *options, const tjs_char *name,
     return def;
 }
 
+// Official extrans common.h Clip(): clip [l, r) into [cl, cr), false if empty
+static bool ClipRange(tjs_int &l, tjs_int &r, tjs_int cl, tjs_int cr) {
+    if(l < cl)
+        l = cl;
+    if(r > cr)
+        r = cr;
+    return l < r;
+}
+
+// Official extrans common.h Blend(): mix a -> b by opa (0..255), 0xAARRGGBB
+static tjs_uint32 BlendColor(tjs_uint32 a, tjs_uint32 b, tjs_int opa) {
+    if(opa <= 0)
+        return a;
+    if(opa >= 255)
+        return b;
+    tjs_uint32 ret;
+    tjs_uint32 tmp;
+    tmp = a & 0x000000ff;
+    ret = 0x000000ff &
+          (tmp + (((b & 0x000000ff) - tmp) * opa >> 8));
+    tmp = a & 0x0000ff00;
+    ret |= 0x0000ff00 &
+           (tmp + (((b & 0x0000ff00) - tmp) * opa >> 8));
+    tmp = a & 0x00ff0000;
+    ret |= 0x00ff0000 &
+           (tmp + (((b & 0x00ff0000) - tmp) * opa >> 8));
+    tmp = a >> 24;
+    ret |= (0x000000ff & (tmp + (((b >> 24) - tmp) * opa >> 8))) << 24;
+    return ret;
+}
+
+// Fill a destination rect with a flat 0xAARRGGBB color (FillARGB).
+static void FillRectColor(iTVPTexture2D *dest, tjs_int dl, tjs_int dt,
+                          tjs_int w, tjs_int h, tjs_uint32 color) {
+    if(w <= 0 || h <= 0 || !dest)
+        return;
+    static iTVPRenderMethod *method =
+        TVPGetRenderManager()->GetRenderMethod("FillARGB");
+    static int colorID = method->EnumParameterID("color");
+    method->SetParameterColor4B(colorID, color);
+    TVPGetRenderManager()->OperateRect(
+        method, dest, nullptr, tTVPRect(dl, dt, dl + w, dt + h),
+        tRenderTexRectArray());
+}
+
 static void CopyRectTex(iTVPTexture2D *dest, tjs_int dl, tjs_int dt,
                         iTVPTexture2D *src, tjs_int sl, tjs_int st, tjs_int w,
                         tjs_int h) {
@@ -211,6 +256,18 @@ protected:
     tjs_int CenterY = 0;
     tjs_int WaveType = 0;
     tjs_int Reverse = 0;
+    // wave (official extrans semantics)
+    tjs_int MaxH = 50;
+    double MaxOmega = 0.2;
+    tjs_uint32 BGColor1 = 0;
+    tjs_uint32 BGColor2 = 0;
+    double CurH = 0;
+    double CurOmega = 0;
+    double CurRadStart = 0;
+    tjs_int BlendRatio = 0;
+    tjs_uint32 CurBGColor = 0;
+    // mosaic (official extrans semantics)
+    tjs_int MaxBlockSize = 30;
     tTVPBaseTexture *Mask = nullptr;
     tTVPBaseTexture *Mosaic1 = nullptr;
     tTVPBaseTexture *Mosaic2 = nullptr;
@@ -238,6 +295,11 @@ public:
         CenterY = (tjs_int)ReadNumber(Options, TJS_W("centery"), h / 2);
         WaveType = (tjs_int)ReadNumber(Options, TJS_W("wavetype"), 0);
         Reverse = (tjs_int)ReadNumber(Options, TJS_W("reverse"), 0);
+        MaxH = (tjs_int)ReadNumber(Options, TJS_W("maxh"), 50);
+        MaxOmega = ReadReal(Options, TJS_W("maxomega"), 0.2);
+        BGColor1 = (tjs_uint32)ReadNumber(Options, TJS_W("bgcolor1"), 0);
+        BGColor2 = (tjs_uint32)ReadNumber(Options, TJS_W("bgcolor2"), 0);
+        MaxBlockSize = (tjs_int)ReadNumber(Options, TJS_W("maxsize"), 30);
         if(TVPIsTypeUsingAlpha(DestLayerType)) {
             MaskMethod =
                 TVPGetRenderManager()->GetRenderMethod("UnivTransBlend_d");
@@ -285,7 +347,15 @@ public:
             First = false;
             StartTick = tick;
         }
-        double t = (double)(tick - StartTick) / (double)Time;
+        tjs_int64 raw = (tjs_int64)(tick - StartTick);
+        if(raw < 0)
+            raw = 0;
+        tjs_int64 curtime = raw;
+        if(curtime > (tjs_int64)Time)
+            curtime = Time;
+        if(Reverse)
+            curtime = (tjs_int64)Time - curtime;
+        double t = (double)raw / (double)Time;
         if(t < 0)
             t = 0;
         if(t > 1)
@@ -307,6 +377,34 @@ public:
         Phase = (tjs_int)(t * PhaseMax + 0.5);
         if(Phase > PhaseMax)
             Phase = PhaseMax;
+        // wave: official extrans per-frame parameters
+        if(Effect == ExEffect::Wave) {
+            tjs_int64 half = Time / 2;
+            tjs_int64 tt = curtime;
+            if(tt >= half)
+                tt = (tjs_int64)Time - tt;
+            if(tt < 0)
+                tt = 0;
+            double st = sin((kPi / 2.0) * (double)tt / (double)half);
+            CurH = st * MaxH;
+            switch(WaveType) {
+                case 1:
+                    CurOmega = MaxOmega * ((tjs_int64)Time - curtime) /
+                               (tjs_int64)Time;
+                    break;
+                case 2:
+                    CurOmega = MaxOmega * curtime / (tjs_int64)Time;
+                    break;
+                default:
+                    CurOmega = MaxOmega * st;
+                    break;
+            }
+            CurRadStart = -CurOmega * (Height / 2);
+            BlendRatio = (tjs_int)(curtime * 255 / (tjs_int64)Time);
+            if(BlendRatio > 255)
+                BlendRatio = 255;
+            CurBGColor = BlendColor(BGColor1, BGColor2, BlendRatio);
+        }
         return TJS_S_TRUE;
     }
 
@@ -440,55 +538,52 @@ private:
     }
 
     void BlendWave(tTVPDivisibleData *data) {
+        // Official extrans wave: each line is shifted by d = sin(rad)*CurH,
+        // src1/src2 blended at BlendRatio, exposed edges filled with
+        // CurBGColor. Runs of equal d are merged into strips to limit the
+        // number of GPU rects.
         iTVPTexture2D *dest = data->Dest->GetTextureForRender();
         iTVPTexture2D *s1 = const_cast<iTVPScanLineProvider *>(data->Src1)
                                 ->GetTexture();
         iTVPTexture2D *s2 = const_cast<iTVPScanLineProvider *>(data->Src2)
                                 ->GetTexture();
-        const double p = Progress();
-        const double amp =
-            (double)data->Height * 0.08 * Factor * std::sin(p * kPi);
-        const double freq = 0.045 + 0.02 * (WaveType % 3);
-        const tjs_int opa = (tjs_int)(p * 255.0 + 0.5);
-        const tjs_int strip = 2;
 
-        for(tjs_int y = 0; y < data->Height; y += strip) {
-            tjs_int h = strip;
-            if(y + h > data->Height)
-                h = data->Height - y;
-            double yy = (double)(data->Top + y);
-            tjs_int ox =
-                (tjs_int)(amp * std::sin(yy * freq + p * 12.0 * kPi) + 0.5);
-            // Clamp source offsets into layer
-            tjs_int s1l = data->Src1Left;
-            tjs_int s2l = data->Src2Left + ox;
-            tjs_int w = data->Width;
-            tjs_int s1t = data->Src1Top + y;
-            tjs_int s2t = data->Src2Top + y;
-            if(s2l < 0) {
-                tjs_int d = -s2l;
-                s2l = 0;
-                s1l += d;
-                // dest also shifts
+        tjs_int y = 0;
+        while(y < data->Height) {
+            double rad = (double)(data->Top + y) * CurOmega + CurRadStart;
+            tjs_int d = (tjs_int)(sin(rad) * CurH);
+            tjs_int h = 1;
+            while(y + h < data->Height) {
+                double rad2 = (double)(data->Top + y + h) * CurOmega +
+                              CurRadStart;
+                if((tjs_int)(sin(rad2) * CurH) != d)
+                    break;
+                h++;
             }
-            // Prefer full-width blend; if shift clips, fall back to unshifted
-            // for remaining edge pixels.
-            tjs_int maxW = Width - std::max(s1l, s2l);
-            if(maxW < 1) {
-                AlphaBlendRect(dest, data->DestLeft, data->DestTop + y, s1,
-                               data->Src1Left, s1t, s2, data->Src2Left, s2t, w,
-                               h, opa, DestLayerType);
-                continue;
+
+            // left/right exposed edge -> background color
+            if(d > 0) {
+                tjs_int l = 0, r = d;
+                if(ClipRange(l, r, data->Left, data->Left + data->Width))
+                    FillRectColor(dest, data->DestLeft + l - data->Left,
+                                  data->DestTop + y, r - l, h, CurBGColor);
+            } else if(d < 0) {
+                tjs_int l = d + Width, r = Width;
+                if(ClipRange(l, r, data->Left, data->Left + data->Width))
+                    FillRectColor(dest, data->DestLeft + l - data->Left,
+                                  data->DestTop + y, r - l, h, CurBGColor);
             }
-            tjs_int ww = std::min(w, maxW);
-            AlphaBlendRect(dest, data->DestLeft, data->DestTop + y, s1, s1l,
-                           s1t, s2, s2l, s2t, ww, h, opa, DestLayerType);
-            if(ww < w) {
-                AlphaBlendRect(dest, data->DestLeft + ww, data->DestTop + y, s1,
-                               data->Src1Left + ww, s1t, s2,
-                               data->Src2Left + ww, s2t, w - ww, h, opa,
-                               DestLayerType);
+
+            // blended body shifted by d
+            tjs_int l = d, r = Width + d;
+            if(ClipRange(l, r, data->Left, data->Left + data->Width)) {
+                AlphaBlendRect(dest, data->DestLeft + l - data->Left,
+                               data->DestTop + y, s1,
+                               data->Src1Left + l - d, data->Src1Top + y, s2,
+                               data->Src2Left + l - d, data->Src2Top + y,
+                               r - l, h, BlendRatio, DestLayerType);
             }
+            y += h;
         }
     }
 
@@ -530,19 +625,27 @@ private:
     }
 
     void BlendMosaic(tTVPDivisibleData *data) {
+        // Official extrans mosaic: block size grows from 2 to MaxBlockSize in
+        // the first half of the transition and shrinks back (symmetric), each
+        // block filled with the blended color sampled at its center. On the
+        // GPU path a downscale to one texel per block then upscale back is the
+        // equivalent (average-of-block, which official comments note is even
+        // nicer than the center pixel). Grid stays top-left aligned; official
+        // centers the grid with CurOfsX/Y but the offset is under half a
+        // block and invisible for a mosaic.
         iTVPTexture2D *dest = data->Dest->GetTextureForRender();
         iTVPTexture2D *s1 = const_cast<iTVPScanLineProvider *>(data->Src1)
                                 ->GetTexture();
         iTVPTexture2D *s2 = const_cast<iTVPScanLineProvider *>(data->Src2)
                                 ->GetTexture();
         const double p = Progress();
-        // Block size peaks mid-transition (classic mosaic dissolve).
+        // official: block = (MaxBlockSize-2) * t/HalfTime + 2, t symmetric
         double mid = 1.0 - std::fabs(p * 2.0 - 1.0);
-        tjs_int block = 2 + (tjs_int)(mid * 48.0 * Factor + 0.5);
+        tjs_int block = 2 + (tjs_int)(mid * (MaxBlockSize - 2) + 0.5);
         if(block < 2)
             block = 2;
-        if(block > 64)
-            block = 64;
+        if(block > MaxBlockSize)
+            block = MaxBlockSize;
         const tjs_int opa = (tjs_int)(p * 255.0 + 0.5);
 
         const tjs_int reducedWidth =
