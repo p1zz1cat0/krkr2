@@ -379,8 +379,15 @@ bool CopySourceToIOSurface(EGLDisplay display,
     CaptureGLState(state);
     if (!eglMakeCurrent(display, gPbuffer, gPbuffer, context)) return false;
 
-    const float bottomT = gSource.flippedY ? 0.0f : gSource.maxT;
-    const float topT = gSource.flippedY ? gSource.maxT : 0.0f;
+    // ANGLE's IOSurface bridge exposes EGL row zero (the bottom row) to
+    // Metal as texture y=0. The shared Metal presenter samples uv.y=0 at
+    // the top of its drawable, so the copy pass must put the source's top
+    // row into the IOSurface bottom row. This is the opposite of the
+    // source sprite's normal GL presentation mapping. Keep the explicit
+    // sprite flip in the equation so textures which are intentionally
+    // flipped still preserve their logical orientation.
+    const float bottomT = gSource.flippedY ? gSource.maxT : 0.0f;
+    const float topT = gSource.flippedY ? 0.0f : gSource.maxT;
     const GLfloat vertices[] = {
         -1.0f, -1.0f, 0.0f,         bottomT,
          1.0f, -1.0f, gSource.maxS, bottomT,
