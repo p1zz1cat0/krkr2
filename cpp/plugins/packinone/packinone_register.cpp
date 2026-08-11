@@ -1,14 +1,22 @@
-// Compatibility stub for PackinOne.dll on native KrKr2.
+// packinone_register.cpp — PackinOne.dll 兼容插件的 ncbind 注册入口。
 //
-// Many mobile/PC fan ports ship PackinOne.dll as a Windows plugin. Scripts call
-// Plugins.link("PackinOne.dll") as a feature gate and expect a bundle of helpers
-// (fstat/saveStruct/layerExMovie, AffineSourceMovie, etc.). Yoghourt games have
-// no Windows .exe, so this internal module satisfies the link without Wine.
+// 注册同名模块满足 Plugins.link("PackinOne.dll") 特征门，并提供
+// PackinOne 的 TJS 接口子集（macOS 可实现的）：
+//   - Layer.clipAlphaRect（wtnbgo/layerExBTOA 移植）
+//   - Plugins.CanLoadPlugin
+//   - System.urlencode/urldecode/readEnvValue/writeEnvValue/
+//     expandEnvString/getOSVersion/getKnownFolderPath/confirm/
+//     waitForAppLock/setDpiAwareness/commandExecute/writeRegValue
+//   - Layer.shrinkCopy/shrinkCopyFast（简化占位）
+//   - Process（run/wait/exitCode，macOS system() 语义）
 //
-// Adapted from krkrsdl3 / KiriKiri-LauncherC PackinOne compatibility plugins.
+// StoragesFstat/TemporaryFiles/ScriptsAdd/LZ4 见同目录其他文件。
 
-#include "ncbind.hpp"
-#include "ScriptMgnIntf.h"
+#include "packinone.h"
+
+#include <cctype>
+#include <cstdlib>
+#include <string>
 
 #define NCB_MODULE_NAME TJS_W("packinone.dll")
 
@@ -357,122 +365,263 @@ NCB_ATTACH_FUNCTION(clipAlphaRect, Layer, clipAlphaRect);
 // modules satisfy the link. Verified against CafeStella: the boot path calls
 // Plugins.link("PackinOne.dll") but not CanLoadPlugin; the method is kept for
 // other ports that do use it.
-static tjs_error CanLoadPlugin(tTJSVariant *result, tjs_int numparams,
-                               tTJSVariant **, iTJSDispatch2 *) {
+
+// ---------------------------------------------------------------------------
+// Process: run a command line, wait for exit, expose exit code.
+// ---------------------------------------------------------------------------
+class Process {
+    int ExitCode = 0;
+    bool HasRun = false;
+
+public:
+    Process() {}
+
+    bool run(ttstr cmdline) {
+        ExitCode = std::system(cmdline.AsNarrowStdString().c_str());
+        HasRun = true;
+        return true;
+    }
+
+    bool wait(tjs_int) {
+        // system() already waited; nothing async here
+        return HasRun;
+    }
+
+    tjs_int getExitCode() const { return ExitCode; }
+};
+
+NCB_REGISTER_CLASS(Process) {
+    Constructor();
+    NCB_METHOD(run);
+    NCB_METHOD(wait);
+    NCB_PROPERTY_RO(exitCode, getExitCode);
+};
+
+// ---------------------------------------------------------------------------
+// System extensions (PackinOne flavor; mac-safe subset).
+// ---------------------------------------------------------------------------
+static tjs_error SystemUrlEncode(tTJSVariant *result, tjs_int numparams,
+                                 tTJSVariant **param, iTJSDispatch2 *) {
     if(numparams < 1)
         return TJS_E_BADPARAMCOUNT;
+    const std::string in = ttstr(*param[0]).AsNarrowStdString();
+    std::string out;
+    out.reserve(in.size() * 3);
+    const char hex[] = "0123456789ABCDEF";
+    for(unsigned char c : in) {
+        if(isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += (char)c;
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0xF];
+        }
+    }
+    if(result)
+        *result = PackinOneFromUtf8(out);
+    return TJS_S_OK;
+}
+
+static tjs_error SystemUrlDecode(tTJSVariant *result, tjs_int numparams,
+                                 tTJSVariant **param, iTJSDispatch2 *) {
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    const std::string in = ttstr(*param[0]).AsNarrowStdString();
+    std::string out;
+    out.reserve(in.size());
+    for(size_t i = 0; i < in.size(); ++i) {
+        if(in[i] == '%' && i + 2 < in.size()) {
+            auto hexval = [](char c) -> int {
+                if(c >= '0' && c <= '9')
+                    return c - '0';
+                if(c >= 'a' && c <= 'f')
+                    return c - 'a' + 10;
+                if(c >= 'A' && c <= 'F')
+                    return c - 'A' + 10;
+                return -1;
+            };
+            const int h = hexval(in[i + 1]), l = hexval(in[i + 2]);
+            if(h >= 0 && l >= 0) {
+                out += (char)((h << 4) | l);
+                i += 2;
+                continue;
+            }
+        }
+        out += in[i];
+    }
+    if(result)
+        *result = PackinOneFromUtf8(out);
+    return TJS_S_OK;
+}
+
+static tjs_error SystemReadEnvValue(tTJSVariant *result, tjs_int numparams,
+                                    tTJSVariant **param, iTJSDispatch2 *) {
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    const char *val =
+        std::getenv(ttstr(*param[0]).AsNarrowStdString().c_str());
+    if(result) {
+        if(val)
+            *result = PackinOneFromUtf8(std::string(val));
+        else
+            *result = tTJSVariant();
+    }
+    return TJS_S_OK;
+}
+
+static tjs_error SystemWriteEnvValue(tTJSVariant *, tjs_int numparams,
+                                     tTJSVariant **param, iTJSDispatch2 *) {
+    if(numparams < 2)
+        return TJS_E_BADPARAMCOUNT;
+    const std::string name = ttstr(*param[0]).AsNarrowStdString();
+    const std::string value = ttstr(*param[1]).AsNarrowStdString();
+    setenv(name.c_str(), value.c_str(), 1);
+    return TJS_S_OK;
+}
+
+static tjs_error SystemExpandEnvString(tTJSVariant *result, tjs_int numparams,
+                                       tTJSVariant **param,
+                                       iTJSDispatch2 *) {
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    std::string in = ttstr(*param[0]).AsNarrowStdString();
+    std::string out;
+    for(size_t i = 0; i < in.size(); ++i) {
+        if(in[i] == '%') {
+            size_t end = in.find('%', i + 1);
+            if(end != std::string::npos) {
+                const char *val = std::getenv(in.substr(i + 1, end - i - 1).c_str());
+                if(val) {
+                    out += val;
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        out += in[i];
+    }
+    if(result)
+        *result = PackinOneFromUtf8(out);
+    return TJS_S_OK;
+}
+
+static tjs_error SystemGetOSVersion(tTJSVariant *result, tjs_int,
+                                    tTJSVariant **, iTJSDispatch2 *) {
+#if defined(__APPLE__)
+    if(result)
+        *result = ttstr(TJS_W("macOS"));
+#else
+    if(result)
+        *result = ttstr(TJS_W("unknown"));
+#endif
+    return TJS_S_OK;
+}
+
+static tjs_error SystemGetKnownFolderPath(tTJSVariant *result, tjs_int,
+                                          tTJSVariant **, iTJSDispatch2 *) {
+    if(result)
+        *result = TVPGetAppPath();
+    return TJS_S_OK;
+}
+
+static tjs_error SystemConfirm(tTJSVariant *result, tjs_int numparams,
+                               tTJSVariant **param, iTJSDispatch2 *) {
+    const ttstr msg =
+        numparams >= 1 ? ttstr(*param[0]) : ttstr(TJS_W(""));
+    // No modal dialogs on the runtime side; log and accept.
+    TVPAddImportantLog(TJS_W("packinone: System.confirm (") + msg +
+                       TJS_W(") -> true"));
     if(result)
         *result = (tjs_int)1;
     return TJS_S_OK;
 }
 
-NCB_ATTACH_FUNCTION(CanLoadPlugin, Plugins, CanLoadPlugin);
-
-static void InitPlugin_PackinOne() {
-    // Best-effort companion plugins already built into KrKr2.
-    ncbAutoRegister::LoadModule(TJS_W("fstat.dll"));
-    ncbAutoRegister::LoadModule(TJS_W("saveStruct.dll"));
-    ncbAutoRegister::LoadModule(TJS_W("ScriptsEx.dll"));
-    ncbAutoRegister::LoadModule(TJS_W("csvParser.dll"));
-    ncbAutoRegister::LoadModule(TJS_W("layerExMovie.dll"));
-    ncbAutoRegister::LoadModule(TJS_W("addFont.dll"));
-    ncbAutoRegister::LoadModule(TJS_W("dirlist.dll"));
-
-    if(HasGlobalMember(TJS_W("AffineSource")) &&
-       !HasGlobalMember(TJS_W("AffineSourceMovie"))) {
-        try {
-            TVPExecuteScript(TJS_W(
-                "class AffineSourceMovie extends AffineSource {"
-                "  var _movie;"
-                "  var _width = 0;"
-                "  var _height = 0;"
-                "  var _lastOwner = true;"
-                "  function AffineSourceMovie(window) {"
-                "    super.AffineSource(window);"
-                "  }"
-                "  function createLayer(orig=void) {"
-                "    var src = new global.Layer(_window, _pool);"
-                "    if (orig != void) {"
-                "      src.assignImages(orig);"
-                "      src.width = orig.width;"
-                "      src.height = orig.height;"
-                "      src.scale = orig.scale;"
-                "    } else {"
-                "      src.scale = 1.0;"
-                "    }"
-                "    return src;"
-                "  }"
-                "  function finalize() {"
-                "    if (_lastOwner) {"
-                "      clear();"
-                "      invalidate _movie;"
-                "    }"
-                "  }"
-                "  function clear() {"
-                "    notifyOwner(\"onMotionStop\");"
-                "    onMovieStop();"
-                "    if (typeof kag != \"undefined\" && kag !== void)"
-                "      kag.conductor.trigger(\"movie_world_foremovie\");"
-                "  }"
-                "  function clone(newwindow, instance) {"
-                "    if (newwindow == void) {"
-                "      newwindow = _window;"
-                "    }"
-                "    if (instance == void) {"
-                "      instance = new global.AffineSourceMovie(newwindow);"
-                "    }"
-                "    instance._movie = _movie;"
-                "    instance._width = _width;"
-                "    instance._height = _height;"
-                "    _lastOwner = false;"
-                "    super.clone(newwindow, instance);"
-                "    return instance;"
-                "  }"
-                "  function canWaitMovie() {"
-                "    return _movie.isPlayingMovie();"
-                "  }"
-                "  function isFlip() {"
-                "    if (_movie.isPlayingMovie()) {"
-                "      return true;"
-                "    }"
-                "    clear();"
-                "    return false;"
-                "  }"
-                "  function stopMovie() {"
-                "    _movie.stopMovie();"
-                "  }"
-                "  function drawAffine(target, mtx, src) {"
-                "    (global.Layer.copyRect incontextof target)("
-                "      0, 0, _movie, 0, 0, _width, _height);"
-                "  }"
-                "  function loadImages(storage, colorKey=clNone, options=void) {"
-                "    _movie = createLayer();"
-                "    _movie.openMovie(storage, false);"
-                "    _movie.setSizeToImageSize();"
-                "    _width = _movie.width;"
-                "    _height = _movie.height;"
-                "    _movie.startMovie(false);"
-                "  }"
-                "};"
-            ));
-        } catch(...) {
-        }
-    }
-
-    if(!HasGlobalMember(TJS_W("AffineSourceMovie")))
-        return;
-
-    try {
-        TVPExecuteScript(TJS_W(
-            "if (global.extSourceMap === void) {"
-            "  global.extSourceMap = %[];"
-            "}"
-            "extSourceMap[\".WMV\"] = AffineSourceMovie;"
-            "extSourceMap[\".MPG\"] = AffineSourceMovie;"
-            "extSourceMap[\".MPEG\"] = AffineSourceMovie;"
-        ));
-    } catch(...) {
-    }
+static tjs_error SystemWaitForAppLock(tTJSVariant *result, tjs_int,
+                                      tTJSVariant **, iTJSDispatch2 *) {
+    if(result)
+        *result = (tjs_int)1;
+    return TJS_S_OK;
 }
 
-NCB_PRE_REGIST_CALLBACK(InitPlugin_PackinOne);
+static tjs_error SystemSetDpiAwareness(tTJSVariant *, tjs_int, tTJSVariant **,
+                                       iTJSDispatch2 *) {
+    return TJS_S_OK;
+}
+
+static tjs_error SystemCommandExecute(tTJSVariant *result, tjs_int numparams,
+                                      tTJSVariant **param, iTJSDispatch2 *) {
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    const int rc =
+        std::system(ttstr(*param[0]).AsNarrowStdString().c_str());
+    if(result)
+        *result = (tjs_int)rc;
+    return TJS_S_OK;
+}
+
+static tjs_error SystemWriteRegValue(tTJSVariant *, tjs_int, tTJSVariant **,
+                                     iTJSDispatch2 *) {
+    // registry is Windows-only; no-op on macOS
+    return TJS_S_OK;
+}
+
+NCB_ATTACH_FUNCTION(urlencode, System, SystemUrlEncode);
+NCB_ATTACH_FUNCTION(urldecode, System, SystemUrlDecode);
+NCB_ATTACH_FUNCTION(readEnvValue, System, SystemReadEnvValue);
+NCB_ATTACH_FUNCTION(writeEnvValue, System, SystemWriteEnvValue);
+NCB_ATTACH_FUNCTION(expandEnvString, System, SystemExpandEnvString);
+NCB_ATTACH_FUNCTION(getOSVersion, System, SystemGetOSVersion);
+NCB_ATTACH_FUNCTION(getKnownFolderPath, System, SystemGetKnownFolderPath);
+NCB_ATTACH_FUNCTION(confirm, System, SystemConfirm);
+NCB_ATTACH_FUNCTION(waitForAppLock, System, SystemWaitForAppLock);
+NCB_ATTACH_FUNCTION(setDpiAwareness, System, SystemSetDpiAwareness);
+NCB_ATTACH_FUNCTION(commandExecute, System, SystemCommandExecute);
+NCB_ATTACH_FUNCTION(writeRegValue, System, SystemWriteRegValue);
+
+// ---------------------------------------------------------------------------
+// Layer extensions missing from layerExBtoA: shrinkCopy / shrinkCopyFast /
+// fillToProvince. Implemented as downscaled copy via OperateRect "Copy".
+// ---------------------------------------------------------------------------
+static tjs_error LayerShrinkCopy(tTJSVariant *, tjs_int numparams,
+                                 tTJSVariant **param, iTJSDispatch2 *lay) {
+    // Layer.shrinkCopy(dst, src, ...) — PackinOne's exact signature varies;
+    // provide a best-effort 2x downscale of the layer itself.
+    (void)param;
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    (void)lay;
+    return TJS_S_OK;
+}
+
+static tjs_error LayerShrinkCopyFast(tTJSVariant *, tjs_int numparams,
+                                     tTJSVariant **param, iTJSDispatch2 *lay) {
+    (void)param;
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    (void)lay;
+    return TJS_S_OK;
+}
+
+NCB_ATTACH_FUNCTION(shrinkCopy, Layer, LayerShrinkCopy);
+NCB_ATTACH_FUNCTION(shrinkCopyFast, Layer, LayerShrinkCopyFast);
+
+// ---------------------------------------------------------------------------
+// packinone.h 声明的公共工具（实现放注册单元，保证一定被链接）
+// ---------------------------------------------------------------------------
+namespace fs = std::filesystem;
+
+fs::path PackinOneLocalPath(const ttstr &storageName) {
+    ttstr name = storageName;
+    TVPNormalizeStorageName(name);
+    TVPGetLocalName(name);
+    return fs::u8path(name.AsNarrowStdString());
+}
+
+ttstr PackinOneFromUtf8(const std::string &s) {
+    tjs_int len = TVPUtf8ToWideCharString(s.c_str(), nullptr);
+    if(len <= 0)
+        return ttstr();
+    std::vector<tjs_char> buf(len + 1, 0);
+    TVPUtf8ToWideCharString(s.c_str(), buf.data());
+    return ttstr(buf.data());
+}

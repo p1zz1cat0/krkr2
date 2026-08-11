@@ -22,7 +22,6 @@ target_sources(${PROJECT_NAME} PUBLIC
     layerExPerspective.cpp
     fftgraph.cpp
     LayerExBase.cpp
-    PackinOne.cpp
     Extrans.cpp
     xp3filter.cpp
 )
@@ -67,6 +66,7 @@ add_subdirectory(motionplayer)
 
 #add_subdirectory(json)
 add_subdirectory(fstat)
+add_subdirectory(packinone)
 #add_subdirectory(steam)
 #add_subdirectory(DrawDeviceForSteam)
 target_link_libraries(${PROJECT_NAME} PUBLIC
@@ -76,6 +76,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         layerExBtoA
         motionplayer
         fstat
+        packinone
 #        json steam DrawDeviceForSteam
 )
 
