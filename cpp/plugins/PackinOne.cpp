@@ -351,6 +351,23 @@ static tjs_error clipAlphaRect(tTJSVariant *, tjs_int numparams,
 
 NCB_ATTACH_FUNCTION(clipAlphaRect, Layer, clipAlphaRect);
 
+// Plugins.CanLoadPlugin: some games probe plugin availability via
+// Plugins.CanLoadPlugin(name) before linking (PackinOne and companions expose
+// Plugins helpers). The stub reports loadable for every name since internal
+// modules satisfy the link. Verified against CafeStella: the boot path calls
+// Plugins.link("PackinOne.dll") but not CanLoadPlugin; the method is kept for
+// other ports that do use it.
+static tjs_error CanLoadPlugin(tTJSVariant *result, tjs_int numparams,
+                               tTJSVariant **, iTJSDispatch2 *) {
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    if(result)
+        *result = (tjs_int)1;
+    return TJS_S_OK;
+}
+
+NCB_ATTACH_FUNCTION(CanLoadPlugin, Plugins, CanLoadPlugin);
+
 static void InitPlugin_PackinOne() {
     // Best-effort companion plugins already built into KrKr2.
     ncbAutoRegister::LoadModule(TJS_W("fstat.dll"));
