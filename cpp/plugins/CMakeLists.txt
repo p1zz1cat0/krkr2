@@ -24,13 +24,16 @@ target_sources(${PROJECT_NAME} PUBLIC
     LayerExBase.cpp
     Extrans.cpp
     xp3filter.cpp
-    shrinkCopy.cpp
 )
 
-# This compatibility shim belongs only to the aggregate plugin library.  The
-# historical PUBLIC source list is inherited by child plugin targets, which
-# would otherwise compile and register these System methods multiple times.
-target_sources(${PROJECT_NAME} PRIVATE getLangName.cpp)
+# These registration translation units belong only to the aggregate plugin
+# library. The historical PUBLIC source list is inherited by child plugin
+# targets, which would otherwise compile and register them multiple times.
+# PluginImpl.cpp references explicit anchors so the static linker retains them.
+target_sources(${PROJECT_NAME} PRIVATE
+    getLangName.cpp
+    shrinkCopy.cpp
+)
 
 target_include_directories(${PROJECT_NAME} PUBLIC
     ${KRKR2CORE_PATH}/

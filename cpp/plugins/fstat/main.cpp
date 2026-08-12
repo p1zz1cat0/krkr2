@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -17,6 +18,8 @@ using namespace std;
 
 #define LOGGER spdlog::get("plugin")
 #define NCB_MODULE_NAME TJS_W("fstat.dll")
+
+extern "C" void TVPFstatPluginAnchor() {}
 
 #ifndef _WIN32
 #define FILE_ATTRIBUTE_READONLY 0x0001
@@ -964,36 +967,83 @@ NCB_ATTACH_CLASS(StoragesFstat, Storages) {
 
 // テンポラリファイル処理用クラス
 class TemporaryFiles {
-public:
-    bool entry(ttstr filename) { return _entry(filename); }
+    struct Entry {
+        fs::path path;
+        bool folder;
+    };
+    std::vector<Entry> entries;
 
-    bool entryFolder(ttstr filename) { return _entry(filename, true); }
+public:
+    ~TemporaryFiles() { clear(); }
+
+    bool entry(ttstr filename) { return addEntry(filename, false); }
+
+    bool entryFolder(ttstr filename) { return addEntry(filename, true); }
+
+    // PackinOne aliases. add/remove/clear manage the registration list;
+    // destruction and clear delete the still-registered paths.
+    bool add(ttstr filename) { return addEntry(filename, false); }
+
+    bool remove(ttstr filename) {
+        const fs::path path = localPath(filename);
+        const auto oldSize = entries.size();
+        entries.erase(std::remove_if(entries.begin(), entries.end(),
+                                     [&](const Entry &entry) {
+                                         return entry.path == path;
+                                     }),
+                      entries.end());
+        return entries.size() != oldSize;
+    }
+
+    void clear() {
+        for(auto it = entries.rbegin(); it != entries.rend(); ++it) {
+            std::error_code error;
+            if(it->folder)
+                fs::remove_all(it->path, error);
+            else
+                fs::remove(it->path, error);
+            if(error && LOGGER) {
+                LOGGER->error("[fstat] TemporaryFiles.clear failed for {}: {}",
+                              it->path.string(), error.message());
+            }
+        }
+        entries.clear();
+        TVPClearStorageCaches();
+    }
 
 private:
-    static bool _entry(const ttstr &name, const bool folder = false) {
+    static fs::path localPath(const ttstr &name) {
         ttstr filename = TVPNormalizeStorageName(name);
         TVPGetLocalName(filename);
-        if(!filename.length())
+        return fs::u8path(filename.AsNarrowStdString());
+    }
+
+    bool addEntry(const ttstr &name, const bool folder) {
+        const fs::path path = localPath(name);
+        if(path.empty())
             return false;
 
-        const std::string u8Filename = filename.AsNarrowStdString();
-
-        if(!fs::exists(u8Filename))
+        std::error_code error;
+        if(!fs::exists(path, error) || error)
             return false;
 
         if(folder) {
-            if(!fs::is_directory(u8Filename))
+            if(!fs::is_directory(path, error) || error)
                 return false;
         } else {
-            if(!fs::is_regular_file(u8Filename))
+            if(!fs::is_regular_file(path, error) || error)
                 return false;
             // 尝试打开文件，验证可访问
-            std::ifstream file(u8Filename, std::ios::in);
+            std::ifstream file(path, std::ios::in);
             if(!file.is_open())
                 return false;
-            file.close(); // 只检查存在和可读
         }
 
+        if(std::none_of(entries.begin(), entries.end(),
+                        [&](const Entry &entry) {
+                            return entry.path == path;
+                        }))
+            entries.push_back({path, folder});
         return true;
     }
 };
@@ -1002,6 +1052,9 @@ NCB_REGISTER_CLASS(TemporaryFiles) {
     Constructor();
     NCB_METHOD(entry);
     NCB_METHOD(entryFolder);
+    NCB_METHOD(add);
+    NCB_METHOD(remove);
+    NCB_METHOD(clear);
 }
 
 /**

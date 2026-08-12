@@ -1,0 +1,82 @@
+// PackinOne script ABI smoke test.
+function check(cond, msg) {
+    if (!cond) throw new Exception("PackinOne API smoke failed: " + msg);
+}
+
+Plugins.link("PackinOne.dll");
+
+check(Plugins.CanLoadPlugin("PackinOne.dll"), "known module is loadable");
+check(Plugins.CanLoadPlugin("pAcKiNoNe.DlL"),
+      "module lookup is case-insensitive");
+check(!Plugins.CanLoadPlugin("definitely-missing-plugin.dll"),
+      "unknown module is not loadable");
+
+var files = new StoragesFstat();
+check(files.isExistent("startup.tjs"), "startup.tjs exists");
+check(!files.isDirectory("startup.tjs"), "startup.tjs is a file");
+check(files.getFileSize("startup.tjs") > 0, "startup.tjs has data");
+check(files.getCreationTime("startup.tjs") > 0, "creation time is available");
+check(files.getLastAccessTime("startup.tjs") > 0,
+      "last access time is available");
+Storages.setCurrentDirectory(files.currentDirectory);
+Scripts.rehash();
+
+check(System.urlencode("a b") == "a%20b", "URL encode");
+check(System.urldecode("a%20b") == "a b", "URL decode");
+System.writeEnvValue("YOGHOURT_PACKINONE_SMOKE", "available");
+check(System.readEnvValue("YOGHOURT_PACKINONE_SMOKE") == "available",
+      "environment read/write");
+check(System.expandEnvString("%YOGHOURT_PACKINONE_SMOKE%") == "available",
+      "environment expansion");
+check(System.getOSVersion() != "", "OS version");
+check(System.getKnownFolderPath() != "", "known folder path");
+check(System.getAboutString() != "", "about string");
+check(System.waitForAppLock(), "application lock compatibility");
+System.setDpiAwareness();
+System.writeRegValue("ignored-on-macOS", "ignored");
+check(System.commandExecute("/usr/bin/true") == 0, "command execution");
+check(System.confirm("PackinOne smoke"), "confirmation compatibility");
+System.addFont("definitely-missing-font.ttf");
+
+var copyName = "packinone-api-copy.tmp";
+var renamedName = "packinone-api-renamed.tmp";
+files.remove(copyName);
+files.remove(renamedName);
+check(files.copy("startup.tjs", copyName, true), "copy succeeds");
+check(files.isExistent(copyName), "copied file exists");
+check(files.rename(copyName, renamedName), "rename succeeds");
+check(!files.isExistent(copyName) && files.isExistent(renamedName),
+      "rename moves the file");
+check(files.setCreationTime(renamedName,
+                            files.getCreationTime(renamedName)),
+      "creation time setter");
+check(files.isReadOnly(renamedName, true), "set read-only");
+check(files.isReadOnly(renamedName), "query read-only");
+check(!files.isReadOnly(renamedName, false), "clear read-only");
+
+var temporary = new TemporaryFiles();
+check(temporary.add(renamedName), "temporary file registration succeeds");
+check(temporary.remove(renamedName), "temporary file unregister succeeds");
+check(files.isExistent(renamedName), "unregister does not delete the file");
+check(temporary.add(renamedName), "temporary file can be re-registered");
+temporary.clear();
+check(!files.isExistent(renamedName), "clear deletes registered file");
+
+var process = new Process();
+check(process.run("/usr/bin/true"), "Process.run starts child");
+check(process.wait(3000), "Process.wait observes child exit");
+check(process.exitCode == 0, "Process.exitCode preserves status");
+
+var delayed = new Process();
+check(delayed.run("/bin/sleep 0.1"), "delayed process starts");
+check(!delayed.wait(0), "zero timeout does not claim readiness");
+check(delayed.wait(3000), "delayed process eventually exits");
+check(delayed.exitCode == 0, "delayed process exit status");
+
+var failed = new Process();
+check(failed.run("/usr/bin/false"), "failing process starts");
+check(failed.wait(3000), "failing process exits");
+check(failed.exitCode == 1, "nonzero process exit status");
+
+Plugins.unlink("PackinOne.dll");
+System.exit(0);

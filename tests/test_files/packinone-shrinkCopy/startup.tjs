@@ -1,0 +1,43 @@
+// PackinOne.dll 应复用内置 shrinkCopy.dll 的真实实现。
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+function check(cond, msg) {
+    if (!cond) throw new Exception("PackinOne shrinkCopy smoke failed: " + msg);
+}
+
+// 在首次创建 Window/Layer 前加载，验证 PackinOne 也覆盖惰性初始化场景。
+// Plugins.link 的原生 API 返回 void，加载结果由导出的成员确认。
+Plugins.link("PackinOne.dll");
+
+var testWindow = new Window();
+var src = new Layer(testWindow, null);
+src.setImageSize(8, 8);
+src.fillRect(0, 0, 8, 8, 0xFF7F3F1F);
+src.fillAlpha();
+var sourceColor = src.getMainPixel(0, 0) & 0xFFFFFF;
+var provinceRect = src.fillToProvince(sourceColor, 7, 64);
+check(provinceRect != void && provinceRect[2] == 8 && provinceRect[3] == 8,
+      "fillToProvince returns affected rectangle");
+check(src.getProvincePixel(0, 0) == 7,
+      "fillToProvince writes province image");
+src.fillByProvince(7, 0xFF010203);
+check((src.getMainPixel(0, 0) & 0xFFFFFF) == 0x010203,
+      "fillByProvince writes matching pixels");
+src.copyAlphaToProvince(128, 9, 3);
+check(src.getProvincePixel(0, 0) == 9,
+      "copyAlphaToProvince maps alpha threshold");
+src.copyRightBlueToLeftAlpha();
+src.copyBottomBlueToTopAlpha();
+
+var dst = new Layer(testWindow, src);
+dst.setImageSize(4, 4);
+dst.shrinkCopy(0, 0, 4, 4, src, 0, 0, 8, 8);
+check(dst.imageWidth == 4 && dst.imageHeight == 4, "shrinkCopy keeps destination size");
+dst.clipAlphaRect(0, 0, src, 0, 0, 4, 4);
+
+var fast = new Layer(testWindow, src);
+fast.setImageSize(1, 1);
+fast.shrinkCopyFast(src, 3, 3);
+check(fast.imageWidth == 3 && fast.imageHeight == 3,
+      "shrinkCopyFast resizes using ceil division");
+
+System.exit(0);

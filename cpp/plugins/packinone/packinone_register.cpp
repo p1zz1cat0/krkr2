@@ -7,18 +7,43 @@
 //   - System.urlencode/urldecode/readEnvValue/writeEnvValue/
 //     expandEnvString/getOSVersion/getKnownFolderPath/confirm/
 //     waitForAppLock/setDpiAwareness/commandExecute/writeRegValue
-//   - Layer.shrinkCopy/shrinkCopyFast（简化占位）
+//   - Layer.shrinkCopy/shrinkCopyFast（复用内置 shrinkCopy.dll）
 //   - Process（run/wait/exitCode，macOS system() 语义）
 //
 // StoragesFstat/TemporaryFiles/ScriptsAdd/LZ4 见同目录其他文件。
 
 #include "packinone.h"
 
+#include <cerrno>
 #include <cctype>
+#include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <string>
+#include <thread>
+
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
+#include <spdlog/spdlog.h>
 
 #define NCB_MODULE_NAME TJS_W("packinone.dll")
+
+extern "C" void TVPPackinOneStorageFstatAnchor();
+extern "C" void TVPPackinOneTemporaryFilesAnchor();
+extern "C" void TVPPackinOneScriptsAnchor();
+
+// packinone is a static library. Keep every ncbind registration translation
+// unit reachable from one core-owned anchor so the linker cannot dead-strip
+// PackinOne.dll while also avoiding PUBLIC source propagation and duplicate
+// registrations in child plugin targets.
+extern "C" void TVPPackinOnePluginAnchor() {
+    TVPPackinOneStorageFstatAnchor();
+    TVPPackinOneTemporaryFilesAnchor();
+    TVPPackinOneScriptsAnchor();
+}
 
 class PackinOneDummy {
 public:
@@ -357,7 +382,8 @@ static tjs_error clipAlphaRect(tTJSVariant *, tjs_int numparams,
     return TJS_S_OK;
 }
 
-NCB_ATTACH_FUNCTION(clipAlphaRect, Layer, clipAlphaRect);
+NCB_ATTACH_FUNCTION_WITHTAG(clipAlphaRect, PackinOneLayer, Layer,
+                            clipAlphaRect);
 
 // Plugins.CanLoadPlugin: some games probe plugin availability via
 // Plugins.CanLoadPlugin(name) before linking (PackinOne and companions expose
@@ -367,27 +393,146 @@ NCB_ATTACH_FUNCTION(clipAlphaRect, Layer, clipAlphaRect);
 // other ports that do use it.
 
 // ---------------------------------------------------------------------------
-// Process: run a command line, wait for exit, expose exit code.
+// Process: asynchronously run a command line, wait with a millisecond timeout,
+// and expose the native exit code.  PackinOne's Windows implementation uses
+// CreateProcess/WaitForSingleObject/GetExitCodeProcess; this is the POSIX
+// equivalent used by the macOS runtime.
 // ---------------------------------------------------------------------------
 class Process {
-    int ExitCode = 0;
+    static constexpr int StillActive = 259;
+
+    int ExitCode = StillActive;
     bool HasRun = false;
+    bool Finished = false;
+#if !defined(_WIN32)
+    pid_t Child = -1;
+#endif
+
+    bool poll() {
+        if(!HasRun || Finished)
+            return Finished;
+#if defined(_WIN32)
+        return Finished;
+#else
+        int status = 0;
+        const pid_t result = ::waitpid(Child, &status, WNOHANG);
+        if(result == 0)
+            return false;
+        if(result < 0) {
+            if(errno == EINTR)
+                return false;
+            if(auto logger = spdlog::get("plugin"))
+                logger->error("[packinone] Process.waitpid failed: {}",
+                              std::strerror(errno));
+            ExitCode = -1;
+            Finished = true;
+            Child = -1;
+            return true;
+        }
+
+        if(WIFEXITED(status))
+            ExitCode = WEXITSTATUS(status);
+        else if(WIFSIGNALED(status))
+            ExitCode = 128 + WTERMSIG(status);
+        else
+            ExitCode = -1;
+        Finished = true;
+        Child = -1;
+        return true;
+#endif
+    }
 
 public:
-    Process() {}
+    Process() = default;
+
+    ~Process() {
+#if !defined(_WIN32)
+        if(HasRun && !Finished && Child > 0) {
+            const pid_t child = Child;
+            std::thread([child] {
+                int status = 0;
+                while(::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+            }).detach();
+        }
+#endif
+    }
 
     bool run(ttstr cmdline) {
-        ExitCode = std::system(cmdline.AsNarrowStdString().c_str());
+        if(HasRun && !Finished)
+            return false;
+
+        const std::string command = cmdline.AsNarrowStdString();
+        if(command.empty())
+            return false;
+
+#if defined(_WIN32)
+        ExitCode = std::system(command.c_str());
+        HasRun = true;
+        Finished = true;
+        return true;
+#else
+        const pid_t child = ::fork();
+        if(child < 0) {
+            if(auto logger = spdlog::get("plugin"))
+                logger->error("[packinone] Process.fork failed: {}",
+                              std::strerror(errno));
+            return false;
+        }
+        if(child == 0) {
+            ::execl("/bin/sh", "sh", "-c", command.c_str(),
+                    static_cast<char *>(nullptr));
+            ::_exit(127);
+        }
+
+        Child = child;
+        ExitCode = StillActive;
+        Finished = false;
         HasRun = true;
         return true;
+#endif
     }
 
-    bool wait(tjs_int) {
-        // system() already waited; nothing async here
-        return HasRun;
+    bool wait(tjs_int timeoutMilliseconds) {
+        if(!HasRun)
+            return false;
+        if(poll())
+            return true;
+
+        if(timeoutMilliseconds < 0) {
+#if !defined(_WIN32)
+            int status = 0;
+            pid_t result;
+            do {
+                result = ::waitpid(Child, &status, 0);
+            } while(result < 0 && errno == EINTR);
+            if(result == Child) {
+                if(WIFEXITED(status))
+                    ExitCode = WEXITSTATUS(status);
+                else if(WIFSIGNALED(status))
+                    ExitCode = 128 + WTERMSIG(status);
+                else
+                    ExitCode = -1;
+                Finished = true;
+                Child = -1;
+            }
+#endif
+            return Finished;
+        }
+
+        const auto deadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(timeoutMilliseconds);
+        while(std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            if(poll())
+                return true;
+        }
+        return poll();
     }
 
-    tjs_int getExitCode() const { return ExitCode; }
+    tjs_int getExitCode() {
+        poll();
+        return ExitCode;
+    }
 };
 
 NCB_REGISTER_CLASS(Process) {
@@ -565,45 +710,30 @@ static tjs_error SystemWriteRegValue(tTJSVariant *, tjs_int, tTJSVariant **,
     return TJS_S_OK;
 }
 
-NCB_ATTACH_FUNCTION(urlencode, System, SystemUrlEncode);
-NCB_ATTACH_FUNCTION(urldecode, System, SystemUrlDecode);
-NCB_ATTACH_FUNCTION(readEnvValue, System, SystemReadEnvValue);
-NCB_ATTACH_FUNCTION(writeEnvValue, System, SystemWriteEnvValue);
-NCB_ATTACH_FUNCTION(expandEnvString, System, SystemExpandEnvString);
-NCB_ATTACH_FUNCTION(getOSVersion, System, SystemGetOSVersion);
-NCB_ATTACH_FUNCTION(getKnownFolderPath, System, SystemGetKnownFolderPath);
-NCB_ATTACH_FUNCTION(confirm, System, SystemConfirm);
-NCB_ATTACH_FUNCTION(waitForAppLock, System, SystemWaitForAppLock);
-NCB_ATTACH_FUNCTION(setDpiAwareness, System, SystemSetDpiAwareness);
-NCB_ATTACH_FUNCTION(commandExecute, System, SystemCommandExecute);
-NCB_ATTACH_FUNCTION(writeRegValue, System, SystemWriteRegValue);
-
-// ---------------------------------------------------------------------------
-// Layer extensions missing from layerExBtoA: shrinkCopy / shrinkCopyFast /
-// fillToProvince. Implemented as downscaled copy via OperateRect "Copy".
-// ---------------------------------------------------------------------------
-static tjs_error LayerShrinkCopy(tTJSVariant *, tjs_int numparams,
-                                 tTJSVariant **param, iTJSDispatch2 *lay) {
-    // Layer.shrinkCopy(dst, src, ...) — PackinOne's exact signature varies;
-    // provide a best-effort 2x downscale of the layer itself.
-    (void)param;
-    if(numparams < 1)
-        return TJS_E_BADPARAMCOUNT;
-    (void)lay;
-    return TJS_S_OK;
-}
-
-static tjs_error LayerShrinkCopyFast(tTJSVariant *, tjs_int numparams,
-                                     tTJSVariant **param, iTJSDispatch2 *lay) {
-    (void)param;
-    if(numparams < 1)
-        return TJS_E_BADPARAMCOUNT;
-    (void)lay;
-    return TJS_S_OK;
-}
-
-NCB_ATTACH_FUNCTION(shrinkCopy, Layer, LayerShrinkCopy);
-NCB_ATTACH_FUNCTION(shrinkCopyFast, Layer, LayerShrinkCopyFast);
+NCB_ATTACH_FUNCTION_WITHTAG(urlencode, PackinOneSystem, System,
+                            SystemUrlEncode);
+NCB_ATTACH_FUNCTION_WITHTAG(urldecode, PackinOneSystem, System,
+                            SystemUrlDecode);
+NCB_ATTACH_FUNCTION_WITHTAG(readEnvValue, PackinOneSystem, System,
+                            SystemReadEnvValue);
+NCB_ATTACH_FUNCTION_WITHTAG(writeEnvValue, PackinOneSystem, System,
+                            SystemWriteEnvValue);
+NCB_ATTACH_FUNCTION_WITHTAG(expandEnvString, PackinOneSystem, System,
+                            SystemExpandEnvString);
+NCB_ATTACH_FUNCTION_WITHTAG(getOSVersion, PackinOneSystem, System,
+                            SystemGetOSVersion);
+NCB_ATTACH_FUNCTION_WITHTAG(getKnownFolderPath, PackinOneSystem, System,
+                            SystemGetKnownFolderPath);
+NCB_ATTACH_FUNCTION_WITHTAG(confirm, PackinOneSystem, System,
+                            SystemConfirm);
+NCB_ATTACH_FUNCTION_WITHTAG(waitForAppLock, PackinOneSystem, System,
+                            SystemWaitForAppLock);
+NCB_ATTACH_FUNCTION_WITHTAG(setDpiAwareness, PackinOneSystem, System,
+                            SystemSetDpiAwareness);
+NCB_ATTACH_FUNCTION_WITHTAG(commandExecute, PackinOneSystem, System,
+                            SystemCommandExecute);
+NCB_ATTACH_FUNCTION_WITHTAG(writeRegValue, PackinOneSystem, System,
+                            SystemWriteRegValue);
 
 // ---------------------------------------------------------------------------
 // packinone.h 声明的公共工具（实现放注册单元，保证一定被链接）
@@ -611,8 +741,12 @@ NCB_ATTACH_FUNCTION(shrinkCopyFast, Layer, LayerShrinkCopyFast);
 namespace fs = std::filesystem;
 
 fs::path PackinOneLocalPath(const ttstr &storageName) {
-    ttstr name = storageName;
-    TVPNormalizeStorageName(name);
+    // Resolve relative script storage names through the engine's current
+    // directory/autopath first.  TVPNormalizeStorageName alone leaves a bare
+    // name without a media prefix, which TVPGetLocalName cannot translate.
+    ttstr name = TVPGetPlacedPath(storageName);
+    if(name.IsEmpty())
+        name = TVPNormalizeStorageName(storageName);
     TVPGetLocalName(name);
     return fs::u8path(name.AsNarrowStdString());
 }

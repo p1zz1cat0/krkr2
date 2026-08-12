@@ -1,5 +1,7 @@
 #define NCB_MODULE_NAME TJS_W("layerExBtoA.dll")
 
+extern "C" void TVPLayerExBtoAPluginAnchor() {}
+
 #include "ncbind.hpp"
 #include <vector>
 using namespace std;
@@ -473,6 +475,105 @@ fillByProvince(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJS
 	return TJS_S_OK;
 }
 
+/**
+ * Layer.fillToProvince(color, index, threshold=64)
+ *
+ * Ported from the original wamsoft/layerExBTOA implementation bundled by
+ * PackinOne.  Pixels matching the requested RGB color and alpha threshold are
+ * written to the province image.  The return value is the affected rectangle
+ * [left, top, width, height], or void when nothing matched.
+ */
+static tjs_error
+fillToProvince(tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
+               iTJSDispatch2 *lay)
+{
+	iTJSDispatch2 *layerClass = getLayerClass();
+
+	if (numparams < 2) return TJS_E_BADPARAMCOUNT;
+	tjs_uint32 requestedColor = (tjs_uint32)param[0]->AsInteger();
+	tjs_uint32 color = requestedColor & 0x00ffffff;
+	bool allmatch = requestedColor == 0xffffffffu;
+	unsigned char index = (unsigned char)param[1]->AsInteger();
+	long threshold = 64;
+	if (TJS_PARAM_EXIST(2)) threshold = (long)param[2]->AsInteger();
+
+	ReadRefT sbuf = 0;
+	long l, t, dw, dh, spitch;
+	if (!GetClipSize(lay, l, t, dw, dh, spitch)) {
+		TVPThrowExceptionMessage(TJS_W("src must be Layer."));
+	}
+
+	tTJSVariant val;
+	if (TJS_FAILED(layerClass->PropGet(0, TJS_W("mainImageBuffer"),
+		&mainImageBufferHint, &val, lay)) ||
+		(sbuf = reinterpret_cast<ReadRefT>(val.AsInteger())) == NULL) {
+		TVPThrowExceptionMessage(TJS_W("src has no image."));
+	}
+	sbuf += spitch * t + l * 4;
+
+	WrtRefT dbuf = 0;
+	long dpitch;
+	val.Clear();
+	if (TJS_FAILED(layerClass->PropGet(0, TJS_W("provinceImageBufferForWrite"),
+		&provinceImageBufferForWriteHint, &val, lay)) ||
+		(dbuf = reinterpret_cast<WrtRefT>(val.AsInteger())) == NULL) {
+		TVPThrowExceptionMessage(TJS_W("dst has no province image."));
+	}
+	val.Clear();
+	if (TJS_FAILED(layerClass->PropGet(0, TJS_W("provinceImageBufferPitch"),
+		&provinceImageBufferPitchHint, &val, lay)) ||
+		(dpitch = (long)val.AsInteger()) == 0) {
+		TVPThrowExceptionMessage(TJS_W("dst has no province pitch."));
+	}
+	dbuf += dpitch * t + l;
+
+	long minx = -1, miny = -1, maxx = -1, maxy = -1;
+	for (long y = 0; y < dh; y++) {
+		const tjs_uint32 *src = reinterpret_cast<const tjs_uint32 *>(sbuf);
+		WrtRefT dst = dbuf;
+		for (long x = 0; x < dw; x++) {
+			if ((allmatch || ((*src & 0x00ffffff) == color)) &&
+				(long)(*src >> 24) >= threshold) {
+				*dst = index;
+				if (minx < 0 || minx > x) minx = x;
+				if (miny < 0 || miny > y) miny = y;
+				if (maxx < x) maxx = x;
+				if (maxy < y) maxy = y;
+			}
+			src++;
+			dst++;
+		}
+		sbuf += spitch;
+		dbuf += dpitch;
+	}
+
+	if (result) {
+		result->Clear();
+		if (minx >= 0) {
+			iTJSDispatch2 *array = TJSCreateArrayObject();
+			if (array) {
+				tTJSVariant number;
+				number = (tjs_int64)(minx + l);
+				array->PropSetByNum(TJS_MEMBERENSURE, 0, &number, array);
+				number = (tjs_int64)(miny + t);
+				array->PropSetByNum(TJS_MEMBERENSURE, 1, &number, array);
+				number = (tjs_int64)(maxx - minx + 1);
+				array->PropSetByNum(TJS_MEMBERENSURE, 2, &number, array);
+				number = (tjs_int64)(maxy - miny + 1);
+				array->PropSetByNum(TJS_MEMBERENSURE, 3, &number, array);
+				tTJSVariant value(array, array);
+				array->Release();
+				*result = value;
+			}
+		}
+	}
+
+	ncbPropAccessor layObj(lay);
+	layObj.FuncCall(0, TJS_W("update"), &updateHint, NULL,
+		(tjs_int)l, (tjs_int)t, (tjs_int)dw, (tjs_int)dh);
+	return TJS_S_OK;
+}
+
 NCB_ATTACH_FUNCTION(copyRightBlueToLeftAlpha, Layer, copyRightBlueToLeftAlpha);
 NCB_ATTACH_FUNCTION(copyBottomBlueToTopAlpha, Layer, copyBottomBlueToTopAlpha);
 NCB_ATTACH_FUNCTION(fillAlpha, Layer, fillAlpha);
@@ -480,3 +581,4 @@ NCB_ATTACH_FUNCTION(fillAlpha, Layer, fillAlpha);
 NCB_ATTACH_FUNCTION(copyAlphaToProvince, Layer, copyAlphaToProvince);
 NCB_ATTACH_FUNCTION(clipAlphaRect, Layer, clipAlphaRect);
 NCB_ATTACH_FUNCTION(fillByProvince, Layer, fillByProvince);
+NCB_ATTACH_FUNCTION(fillToProvince, Layer, fillToProvince);

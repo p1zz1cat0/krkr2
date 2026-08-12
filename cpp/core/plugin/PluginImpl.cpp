@@ -29,10 +29,14 @@
 #include "tjs.h"
 #include "tjsConfig.h"
 
-// 链接锚点：getLangName.cpp 是 krkr2plugin 聚合库的 PRIVATE source，翻译
-// 单元没有外部引用的全局符号会被链接器死代码剥离，导致插件注册永远不
-// 发生。TVPLoadInternalPlugins() 调用此锚点强制链接器保留该翻译单元。
+// 链接锚点：注册型插件是 krkr2plugin 聚合库的 PRIVATE source，翻译单元
+// 没有外部引用时会被链接器死代码剥离，插件注册将永远不会发生。
+// TVPLoadInternalPlugins() 调用这些锚点，强制链接器各保留一份注册单元。
 extern "C" void TVPGetLangNamePluginAnchor();
+extern "C" void TVPShrinkCopyPluginAnchor();
+extern "C" void TVPFstatPluginAnchor();
+extern "C" void TVPLayerExBtoAPluginAnchor();
+extern "C" void TVPPackinOnePluginAnchor();
 #include "ncbind.hpp"
 
 #ifdef TVP_SUPPORT_KPI
@@ -93,9 +97,12 @@ static void TVPSearchPluginsAt(std::vector<tTVPFoundPlugin> &list,
 }
 
 void TVPLoadInternalPlugins() {
-    // 锚点：强制链接器保留 getLangName.cpp（PRIVATE source 无外部符号引用
-    // 会被死代码剥离，插件注册将永远不会发生）。
+    // 锚点：强制链接器保留 PRIVATE 的注册型插件翻译单元。
     TVPGetLangNamePluginAnchor();
+    TVPShrinkCopyPluginAnchor();
+    TVPFstatPluginAnchor();
+    TVPLayerExBtoAPluginAnchor();
+    TVPPackinOnePluginAnchor();
 
     ncbAutoRegister::AllRegist();
     ncbAutoRegister::LoadModule(TJS_W("xp3filter.dll"));

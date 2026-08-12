@@ -27,3 +27,10 @@ bool ncbAutoRegister::LoadModule(const ttstr &_name)
 	}
 	return false;
 }
+
+bool ncbAutoRegister::HasModule(const ttstr &_name)
+{
+	ttstr name = _name.AsLowerCase();
+	return TVPRegisteredPlugins.find(name) != TVPRegisteredPlugins.end() ||
+		_internal_plugins.find(name) != _internal_plugins.end();
+}

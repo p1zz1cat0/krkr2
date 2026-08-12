@@ -6,12 +6,11 @@
 // （注册表、GDI 字体、对话框）不做。
 //
 // 源文件拆分：
-//   packinone_register.cpp — ncbind 注册入口、System/Layer/Plugins 扩展、
-//                            AffineSourceMovie 脚本补丁
+//   packinone_register.cpp — ncbind 注册入口、System/Layer/Plugins 扩展
 //   storage_fstat.cpp      — StoragesFstat TJS 类
 //   temporary_files.cpp    — TemporaryFiles TJS 类
 //   lz4_stream.cpp/.h      — LZ4 流压缩/解压（手写，无外部依赖）
-//   scripts_add.cpp        — ScriptsAdd TJS 类
+//   scripts_add.cpp        — 依赖模块加载与 AffineSourceMovie 脚本补丁
 #pragma once
 
 #include "ncbind.hpp"

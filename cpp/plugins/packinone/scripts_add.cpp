@@ -11,6 +11,7 @@
 //   saveStruct.cpp -> ArrayAdd.save2/saveStruct2/toStructString、
 //                     DictAdd.saveStruct2/toStructString
 //   fstat main.cpp -> StoragesFstat（官方 KrKr2 接口）、TemporaryFiles
+//   shrinkCopy.cpp -> Layer.shrinkCopy/shrinkCopyFast
 //
 // 本文件负责在 packinone 模块加载时确保这些模块已注册（游戏只 link
 // PackinOne.dll 时也能拿到 ScriptsAdd 等方法），并注册 PackinOne 特有的
@@ -19,6 +20,8 @@
 #include "packinone.h"
 
 #define NCB_MODULE_NAME TJS_W("packinone.dll")
+
+extern "C" void TVPPackinOneScriptsAnchor() {}
 
 namespace {
 
@@ -34,31 +37,50 @@ bool HasGlobalMember(const tjs_char *name) {
         value.Type() != tvtVoid;
 }
 
-// Plugins.CanLoadPlugin: 部分游戏在 link 前探测插件可用性。stub 始终
-// 报告可加载——内部模块满足 link。实测星光咖啡馆启动路径不调用它，
-// 保留给其他移植游戏。
+// Plugins.CanLoadPlugin: query the statically registered module table without
+// loading the module as a side effect.
 tjs_error CanLoadPlugin(tTJSVariant *result, tjs_int numparams,
-                        tTJSVariant **, iTJSDispatch2 *) {
+                        tTJSVariant **param, iTJSDispatch2 *) {
     if(numparams < 1)
         return TJS_E_BADPARAMCOUNT;
     if(result)
-        *result = (tjs_int)1;
+        *result = static_cast<tjs_int>(
+            ncbAutoRegister::HasModule(ttstr(*param[0])));
+    return TJS_S_OK;
+}
+
+tjs_error SetCurrentDirectory(tTJSVariant *result, tjs_int numparams,
+                              tTJSVariant **param, iTJSDispatch2 *) {
+    if(numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+    TVPSetCurrentDirectory(TVPNormalizeStorageName(param[0]->AsString()));
+    if(result)
+        result->Clear();
     return TJS_S_OK;
 }
 
 } // namespace
 
-NCB_ATTACH_FUNCTION(CanLoadPlugin, Plugins, CanLoadPlugin);
+NCB_ATTACH_FUNCTION_WITHTAG(CanLoadPlugin, PackinOnePlugins, Plugins,
+                            CanLoadPlugin);
+NCB_ATTACH_FUNCTION_WITHTAG(setCurrentDirectory, PackinOneStorages, Storages,
+                            SetCurrentDirectory);
 
 static void InitPlugin_PackinOneScripts() {
     // PackinOne 捆绑的辅助模块，全部由 KrKr2 本体插件提供；确保已注册。
+    if(!ncbAutoRegister::LoadModule(TJS_W("shrinkCopy.dll"))) {
+        TVPThrowExceptionMessage(
+            TJS_W("PackinOne requires the built-in shrinkCopy.dll module."));
+    }
     ncbAutoRegister::LoadModule(TJS_W("fstat.dll"));
     ncbAutoRegister::LoadModule(TJS_W("saveStruct.dll"));
     ncbAutoRegister::LoadModule(TJS_W("ScriptsEx.dll"));
     ncbAutoRegister::LoadModule(TJS_W("csvParser.dll"));
     ncbAutoRegister::LoadModule(TJS_W("layerExMovie.dll"));
+    ncbAutoRegister::LoadModule(TJS_W("layerExBtoA.dll"));
     ncbAutoRegister::LoadModule(TJS_W("addFont.dll"));
     ncbAutoRegister::LoadModule(TJS_W("dirlist.dll"));
+    ncbAutoRegister::LoadModule(TJS_W("getabout.dll"));
 
     // AffineSourceMovie：PackinOne 捆绑的影片 affine 源。KrKr2 有
     // AffineSource 但没有 Movie 子类，这里用 TJS 脚本补一个。

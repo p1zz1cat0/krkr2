@@ -3,7 +3,7 @@ project(packinone)
 
 add_library(${PROJECT_NAME} STATIC)
 
-target_sources(${PROJECT_NAME} PUBLIC
+target_sources(${PROJECT_NAME} PRIVATE
     packinone_register.cpp
     storage_fstat.cpp
     temporary_files.cpp

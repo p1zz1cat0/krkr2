@@ -27,7 +27,26 @@ namespace {
 void LogPluginError(const char *msg) {
     if (auto logger = spdlog::get("plugin")) logger->error("[shrinkCopy] {}", msg);
 }
+
+// Native classes are registered lazily in a minimal startup.tjs environment.
+// NCB_ATTACH_FUNCTION silently skips registration when its target class does
+// not exist yet, while the module is still marked as loaded.  Resolve Layer in
+// the pre-registration phase so Plugins.link("shrinkCopy.dll") works before a
+// game creates its first Window/Layer as well as after normal KAG startup.
+void EnsureLayerClassRegistered() {
+    tTJSVariant layerClass;
+    TVPExecuteExpression(TJS_W("Layer"), &layerClass);
+    if(layerClass.Type() != tvtObject)
+        TVPThrowExceptionMessage(
+            TJS_W("shrinkCopy.dll requires the Layer class."));
+}
 } // namespace
+
+NCB_PRE_REGIST_CALLBACK(EnsureLayerClassRegistered);
+
+// Registration-only translation units in static libraries can otherwise be
+// discarded by the linker. PluginImpl.cpp references this anchor explicitly.
+extern "C" void TVPShrinkCopyPluginAnchor() {}
 
 struct LayerUtils
 {
