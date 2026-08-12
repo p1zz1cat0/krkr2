@@ -12,4 +12,11 @@ extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
 }
 extern "C" void YoghourtKrKrSpatialShutdown() {}
 #endif
+// 链接锚点桩：注册型插件是 krkr2plugin 聚合库的 PRIVATE source，core 测试
+// 不链接插件库，PluginImpl.cpp 引用这些锚点时由本文件补全。
 extern "C" void TVPGetLangNamePluginAnchor() {}
+extern "C" void TVPShrinkCopyPluginAnchor() {}
+extern "C" void TVPLayerExRasterPluginAnchor() {}
+extern "C" void TVPFstatPluginAnchor() {}
+extern "C" void TVPLayerExBtoAPluginAnchor() {}
+extern "C" void TVPPackinOnePluginAnchor() {}

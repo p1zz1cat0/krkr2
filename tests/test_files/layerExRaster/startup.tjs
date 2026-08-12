@@ -1,0 +1,37 @@
+// layerExRaster.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+function check(cond, msg) {
+    if (!cond) throw new Exception("layerExRaster smoke failed: " + msg);
+}
+
+// Plugins.link 的原生 API 返回 void，加载结果由导出的成员确认。
+Plugins.link("layerExRaster.dll");
+check(typeof Layer.prototype.copyRaster == "function", "Layer.copyRaster exists");
+
+// 真实调用：两个 8x8 层，copyRaster 按正弦波位移复制
+var testWindow = new Window();
+var src = new Layer(testWindow, null);
+src.setImageSize(8, 8);
+src.fillRect(0, 0, 8, 8, 0xFF5A2A0A);
+check(src.hasImage, "src hasImage");
+
+var dst = new Layer(testWindow, src);
+dst.setImageSize(8, 8);
+dst.copyRaster(src, 1, 4, 100, 0);
+check(dst.hasImage, "dst hasImage after copyRaster");
+check(dst.imageWidth == 8 && dst.imageHeight == 8, "dst size preserved");
+
+// 连续相位推进（time 变化）不应崩溃
+dst.copyRaster(src, 2, 4, 100, 50);
+dst.copyRaster(src, 1, 8, 200, 133);
+
+// 无效源（非 Layer）必须稳定报错而不是崩溃
+var err = null;
+try {
+    dst.copyRaster(12345, 1, 4, 100, 0);
+} catch (e) {
+    err = e;
+}
+check(err != null, "invalid source rejected");
+
+System.exit(0);

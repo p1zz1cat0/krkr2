@@ -10,4 +10,10 @@ extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
 }
 extern "C" void YoghourtKrKrSpatialShutdown() {}
 #endif
+// 链接锚点桩：与 tests/unit-tests/core/tjs2/spatial_stubs.cpp 一致
 extern "C" void TVPGetLangNamePluginAnchor() {}
+extern "C" void TVPShrinkCopyPluginAnchor() {}
+extern "C" void TVPLayerExRasterPluginAnchor() {}
+extern "C" void TVPFstatPluginAnchor() {}
+extern "C" void TVPLayerExBtoAPluginAnchor() {}
+extern "C" void TVPPackinOnePluginAnchor() {}
