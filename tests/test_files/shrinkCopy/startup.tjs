@@ -1,0 +1,39 @@
+// shrinkCopy.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+function check(cond, msg) {
+    if (!cond) throw new Exception("shrinkCopy smoke failed: " + msg);
+}
+
+var r = Plugins.link("shrinkCopy.dll");
+check(r, "Plugins.link('shrinkCopy.dll')");
+check(typeof Layer.prototype.shrinkCopy == "function", "Layer.shrinkCopy exists");
+check(typeof Layer.prototype.shrinkCopyFast == "function", "Layer.shrinkCopyFast exists");
+
+// 真实调用：8x8 纯色源 → 4x4 目标
+var src = new Layer();
+src.setImageSize(8, 8);
+src.fillRect(0, 0, 8, 8, 0xFF7F3F1F);
+check(src.hasImage, "src hasImage");
+
+var dst = new Layer();
+dst.setImageSize(4, 4);
+dst.shrinkCopy(0, 0, 4, 4, src, 0, 0, 8, 8);
+check(dst.hasImage, "dst hasImage after shrinkCopy");
+check(dst.imageWidth == 4 && dst.imageHeight == 4, "dst size preserved");
+
+// 放大必须报错（仅缩小）
+var err = null;
+try {
+    dst.shrinkCopy(0, 0, 16, 16, src, 0, 0, 8, 8);
+} catch (e) {
+    err = e;
+}
+check(err != null, "upscale rejected");
+
+// 缩小 3 倍：目标尺寸按 ceil 改写
+var dst2 = new Layer();
+dst2.setImageSize(1, 1);
+dst2.shrinkCopyFast(src, 3, 3);
+check(dst2.imageWidth == 3 && dst2.imageHeight == 3, "shrinkCopyFast resized to ceil(8/3)");
+
+System.exit(0);
