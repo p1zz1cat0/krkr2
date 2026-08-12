@@ -9,8 +9,13 @@ set(SOURCES
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")
 set(TARGETS ${BASENAMES_SOURCES})
 
+set(COMMON_SOURCES
+        main.cpp
+        spatial_stubs.cpp
+)
+
 foreach(name ${TARGETS})
-    add_executable(${name} ${name}.cpp main.cpp)
+    add_executable(${name} ${name}.cpp ${COMMON_SOURCES})
 endforeach()
 
 set(ALL_TARGETS

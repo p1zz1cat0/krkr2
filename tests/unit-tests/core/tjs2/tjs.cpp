@@ -24,17 +24,6 @@ public:
     }
 } static iTJSConsoleOutputDef{};
 
-#if defined(__APPLE__)
-extern "C" void YoghourtApplyWindowPresentation(void *) {}
-extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(unsigned int, int, int,
-                                                         float, float, bool) {}
-extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
-                                           void *) {
-    return false;
-}
-extern "C" void YoghourtKrKrSpatialShutdown() {}
-#endif
-
 
 TEST_CASE("exec tjs2 script") {
     const auto tvPScriptEngine = new tTJS();

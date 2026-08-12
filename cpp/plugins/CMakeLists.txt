@@ -24,6 +24,7 @@ target_sources(${PROJECT_NAME} PUBLIC
     LayerExBase.cpp
     Extrans.cpp
     xp3filter.cpp
+    shrinkCopy.cpp
 )
 
 # This compatibility shim belongs only to the aggregate plugin library.  The

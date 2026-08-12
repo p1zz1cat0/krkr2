@@ -20,17 +20,6 @@
 
 #include "test_config.h"
 
-#if defined(__APPLE__)
-extern "C" void YoghourtApplyWindowPresentation(void *) {}
-extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(unsigned int, int, int,
-                                                         float, float, bool) {}
-extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
-                                           void *) {
-    return false;
-}
-extern "C" void YoghourtKrKrSpatialShutdown() {}
-#endif
-
 class TJSConsoleOutputDef final : public iTJSConsoleOutput {
 public:
     void ExceptionPrint(const tjs_char *msg) override {
