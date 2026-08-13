@@ -34,6 +34,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     getLangName.cpp
     shrinkCopy.cpp
     layerExRaster.cpp
+    alphamovie/AlphaMovie.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -90,3 +91,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE fmt::fmt)
 
 find_package(spdlog CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE spdlog::spdlog)
+
+# AlphaMovie 的 zlib-alpha 路径需要 zlib (来自 vcpkg manifest，静态 triplet)。
+# 走 CMake 内建模块模式：vcpkg-cmake-wrapper 会把查找路由到 vcpkg 静态库，
+# 并提供 ZLIB::ZLIB 导入目标。
+find_package(ZLIB REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)

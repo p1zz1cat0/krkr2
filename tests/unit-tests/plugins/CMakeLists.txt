@@ -5,6 +5,7 @@ set(SOURCES
         getLangName-dll.cpp
         psbfile-dll.cpp
         shrinkCopy-dll.cpp
+        alphamovie-dll.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")

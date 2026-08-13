@@ -91,6 +91,7 @@
       "name": "vcpkg-cmake",
       "host": true
     },
+    "zlib",
     "zstd"
   ],
   "overrides": [

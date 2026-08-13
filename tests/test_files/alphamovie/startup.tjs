@@ -1,0 +1,112 @@
+// AlphaMovie.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+// 固件由 make_fixtures.py 合成（16x16，DC-only 帧）。
+function check(cond, msg) {
+    if (!cond) throw new Exception("AlphaMovie smoke failed: " + msg);
+}
+
+// Plugins.link 的原生 API 返回 void，加载结果由导出的成员确认。
+Plugins.link("AlphaMovie.dll");
+
+var am = new AlphaMovie();
+// 成员缺失会抛 "Member ... does not exist"，由 harness 判定失败；
+// 这里直接验证 getter 行为（未打开时 numOfFrame == 0）。
+check(am.numOfFrame == 0, "numOfFrame getter attached");
+check(am.preloadSamples == 5, "preloadSamples getter attached");
+check(am.frame == 0, "frame getter attached");
+check(am.loop == false, "loop getter attached");
+
+// 缺文件 / 非法文件 → 抛异常（内联 try/catch，避免跨函数边界传播日志）
+var err = null;
+try { am.open("missing.amv"); } catch (e) { err = e; }
+check(err != null, "missing file throws");
+err = null;
+try { am.open("sample_garbage.amv"); } catch (e) { err = e; }
+check(err != null, "garbage file throws");
+
+// 打开 JPEG-alpha 固件并验证头部属性
+am.open("sample_jpeg.amv");
+check(am.numOfFrame == 2, "jpeg numOfFrame==2");
+check(am.screenWidth == 16 && am.screenHeight == 16, "jpeg screen size");
+check(am.FPSScale == 30 && am.FPSRate == 1, "jpeg fps props");
+
+// frame 属性钳制
+am.frame = 1;
+check(am.frame == 1, "frame seek");
+am.frame = 99;
+check(am.frame == 1, "frame clamp high");
+am.frame = -5;
+check(am.frame == 0, "frame clamp low");
+
+// 创建 Layer 并播放
+var win = new Window();
+var lay = new Layer(win, null);
+lay.setImageSize(64, 64);
+
+// loop 序列：0,1 → 回绕 0
+am.loop = true;
+var n0 = am.showNextImage(lay);
+var n1 = am.showNextImage(lay);
+var n2 = am.showNextImage(lay);
+check(n0 == 0 && n1 == 1 && n2 == 0, "jpeg loop sequence");
+
+// 非 loop：末尾据置，继续返回末尾帧号
+am.loop = false;
+var m1 = am.showNextImage(lay);
+var m2 = am.showNextImage(lay);
+check(m1 == 1 && m2 == 1, "jpeg end hold");
+
+// 播放控制
+check(!am.isPlaying(), "not playing initially");
+am.play();
+check(am.isPlaying(), "playing after play()");
+am.stop();
+check(!am.isPlaying(), "stopped after stop()");
+am.clear();
+
+// 位置与属性
+am.setPosition(7, 9);
+check(am.left == 7 && am.top == 9, "position set");
+am.left = 3;
+am.top = 4;
+check(am.left == 3 && am.top == 4, "position props");
+check(am.preloadSamples == 5, "preloadSamples default");
+am.preloadSamples = 8;
+check(am.preloadSamples == 8, "preloadSamples set");
+
+// 无效参数必须稳定报错
+err = null;
+try { am.showNextImage(12345); } catch (e) { err = e; }
+check(err != null, "non-layer rejected");
+err = null;
+try { am.showNextImage(null); } catch (e) { err = e; }
+check(err != null, "null layer rejected");
+err = null;
+try { am.showNextImage(); } catch (e) { err = e; }
+check(err != null, "missing arg rejected");
+
+// nextMovieFile 过渡到 zlib 固件
+am.frame = 0;
+am.loop = false;
+am.setNextMovieFile("sample_zlib.amv");
+var t0 = am.showNextImage(lay);
+var t1 = am.showNextImage(lay);
+var t2 = am.showNextImage(lay);
+check(t0 == 0 && t1 == 1 && t2 == 0, "nextMovieFile transition");
+check(am.numOfFrame == 2 && am.screenWidth == 16, "transitioned to zlib movie");
+
+// zlib-alpha 路径播放（过渡后 CurrentIndex 已指向 1：1,0,1 回绕）
+am.loop = true;
+var z0 = am.showNextImage(lay);
+var z1 = am.showNextImage(lay);
+var z2 = am.showNextImage(lay);
+check(z0 == 1 && z1 == 0 && z2 == 1, "zlib loop sequence");
+
+// 销毁路径：新实例重开同文件
+var am2 = new AlphaMovie();
+am2.open("sample_zlib.amv");
+check(am2.numOfFrame == 2, "second instance opens");
+am2.showNextImage(lay);
+invalidate am2;
+
+System.exit(0);
