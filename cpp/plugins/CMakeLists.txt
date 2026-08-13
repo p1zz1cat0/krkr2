@@ -35,6 +35,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     shrinkCopy.cpp
     layerExRaster.cpp
     alphamovie/AlphaMovie.cpp
+    wuvorbis/WuVorbisShim.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

@@ -1,0 +1,42 @@
+// wuvorbis.dll 兼容性模块 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+// 断言两层契约：
+//   1. Plugins.link("wuvorbis.dll") 成功（旧游戏 system 脚本依赖此分支）。
+//   2. .ogg 播放由核心原生解码器承担：WaveSoundBuffer 真实打开并渲染固件。
+function check(cond, msg) {
+    if (!cond) throw new Exception("wuvorbis smoke failed: " + msg);
+}
+
+// 模块链接（link 返回 void，失败时由后续断言与日志暴露）
+Plugins.link("wuvorbis.dll");
+
+// CanLoadPlugin 由 PackinOne 模块附在 Plugins 上；先链接再探测
+// （对应真实游戏里 PackinOne + wuvorbis 的预探测路径）。
+Plugins.link("PackinOne.dll");
+check(Plugins.CanLoadPlugin("wuvorbis.dll"), "CanLoadPlugin reports wuvorbis");
+
+// 真实解码：通过核心原生 VorbisWaveDecoder 打开固件。
+// 本树 WaveSoundBuffer 构造函数需要 1 个 ActionOwner 对象参数（null 合法）。
+var wsb = new WaveSoundBuffer(null);
+wsb.open("test.ogg");
+check(wsb.frequency == 22050, "ogg frequency decoded (22050Hz)");
+check(wsb.channels == 2, "ogg channels decoded (stereo)");
+check(wsb.totalTime > 0, "ogg totalTime > 0");
+
+// 播放/停止走真实渲染路径
+wsb.play();
+check(wsb.status != "", "status property readable while playing");
+wsb.stop();
+
+// 重复打开（teardown 对称性）
+wsb.open("test.ogg");
+check(wsb.frequency == 22050, "reopen works");
+
+// 缺文件必须稳定报错
+var err = null;
+try { wsb.open("missing.ogg"); } catch (e) { err = e; }
+check(err != null, "missing ogg rejected");
+
+invalidate wsb;
+
+System.exit(0);
