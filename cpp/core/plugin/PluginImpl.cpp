@@ -40,6 +40,7 @@ extern "C" void TVPLayerExBtoAPluginAnchor();
 extern "C" void TVPPackinOnePluginAnchor();
 extern "C" void TVPAlphaMoviePluginAnchor();
 extern "C" void TVPWuVorbisPluginAnchor();
+extern "C" void TVPExtNaganoPluginAnchor();
 #include "ncbind.hpp"
 
 #ifdef TVP_SUPPORT_KPI
@@ -109,6 +110,7 @@ void TVPLoadInternalPlugins() {
     TVPPackinOnePluginAnchor();
     TVPAlphaMoviePluginAnchor();
     TVPWuVorbisPluginAnchor();
+    TVPExtNaganoPluginAnchor();
 
     ncbAutoRegister::AllRegist();
     ncbAutoRegister::LoadModule(TJS_W("xp3filter.dll"));

@@ -1,0 +1,121 @@
+function check(condition, message) {
+    if (!condition) throw new Exception("extNagano smoke failed: " + message);
+}
+
+Plugins.link("extNagano.dll");
+Plugins.link("EXTNAGANO.DLL");
+
+var testWindow = new Window();
+var destination = new Layer(testWindow, null);
+var source = new Layer(testWindow, destination);
+var rule = new Layer(testWindow, source);
+source.setImageSize(32, 32);
+destination.setImageSize(32, 32);
+rule.setImageSize(32, 32);
+destination.visible = true;
+source.visible = true;
+testWindow.visible = true;
+
+for (var y = 0; y < 32; y++) {
+    for (var x = 0; x < 32; x++) {
+        destination.setMainPixel(x, y, 0xff000000 | (x << 8) | y);
+        source.setMainPixel(x, y, 0xff000000 | (y << 16) | x);
+        var alpha = (x > 16) ? 0xff : 0x00;
+        rule.setMainPixel(x, y, (alpha << 24) | (x << 16) | (y << 8) | 64);
+    }
+}
+
+var missingTime = null;
+try {
+    destination.beginTransition("scanline", false, source, %[]);
+} catch (e) {
+    missingTime = e;
+}
+check(missingTime != null, "missing time is rejected");
+
+var missingRule = null;
+try {
+    destination.beginTransition("imagewipe", false, source, %[time: 80]);
+} catch (e) {
+    missingRule = e;
+}
+check(missingRule != null, "imagewipe without rule is rejected");
+
+var missing3d = null;
+try {
+    destination.beginTransition("3duniversal", false, source, %[time: 80]);
+} catch (e) {
+    missing3d = e;
+}
+check(missing3d != null, "3duniversal without rule is rejected");
+
+var sizeMismatch = null;
+var other = new Layer(testWindow, source);
+other.setImageSize(16, 16);
+try {
+    destination.beginTransition("rgbfade", false, other, %[time: 80]);
+} catch (e) {
+    sizeMismatch = e;
+}
+check(sizeMismatch != null, "mismatched layer size is rejected");
+
+// Provider construction validates the official option surfaces. Rendering is
+// driven by the normal Layer update loop after this script finishes.
+destination.beginTransition("scanline", false, source, %[time: 80]);
+
+var frameCount = 0;
+var effects = [
+    ["blurfade", %[time: 80, blur1: 2, blur2: 2]],
+    ["zoomfade", %[time: 80, zoom1: 150, zoom2: 80]],
+    ["rgbfade", %[time: 80, delayR: 40, delayG: 20, delayB: 0, delayA: 0]],
+    ["spin", %[time: 80, type1: 0, type2: 1]],
+    ["flutter", %[time: 80, back: 0x80102030, alpha: 200, slip: 4]],
+    ["book", %[time: 80, dir: 0]],
+    ["imagewipe", %[time: 80, rule: rule, dir: 0]],
+    ["honeyturn", %[time: 80, size: 8, dir: 6, order: 6, twist: 1]],
+    ["morphing", %[
+        time: 80,
+        before: [0, 0, 31, 0, 0, 31, 31, 0, 31, 31, 0, 31],
+        after:  [2, 1, 29, 2, 1, 30, 30, 1, 29, 30, 2, 29]
+    ]],
+    ["multiripple", %[
+        time: 80,
+        count: 2,
+        wavecount: 2,
+        rwidth: 8,
+        maxdrift: 2,
+        roundness: 1.0,
+        delaylast: 1.0
+    ]],
+    ["3duniversal", %[
+        time: 80,
+        rule: rule,
+        type: "RGB",
+        speed1: 2,
+        accel1: 0,
+        bound1: 0,
+        speed2: 1,
+        accel2: 0,
+        bound2: 0
+    ]]
+];
+var effectIndex = 0;
+var driveTransitions = function() {
+    frameCount++;
+    if ((frameCount % 3) == 0) {
+        destination.stopTransition();
+        if (effectIndex < effects.count) {
+            destination.beginTransition(effects[effectIndex][0], false, source,
+                effects[effectIndex][1]);
+            effectIndex++;
+        }
+    }
+    if (effectIndex >= effects.count && (frameCount % 3) == 2) {
+        System.removeContinuousHandler(driveTransitions);
+        destination.stopTransition();
+        Debug.message("EXTNAGANO_SMOKE_OK");
+        testWindow.visible = false;
+        System.exit(0);
+    }
+};
+System.addContinuousHandler(driveTransitions);

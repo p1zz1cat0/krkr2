@@ -74,6 +74,7 @@ add_subdirectory(motionplayer)
 #add_subdirectory(json)
 add_subdirectory(fstat)
 add_subdirectory(packinone)
+add_subdirectory(extNagano)
 #add_subdirectory(steam)
 #add_subdirectory(DrawDeviceForSteam)
 target_link_libraries(${PROJECT_NAME} PUBLIC
@@ -84,6 +85,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         motionplayer
         fstat
         packinone
+        extNagano
 #        json steam DrawDeviceForSteam
 )
 
