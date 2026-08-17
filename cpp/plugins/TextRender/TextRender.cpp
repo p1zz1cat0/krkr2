@@ -4,6 +4,8 @@
 
 #define NCB_MODULE_NAME TJS_W("TextRender.dll")
 
+extern "C" void TVPTextRenderPluginAnchor() {}
+
 // #define dbg_print TVPAddLog
 #define dbg_print
 

@@ -22,6 +22,8 @@ typedef unsigned long ULONG_PTR;
 #include "WindowImpl.h"
 
 #define NCB_MODULE_NAME TJS_W("windowEx.dll")
+
+extern "C" void TVPWindowExPluginAnchor() {}
 #ifndef _WIN32
 #define WM_NULL 0x0000
 #define WM_CREATE 0x0001

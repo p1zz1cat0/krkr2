@@ -3,6 +3,12 @@
 #include <cstdlib>
 
 #define NCB_MODULE_NAME TJS_W("getSample.dll")
+
+// This translation unit lives in the aggregate static plugin library.  Keep
+// one explicit symbol so PluginImpl.cpp can pull the registration objects into
+// the final krkr2 executable instead of letting the linker discard them.
+extern "C" void TVPGetSamplePluginAnchor() {}
+
 //------------------------------------------------------------------------------------------------
 // 旧方式（互換のために残されています）
 

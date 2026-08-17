@@ -6,6 +6,10 @@ using namespace std;
 
 #define NCB_MODULE_NAME TJS_W("addFont.dll")
 
+// See TVPGetSamplePluginAnchor: addFont is also an internal module provided by
+// the aggregate static plugin library and needs an explicit retention anchor.
+extern "C" void TVPAddFontPluginAnchor() {}
+
 struct FontEx {
     /**
      * プライベートフォントの追加

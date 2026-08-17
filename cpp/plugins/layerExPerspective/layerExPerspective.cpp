@@ -6,6 +6,8 @@ using namespace std;
 
 #define NCB_MODULE_NAME TJS_W("perspective.dll")
 
+extern "C" void TVPLayerExPerspectivePluginAnchor() {}
+
 static const char *copyright =
     "----- AntiGrainGeometry Copyright START -----\n"
     "Anti-Grain Geometry - Version 2.4\n"

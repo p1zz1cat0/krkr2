@@ -3,27 +3,31 @@ project(krkr2plugin)
 
 add_library(${PROJECT_NAME} STATIC)
 
-target_sources(${PROJECT_NAME} PUBLIC
+# The aggregate owns these registration translation units. Keep them private so
+# child plugin targets link the aggregate instead of compiling every built-in
+# plugin a second time (which can duplicate ncbind registrations).
+target_sources(${PROJECT_NAME} PRIVATE
     KAGParser/kagparserex.cpp
-    EmotePlayer.cpp
-    TextRender.cpp
-    scriptsEx.cpp
-    win32dialog.cpp
-    dirlist.cpp
-    csvParser.cpp
-    layerExMovie.cpp
-    varfile.cpp
-    saveStruct.cpp
-    getabout.cpp
-    addFont.cpp
-    wutcwf.cpp
-    windowEx.cpp
-    getSample.cpp
-    layerExPerspective.cpp
-    fftgraph.cpp
-    LayerExBase.cpp
-    Extrans.cpp
-    xp3filter.cpp
+    EmotePlayer/EmotePlayer.cpp
+    TextRender/TextRender.cpp
+    ScriptsEx/scriptsEx.cpp
+    win32dialog/win32dialog.cpp
+    dirlist/dirlist.cpp
+    csvParser/csvParser.cpp
+    layerExMovie/layerExMovie.cpp
+    varfile/varfile.cpp
+    saveStruct/saveStruct.cpp
+    getabout/getabout.cpp
+    addFont/addFont.cpp
+    wutcwf/wutcwf.cpp
+    windowEx/windowEx.cpp
+    getSample/getSample.cpp
+    layerExPerspective/layerExPerspective.cpp
+    fftgraph/fftgraph.cpp
+    common/LayerExBase.cpp
+    Extrans/Extrans.cpp
+    Extrans/ExtransMath.cpp
+    xp3filter/xp3filter.cpp
 )
 
 # These registration translation units belong only to the aggregate plugin
@@ -31,9 +35,9 @@ target_sources(${PROJECT_NAME} PUBLIC
 # targets, which would otherwise compile and register them multiple times.
 # PluginImpl.cpp references explicit anchors so the static linker retains them.
 target_sources(${PROJECT_NAME} PRIVATE
-    getLangName.cpp
-    shrinkCopy.cpp
-    layerExRaster.cpp
+    getLangName/getLangName.cpp
+    shrinkCopy/shrinkCopy.cpp
+    layerExRaster/layerExRaster.cpp
     alphamovie/AlphaMovie.cpp
     wuvorbis/WuVorbisShim.cpp
 )
@@ -62,12 +66,17 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 
 add_definitions(-D__STDC_CONSTANT_MACROS -DTJS_TEXT_OUT_CRLF)
 
-target_include_directories(${PROJECT_NAME} PUBLIC ${KRKR2PLUGIN_PATH} ${KRKR2PLUGIN_PATH}/simplebinder})
+target_include_directories(${PROJECT_NAME} PUBLIC
+    ${KRKR2PLUGIN_PATH}
+    ${KRKR2PLUGIN_PATH}/common
+    ${KRKR2PLUGIN_PATH}/simplebinder
+    ${KRKR2PLUGIN_PATH}/xp3filter
+)
 target_link_libraries(${PROJECT_NAME} PUBLIC krkr2core)
 
 add_subdirectory(psdfile)
 add_subdirectory(psbfile)
-add_subdirectory(layerex_draw)
+add_subdirectory(layerExDraw)
 add_subdirectory(layerExBtoA)
 add_subdirectory(motionplayer)
 

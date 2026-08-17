@@ -3,6 +3,8 @@
 
 #define NCB_MODULE_NAME TJS_W("win32dialog.dll")
 
+extern "C" void TVPWin32DialogPluginAnchor() {}
+
 static void InitPlugin_WIN32Dialog() {
     TVPExecuteScript(TJS_W("class WIN32Dialog {") TJS_W(
         "	function messageBox(message, caption, type) {return "

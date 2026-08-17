@@ -3,6 +3,8 @@
 
 #define NCB_MODULE_NAME TJS_W("saveStruct.dll")
 
+extern "C" void TVPSaveStructPluginAnchor() {}
+
 class tTVPStringStream {
     tTJSBinaryStream *stream;
     const tjs_char *_newline;

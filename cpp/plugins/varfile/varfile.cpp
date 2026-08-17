@@ -4,6 +4,8 @@
 #include <map>
 
 #define NCB_MODULE_NAME TJS_W("varfile.dll")
+
+extern "C" void TVPVarFilePluginAnchor() {}
 #define BASENAME TJS_W("var")
 
 // 辞書かどうかの判定

@@ -3,6 +3,8 @@
 
 #define NCB_MODULE_NAME TJS_W("KAGParserEx.dll")
 
+extern "C" void TVPKAGParserExPluginAnchor() {}
+
 static void InitPlugin_KAGParserEx() {}
 
 NCB_PRE_REGIST_CALLBACK(InitPlugin_KAGParserEx);

@@ -12,6 +12,7 @@
 //     整数倍缩小的快速版本，会按缩小比例改写自身图像尺寸。
 
 #include "ncbind.hpp"
+#include "common/PluginSafety.h"
 
 #include <cstdlib>
 #include <spdlog/spdlog.h>
@@ -99,25 +100,25 @@ struct LayerUtils
 	// 只读
 	static bool GetLayerBufferAndSize(iTJSDispatch2 *lay, long &w, long &h, BufRefT &ptr, long &pitch)
 	{
-		if (!GetLayerSize(lay, w, h, pitch)) return false;
-
-		// 获取缓冲
-		tTJSVariant val;
-		if (TJS_FAILED(lay->PropGet(0, TJS_W("mainImageBuffer"), 0, &val, lay))) return false;
-		ptr = reinterpret_cast<BufRefT>(val.AsInteger());
-		return  (ptr != 0);
+		const auto view = pluginSafety::LayerReadView::create(lay);
+		if(!view) return false;
+		w = view.value.width();
+		h = view.value.height();
+		pitch = view.value.pitchBytes();
+		ptr = reinterpret_cast<BufRefT>(view.value.pixels());
+		return true;
 	}
 
 	// 可写
 	static bool GetLayerBufferAndSize(iTJSDispatch2 *lay, long &w, long &h, WrtRefT &ptr, long &pitch)
 	{
-		if (!GetLayerSize(lay, w, h, pitch)) return false;
-
-		// 获取缓冲
-		tTJSVariant val;
-		if (TJS_FAILED(lay->PropGet(0, TJS_W("mainImageBufferForWrite"), 0, &val, lay))) return false;
-		ptr = reinterpret_cast<WrtRefT>(val.AsInteger());
-		return  (ptr != 0);
+		const auto view = pluginSafety::LayerWriteView::create(lay);
+		if(!view) return false;
+		w = view.value.width();
+		h = view.value.height();
+		pitch = view.value.pitchBytes();
+		ptr = reinterpret_cast<WrtRefT>(view.value.pixels());
+		return true;
 	}
 };
 

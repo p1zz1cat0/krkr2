@@ -10,6 +10,8 @@
 
 #define NCB_MODULE_NAME TJS_W("ScriptsEx.dll")
 
+extern "C" void TVPScriptsExPluginAnchor() {}
+
 static bool TJS_USERENTRY
 
 _CatchFuncCall(void *data, const tTVPExceptionDesc &desc) {

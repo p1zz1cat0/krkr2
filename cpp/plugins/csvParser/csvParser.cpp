@@ -3,6 +3,8 @@
 #include "ncbind.hpp"
 
 #define NCB_MODULE_NAME TJS_W("csvParser.dll")
+
+extern "C" void TVPCsvParserPluginAnchor() {}
 using namespace std;
 
 //---------------------------------------------------------------------------

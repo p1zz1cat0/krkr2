@@ -38,9 +38,27 @@ extern "C" void TVPLayerExRasterPluginAnchor();
 extern "C" void TVPFstatPluginAnchor();
 extern "C" void TVPLayerExBtoAPluginAnchor();
 extern "C" void TVPPackinOnePluginAnchor();
+extern "C" void TVPExtransPluginAnchor();
 extern "C" void TVPAlphaMoviePluginAnchor();
 extern "C" void TVPWuVorbisPluginAnchor();
 extern "C" void TVPExtNaganoPluginAnchor();
+extern "C" void TVPMotionPlayerPluginAnchor();
+extern "C" void TVPGetSamplePluginAnchor();
+extern "C" void TVPAddFontPluginAnchor();
+extern "C" void TVPScriptsExPluginAnchor();
+extern "C" void TVPTextRenderPluginAnchor();
+extern "C" void TVPWin32DialogPluginAnchor();
+extern "C" void TVPDirListPluginAnchor();
+extern "C" void TVPCsvParserPluginAnchor();
+extern "C" void TVPLayerExMoviePluginAnchor();
+extern "C" void TVPVarFilePluginAnchor();
+extern "C" void TVPSaveStructPluginAnchor();
+extern "C" void TVPGetAboutPluginAnchor();
+extern "C" void TVPWutcwfPluginAnchor();
+extern "C" void TVPWindowExPluginAnchor();
+extern "C" void TVPLayerExPerspectivePluginAnchor();
+extern "C" void TVPFftGraphPluginAnchor();
+extern "C" void TVPKAGParserExPluginAnchor();
 #include "ncbind.hpp"
 
 #ifdef TVP_SUPPORT_KPI
@@ -108,9 +126,27 @@ void TVPLoadInternalPlugins() {
     TVPFstatPluginAnchor();
     TVPLayerExBtoAPluginAnchor();
     TVPPackinOnePluginAnchor();
+    TVPExtransPluginAnchor();
     TVPAlphaMoviePluginAnchor();
     TVPWuVorbisPluginAnchor();
     TVPExtNaganoPluginAnchor();
+    TVPMotionPlayerPluginAnchor();
+    TVPGetSamplePluginAnchor();
+    TVPAddFontPluginAnchor();
+    TVPScriptsExPluginAnchor();
+    TVPTextRenderPluginAnchor();
+    TVPWin32DialogPluginAnchor();
+    TVPDirListPluginAnchor();
+    TVPCsvParserPluginAnchor();
+    TVPLayerExMoviePluginAnchor();
+    TVPVarFilePluginAnchor();
+    TVPSaveStructPluginAnchor();
+    TVPGetAboutPluginAnchor();
+    TVPWutcwfPluginAnchor();
+    TVPWindowExPluginAnchor();
+    TVPLayerExPerspectivePluginAnchor();
+    TVPFftGraphPluginAnchor();
+    TVPKAGParserExPluginAnchor();
 
     ncbAutoRegister::AllRegist();
     ncbAutoRegister::LoadModule(TJS_W("xp3filter.dll"));

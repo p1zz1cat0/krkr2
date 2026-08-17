@@ -9,6 +9,8 @@
 
 #define NCB_MODULE_NAME TJS_W("wutcwf.dll")
 
+extern "C" void TVPWutcwfPluginAnchor() {}
+
 #pragma pack(push, 1)
 struct TTCWFHeader {
     char mark[6]; // = "TCWF0\x1a"

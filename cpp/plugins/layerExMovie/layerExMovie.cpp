@@ -14,6 +14,8 @@
 
 #define NCB_MODULE_NAME TJS_W("layerExMovie.dll")
 
+extern "C" void TVPLayerExMoviePluginAnchor() {}
+
 /*
  * Movie 描画用レイヤ
  */
