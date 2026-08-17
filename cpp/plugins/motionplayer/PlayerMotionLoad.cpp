@@ -53,8 +53,21 @@ namespace motion {
             if(_project.Type() == tvtObject) {
                 if(const auto projectSnapshot =
                        detail::lookupModuleSnapshot(_project)) {
-                    if(projectSnapshot->clipIndexByLabel.find(motionRaw) !=
-                       projectSnapshot->clipIndexByLabel.end()) {
+                    const auto hasExactClip =
+                        projectSnapshot->clipIndexByLabel.find(motionRaw) !=
+                        projectSnapshot->clipIndexByLabel.end();
+                    bool hasOwnedClip = false;
+                    if(!hasExactClip && !charaRaw.empty()) {
+                        for(const auto &clip : projectSnapshot->clipList) {
+                            if(clip.owner == charaRaw &&
+                               detail::clipLabelMatchesRequest(clip.label,
+                                                               motionRaw)) {
+                                hasOwnedClip = true;
+                                break;
+                            }
+                        }
+                    }
+                    if(hasExactClip || hasOwnedClip) {
                         snapshot = projectSnapshot;
                     }
                 }
@@ -97,39 +110,29 @@ namespace motion {
         }
 
         if(_runtime->activeMotion && !_runtime->timelines.empty()) {
+            // Aligned to Player_playTimeline (0x672F70): the requested label
+            // starts only when it exists among the authored timelines. A
+            // motion name that is not a timeline label (e.g. the base clip
+            // "全体構造" played through play(metadata.base.motion, Force))
+            // starts NO timeline: NEKOPARA drives pose timelines explicitly
+            // from TJS via playTimeline/stopTimeline/_playTimeline. Falling
+            // back to auto-starting every main timeline would run all
+            // authored control tracks at once (sample_全自動_test,
+            // sample_00..05, 変な動き, ピョン ...), each rewriting the same
+            // pose variables every crossing — the fixed choreography replay
+            // seen on every play()/switch. The clip layer animation itself
+            // does not need a timeline for the static base pose.
             const auto requestedKey = detail::narrow(name);
-            bool startedRequested = false;
             if(!requestedKey.empty() &&
                _runtime->timelines.find(requestedKey) !=
                    _runtime->timelines.end()) {
                 playTimeline(name, flags & ~PlayFlagStealth);
-                startedRequested = true;
             }
-
-            if(!startedRequested) {
-                double maxTF = 0.0;
-                _runtime->playingTimelineLabels.clear();
-                const auto &primary =
-                    !_runtime->activeMotion->mainTimelineLabels.empty()
-                    ? _runtime->activeMotion->mainTimelineLabels
-                    : _runtime->activeMotion->diffTimelineLabels;
-                for(const auto &timelineLabel : primary) {
-                    auto &state = _runtime->timelines[timelineLabel];
-                    state.flags = flags & ~PlayFlagStealth;
-                    state.playing = true;
-                    state.blendRatio = 1.0;
-                    state.controlInitialized = false;
-                    state.controlLastAppliedTime = state.currentTime;
-                    state.controlFrameCursor.clear();
-                    state.controlTrackValues.clear();
-                    state.controlTrackAnimators.clear();
-                    _runtime->playingTimelineLabels.push_back(timelineLabel);
-                    if(state.totalFrames > maxTF)
-                        maxTF = state.totalFrames;
-                }
-                _cachedTotalFrames = maxTF;
-                _allplaying = !_runtime->playingTimelineLabels.empty();
-            }
+            // Emote-mode init paths set _allplaying unconditionally; settle
+            // it to the real playing-timeline state so the game's `animating`
+            // property is false at idle (no timeline playing) and true while
+            // a pose timeline runs, matching the original's sync flow.
+            _allplaying = !_runtime->playingTimelineLabels.empty();
         }
 
         // Handle pending stealth motion (0x6B226C..0x6B2280)

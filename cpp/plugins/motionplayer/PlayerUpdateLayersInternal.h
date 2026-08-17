@@ -127,13 +127,19 @@ namespace {
         if(!snapshot || sourceName.empty()) {
             return;
         }
+        if(node.geometrySnapshot == snapshot.get() &&
+           node.geometrySourceName == sourceName) {
+            return;
+        }
+        node.geometrySnapshot = snapshot.get();
+        node.geometrySourceName = sourceName;
         int srcW = 0;
         int srcH = 0;
         double srcOX = 0.0;
         double srcOY = 0.0;
         std::vector<std::uint8_t> decomp;
         findPSBResourceBySourceName(*snapshot, sourceName, srcW, srcH, decomp,
-                                    srcOX, srcOY);
+                                    srcOX, srcOY, nullptr, false);
         node.clipW = srcW;
         node.clipH = srcH;
         node.originX = srcOX;

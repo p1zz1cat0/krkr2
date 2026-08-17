@@ -17,6 +17,13 @@
 
 using namespace motion;
 
+extern "C" void TVPEmotePlayerShimAnchor();
+extern "C" void TVPMotionPlayerPluginAnchor() {
+    // Keep both the implementation module and the emoteplayer.dll dependency
+    // shim when krkr2plugin is linked as a static archive.
+    TVPEmotePlayerShimAnchor();
+}
+
 #define NCB_MODULE_NAME TJS_W("motionplayer.dll")
 #define LOGGER spdlog::get("plugin")
 
@@ -273,7 +280,8 @@ NCB_REGISTER_CLASS(Player) {
     NCB_METHOD(getTimelineTotalFrameCount);
     NCB_METHOD(playTimeline);
     NCB_METHOD(stopTimeline);
-    NCB_METHOD(setTimelineBlendRatio);
+    NCB_METHOD_RAW_CALLBACK(setTimelineBlendRatio,
+                            &Class::setTimelineBlendRatioCompat, 0);
     NCB_METHOD(getTimelineBlendRatio);
     NCB_METHOD(fadeInTimeline);
     NCB_METHOD(fadeOutTimeline);
@@ -377,7 +385,8 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_METHOD(getTimelinePlaying);
     NCB_METHOD(stopTimeline);
     NCB_METHOD(setTimeline);
-    NCB_METHOD(setTimelineBlendRatio);
+    NCB_METHOD_RAW_CALLBACK(setTimelineBlendRatio,
+                            &Class::setTimelineBlendRatioCompat, 0);
     NCB_METHOD(getTimelineBlendRatio);
     NCB_METHOD(fadeInTimeline);
     NCB_METHOD(fadeOutTimeline);
@@ -666,7 +675,8 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_METHOD(getTimelinePlaying);
     NCB_METHOD(stopTimeline);
     NCB_METHOD(setTimeline);
-    NCB_METHOD(setTimelineBlendRatio);
+    NCB_METHOD_RAW_CALLBACK(setTimelineBlendRatio,
+                            &Class::setTimelineBlendRatioCompat, 0);
     NCB_METHOD(getTimelineBlendRatio);
     NCB_METHOD(fadeInTimeline);
     NCB_METHOD(fadeOutTimeline);

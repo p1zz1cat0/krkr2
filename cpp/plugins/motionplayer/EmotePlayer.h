@@ -173,6 +173,10 @@ namespace motion {
 
         void setVariable(ttstr label, double value, double transition = 0.0,
                          double ease = 0.0);
+        static tjs_error setTimelineBlendRatioCompat(tTJSVariant *result,
+                                                     tjs_int numparams,
+                                                     tTJSVariant **param,
+                                                     iTJSDispatch2 *objthis);
         static tjs_error setVariableCompat(tTJSVariant *result,
                                            tjs_int numparams,
                                            tTJSVariant **param,
@@ -180,8 +184,8 @@ namespace motion {
         double getVariable(ttstr label);
         tTJSVariant getVariableFrameList(ttstr label);
 
-        void startWind(double minAngle, double maxAngle, double amplitude,
-                       double freqX = 0.0, double freqY = 0.0);
+        void startWind(double start, double goal, double speed,
+                       double powerMin = 0.0, double powerMax = 0.0);
         static tjs_error startWindCompat(tTJSVariant *result, tjs_int numparams,
                                          tTJSVariant **param,
                                          iTJSDispatch2 *objthis);

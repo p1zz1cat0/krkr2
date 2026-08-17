@@ -453,6 +453,9 @@ namespace motion {
             (numparams >= 4 && param[3]) ? param[3]->AsReal() : 0.0;
         self->setVariable(ttstr(*param[0]), param[1]->AsReal(), transition,
                           ease);
+        LOGGER->info("emote.abi.var label={} value={} transition={} ease={}",
+                     ttstr(*param[0]).AsStdString(), param[1]->AsReal(),
+                     transition, ease);
         return TJS_S_OK;
     }
 
@@ -483,9 +486,9 @@ namespace motion {
     }
 
     // --- Wind/Force ---
-    void EmotePlayer::startWind(double minAngle, double maxAngle,
-                                double amplitude, double freqX, double freqY) {
-        _player.startWind(minAngle, maxAngle, amplitude, freqX, freqY);
+    void EmotePlayer::startWind(double start, double goal, double speed,
+                                double powerMin, double powerMax) {
+        _player.startWind(start, goal, speed, powerMin, powerMax);
         _modified = true;
     }
 
@@ -576,6 +579,8 @@ namespace motion {
     }
 
     void EmotePlayer::playTimeline(ttstr label, tjs_int flags) {
+        LOGGER->info("emote.abi.tl.play label={} flags={}",
+                     label.AsStdString(), flags);
         _player.playTimeline(label, flags);
         _modified = true;
     }
@@ -588,7 +593,10 @@ namespace motion {
         return isTimelinePlaying(label);
     }
 
-    void EmotePlayer::stopTimeline(ttstr label) { _player.stopTimeline(label); }
+    void EmotePlayer::stopTimeline(ttstr label) {
+        LOGGER->info("emote.abi.tl.stop label={}", label.AsStdString());
+        _player.stopTimeline(label);
+    }
 
     void EmotePlayer::setTimelineBlendRatio(ttstr label, double ratio) {
         _player.setTimelineBlendRatio(label, ratio);
@@ -596,6 +604,35 @@ namespace motion {
 
     double EmotePlayer::getTimelineBlendRatio(ttstr label) {
         return _player.getTimelineBlendRatio(label);
+    }
+
+    tjs_error EmotePlayer::setTimelineBlendRatioCompat(
+        tTJSVariant *, tjs_int numparams, tTJSVariant **param,
+        iTJSDispatch2 *objthis) {
+        auto *self =
+            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+        if(!self) {
+            return TJS_E_INVALIDOBJECT;
+        }
+        if(numparams < 2 || !param[0] || !param[1]) {
+            return TJS_E_BADPARAMCOUNT;
+        }
+        const ttstr label(*param[0]);
+        const double ratio = param[1]->AsReal();
+        const double transition =
+            (numparams >= 3 && param[2]) ? param[2]->AsReal() : 0.0;
+        const double easing =
+            (numparams >= 4 && param[3]) ? param[3]->AsReal() : 0.0;
+        const bool stopWhenBlendDone =
+            (numparams >= 5 && param[4]) ? param[4]->AsInteger() != 0 : false;
+        self->_player.setTimelineBlendRatioEx(label, ratio, transition,
+                                              easing, stopWhenBlendDone);
+        LOGGER->info(
+            "emote.abi.tl.blend label={} ratio={} transition={} ease={} "
+            "stop={}",
+            label.AsStdString(), ratio, transition, easing,
+            stopWhenBlendDone ? 1 : 0);
+        return TJS_S_OK;
     }
 
     void EmotePlayer::fadeInTimeline(ttstr label, double duration,
@@ -768,12 +805,16 @@ namespace motion {
                 clipLookupLabel.AsStdString(), label.AsStdString());
             const bool retryStarted =
                 _player.playMotionLike_0x6B2284(label, flags);
-            _player.setAllplaying(true);
             _modified = true;
             return retryStarted;
         }
 
-        _player.setAllplaying(true);
+        // Do not force allplaying here: playMotionLike_0x6B2284 settles it
+        // from the playing-timeline list. With no timeline playing (base
+        // clip only) `animating` must stay false so the game's updateFlip
+        // edge detector does not fire a spurious onAnimationStop/onSync on
+        // the frame after createPlayer; a real pose timeline flips it true
+        // and the completion edge then fires exactly once.
         _modified = true;
         return started;
     }
@@ -805,6 +846,7 @@ namespace motion {
     }
 
     void EmotePlayer::skipToSync() {
+        LOGGER->info("emote.abi.sync skip");
         _player.skipToSync();
         _modified = true;
     }
@@ -813,6 +855,7 @@ namespace motion {
     // pass() is parameterless (manual.tjs / AffineSourceMotion sync); time
     // advancement is progress(tickStep) called separately by the script.
     void EmotePlayer::pass() {
+        LOGGER->info("emote.abi.sync pass");
         _player.releaseSyncWait();
         _modified = true;
     }
@@ -887,20 +930,27 @@ namespace motion {
             return false;
         }
 
-        // Use local coordinate state for AABB test.
-        // Aligned to libkrkr2.so sub_690DF0: supports circle/rect/quad;
-        // we use AABB approximation for now.
-        const double scale = static_cast<double>(_baseScale * _userScale);
+        // Prefer the last rendered AABB. setCoord 是模型原点，不是 AABB
+        // 左上角；motion width/height 也常为 0。旧实现会在切换帧把触摸盒
+        // 收成 (0,0) 附近的退化矩形。
+        if(_player.hitTestBounds(x, y)) {
+            return true;
+        }
+
+        const double scale = static_cast<double>(_baseScale) *
+            static_cast<double>(_userScale);
         const double width = _player.getActiveMotionWidth();
         const double height = _player.getActiveMotionHeight();
-        if(width <= 0.0 || height <= 0.0) {
+        if(!(width > 0.0 && height > 0.0 && scale > 0.0)) {
             return false;
         }
 
         const auto scaledWidth = width * scale;
         const auto scaledHeight = height * scale;
-        return x >= _coordX && x <= (_coordX + scaledWidth) && y >= _coordY &&
-            y <= (_coordY + scaledHeight);
+        const double minX = _coordX - scaledWidth * 0.5;
+        const double minY = _coordY - scaledHeight * 0.5;
+        return x >= minX && x <= (minX + scaledWidth) && y >= minY &&
+            y <= (minY + scaledHeight);
     }
 
     bool EmotePlayer::contains(ttstr label, double x, double y) {

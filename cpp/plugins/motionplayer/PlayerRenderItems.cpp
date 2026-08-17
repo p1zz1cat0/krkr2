@@ -53,33 +53,10 @@ namespace {
         };
     }
 
-    // e-mote 有界 child merge：全体構造 只有少量 type=3 子树
-    // (body/head/face)。全量 merge 任意 type=3 会触发粒子等深层
-    // prepare 风暴，但跳过 head/body 会丢掉 ■輪郭/■前髪 与整棵
-    // face_parts（五官只活在 head 子 Player 里）。
     bool shouldMergeEmoteBoundedChild(
         const motion::detail::MotionNode &node) {
-        if(node.nodeType != 3) {
-            return false;
-        }
-
-        const auto &source = node.interpolatedCache.src;
-        if(source.find("motion/face_parts/") != std::string::npos ||
-           source.find("motion/head_parts/") != std::string::npos ||
-           source.find("motion/body_parts/") != std::string::npos) {
-            return true;
-        }
-
-        // Label fallback when src 尚未写进 interpolatedCache（首帧/slot
-        // 未就绪），仍要能按层名识别五官容器。
-        static constexpr std::array<std::string_view, 15> kBoundedLabels = {
-            "■目L", "■目R", "■眉L", "■眉R", "■口", "■鼻",
-            "■頬",  "口_種類", "瞳L",  "瞳R",  "涙L",  "涙R",
-            "頭部変形基礎", "全身変形基礎", "下半身変形基礎",
-        };
-        return std::find(kBoundedLabels.begin(), kBoundedLabels.end(),
-                         std::string_view(node.layerName)) !=
-            kBoundedLabels.end();
+        return motion::detail::shouldMergeEmoteBoundedChild(
+            node.nodeType, node.interpolatedCache.src, node.layerName);
     }
 
 } // anonymous namespace
@@ -94,6 +71,7 @@ namespace motion {
             _boundsMinY = 0.0;
             _boundsMaxX = 0.0;
             _boundsMaxY = 0.0;
+            _hasLastGoodBounds = false;
             return;
         }
         PrepareRenderPlayerScope selfScope(this);
@@ -250,10 +228,11 @@ namespace motion {
 
         for(size_t ni = 1; ni < _runtime->nodes.size(); ++ni) {
             auto &node = _runtime->nodes[ni];
-            if(detail::isEmoteLikeMotion(*_runtime)) {
-                break;
-            }
+            const bool emoteLike = detail::isEmoteLikeMotion(*_runtime);
             if(node.nodeType == 3) {
+                if(emoteLike && !shouldMergeEmoteBoundedChild(node)) {
+                    continue;
+                }
                 if(auto *child = node.getChildPlayer()) {
                     if(gActivePrepareRenderPlayers.count(child) != 0) {
                         continue;
@@ -266,7 +245,7 @@ namespace motion {
                     mergeBounds(child->_boundsMinX, child->_boundsMinY,
                                 child->_boundsMaxX, child->_boundsMaxY);
                 }
-            } else if(node.nodeType == 4) {
+            } else if(node.nodeType == 4 && !emoteLike) {
                 const int particleCount = node.getParticleCount();
                 for(int pi = 0; pi < particleCount; ++pi) {
                     if(auto *child = node.getParticleChild(pi)) {
@@ -279,10 +258,23 @@ namespace motion {
         }
 
         if(!haveBounds) {
-            _boundsMinX = 0.0;
-            _boundsMinY = 0.0;
-            _boundsMaxX = 0.0;
-            _boundsMaxY = 0.0;
+            if(_hasLastGoodBounds) {
+                _boundsMinX = _lastGoodBoundsMinX;
+                _boundsMinY = _lastGoodBoundsMinY;
+                _boundsMaxX = _lastGoodBoundsMaxX;
+                _boundsMaxY = _lastGoodBoundsMaxY;
+            } else {
+                _boundsMinX = 0.0;
+                _boundsMinY = 0.0;
+                _boundsMaxX = 0.0;
+                _boundsMaxY = 0.0;
+            }
+        } else {
+            _lastGoodBoundsMinX = _boundsMinX;
+            _lastGoodBoundsMinY = _boundsMinY;
+            _lastGoodBoundsMaxX = _boundsMaxX;
+            _lastGoodBoundsMaxY = _boundsMaxY;
+            _hasLastGoodBounds = true;
         }
         detail::logoChainTraceLogf(
             motionPath, "calcBounds.player", "0x6C3D04", _clampedEvalTime,

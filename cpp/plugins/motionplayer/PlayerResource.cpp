@@ -19,7 +19,11 @@ namespace motion {
             it != _runtime->motionsByKey.end();) {
             if(it->first == key || it->second->path == key) {
                 if(_runtime->activeMotion == it->second) {
+                    ++_runtime->motionGeneration;
                     _runtime->activeMotion.reset();
+                    _controllerState.reset();
+                    _progressTransactionOpen = false;
+                    _progressTransactionDt = 0.0;
                     _runtime->timelines.clear();
                     _runtime->playingTimelineLabels.clear();
                 }
@@ -39,7 +43,11 @@ namespace motion {
         if(_runtime->sourceCacheNative) {
             _runtime->sourceCacheNative->clearCache();
         }
+        ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _controllerState.reset();
+        _progressTransactionOpen = false;
+        _progressTransactionDt = 0.0;
         _runtime->timelines.clear();
         _runtime->playingTimelineLabels.clear();
         _runtime->layerIdsByName.clear();
@@ -48,6 +56,11 @@ namespace motion {
         _runtime->lastCanvas.Clear();
         _runtime->lastViewParam.Clear();
         _runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
+        _hasLastGoodBounds = false;
+        _boundsMinX = 0.0;
+        _boundsMinY = 0.0;
+        _boundsMaxX = 0.0;
+        _boundsMaxY = 0.0;
         _variableKeys.Clear();
         _variableValues.clear();
         _variableAnimators.clear();

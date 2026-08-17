@@ -1,6 +1,8 @@
 // PlayerFrameProgress.cpp — frameProgress timeline/control stepping
 // Split from PlayerRender.cpp for maintainability.
 //
+#include <stdexcept>
+
 #include "PlayerInternal.h"
 #include "MotionTraceWeb.h"
 #include "ncbind.hpp"
@@ -625,14 +627,13 @@ namespace motion {
             for(size_t frameIndex = 0; frameIndex < track.frames.size();
                 ++frameIndex) {
                 const auto &frame = track.frames[frameIndex];
+                if(frame.time > time) {
+                    break;
+                }
                 if(!frame.isTypeZero) {
                     lastNonTypeZero = static_cast<int>(frameIndex);
                 }
-                if(frame.time <= time) {
-                    cursor = static_cast<int>(frameIndex);
-                    continue;
-                }
-                break;
+                cursor = static_cast<int>(frameIndex);
             }
             state.controlFrameCursor[trackIndex] = cursor;
 
@@ -711,6 +712,13 @@ namespace motion {
                             state, trackIndex, nextFrame.value, transition,
                             nextFrame.easingWeight);
                     } else {
+                        LOGGER->info(
+                            "emote.tl.frame label={} tl={} value={:.2f} "
+                            "transition={:.2f} time={:.2f} target={:.2f} "
+                            "cursor={} flags={}",
+                            track.label, state.label, nextFrame.value,
+                            transition, state.currentTime, targetTime,
+                            cursor, state.flags);
                         setVariableResolvedWeightLike_0x671228(
                             track.label, static_cast<double>(nextFrame.value),
                             transition, nextFrame.easingWeight);
@@ -804,7 +812,7 @@ namespace motion {
         }
     }
 
-    void Player::frameProgress(double dt) {
+    void Player::frameProgressPhases(double dt) {
         // Aligned to libkrkr2.so Player_progress_inner (0x6C106C):
         // _speed is a bool flag (play/pause). When false, skip progress
         // entirely.
@@ -822,6 +830,9 @@ namespace motion {
         if(_queuing) {
             _allplaying = !_runtime->playingTimelineLabels.empty();
             _syncActive = _syncWaiting && _allplaying;
+            // The first-frame gate still performs the pre-Core transfer, but
+            // it must not advance Eye, wind, or post-Core physics time.
+            beginProgressTransaction(0.0);
             return;
         }
 
@@ -838,10 +849,16 @@ namespace motion {
         const auto stepControllerBucket = [this](auto &bucket,
                                                  double controllerDt) {
             for(auto &[label, state] : bucket) {
+                const bool wasAnimating =
+                    state.active || !state.queue.empty();
                 double steppedValue = state.currentValue;
                 const bool stillAnimating = stepQueuedAnimatorLike_0x67D01C(
                     state, controllerDt, steppedValue);
                 writeEvalResultValueLike_0x6C4668(label, steppedValue);
+                if(wasAnimating && !stillAnimating && controllerDt > 0.0) {
+                    LOGGER->info("emote.anim.done key={} value={:.2f}", label,
+                                 steppedValue);
+                }
                 if(stillAnimating) {
                     _emoteDirty = true;
                 }
@@ -888,6 +905,25 @@ namespace motion {
 
         _allplaying = !_runtime->playingTimelineLabels.empty();
         _syncActive = _syncWaiting && _allplaying;
+        beginProgressTransaction(actualDelta);
+    }
+
+    void Player::progressFrameTransaction(double dt) {
+        if(!std::isfinite(dt) || dt < 0.0) {
+            throw std::invalid_argument(
+                "motionplayer: frame progress delta must be finite and "
+                "non-negative");
+        }
+        frameProgressPhases(dt);
+        if(_runtime && !_runtime->nodes.empty()) {
+            updateLayers();
+        } else {
+            finishProgressTransaction();
+        }
+    }
+
+    void Player::frameProgress(double dt) {
+        progressFrameTransaction(dt);
     }
 
 
@@ -921,7 +957,7 @@ namespace motion {
         }
 
         _runtime->pendingEvents.clear();
-        if(deltaMs < 0.0 || deltaMs > 60000.0) {
+        if(!std::isfinite(deltaMs) || deltaMs < 0.0 || deltaMs > 60000.0) {
             deltaMs = 0.0;
         }
 
@@ -974,6 +1010,7 @@ namespace motion {
         }
         // progress(0) 也须 face_talk→talk 与 clamp；否则口型 parameter 不刷新。
         applyEvalResultPostProcessLike_0x67CC9C();
+        beginProgressTransaction(_speed ? dtFrames : 0.0);
         syncParameterEntriesFromVariablesLike_sdl3();
 
         if(_queuing) {
@@ -984,6 +1021,8 @@ namespace motion {
         _clampedEvalTime = 0.0;
         if(!_runtime->nodes.empty()) {
             updateLayersEmoteLike_sdl3();
+        } else {
+            finishProgressTransaction();
         }
         calcBounds();
         dispatchPendingMotionEvents(objthis);
@@ -993,25 +1032,67 @@ namespace motion {
     }
 
     void Player::progressMsLike_0x6D2A54(double deltaMs) {
+        const auto progressStart = std::chrono::steady_clock::now();
         if(_runtime && detail::isEmoteLikeMotion(*_runtime)) {
             progressEmoteLike_sdl3(deltaMs, nullptr);
+            recordSlaProgressStatsLike_0x6D2A54(progressStart);
             return;
         }
         ensureMotionLoaded();
-        if(deltaMs < 0 || deltaMs > 60000) {
+        if(!std::isfinite(deltaMs) || deltaMs < 0 || deltaMs > 60000) {
             deltaMs = 0;
         }
 
         if(_runtime) {
             _runtime->pendingEvents.clear();
         }
-        frameProgress(deltaMs * kMotionFramesPerMillisecond);
-        if(_runtime && !_runtime->nodes.empty()) {
-            updateLayers();
-        }
+        progressFrameTransaction(deltaMs * kMotionFramesPerMillisecond);
         calcBounds();
         if(_runtime) {
             _runtime->pendingEvents.clear();
+        }
+        recordSlaProgressStatsLike_0x6D2A54(progressStart);
+    }
+
+    void Player::recordSlaProgressStatsLike_0x6D2A54(
+        std::chrono::steady_clock::time_point progressStart) {
+        if(!_runtime) {
+            return;
+        }
+        const double frameMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - progressStart)
+                .count();
+        const double nowSeconds = std::chrono::duration<double>(
+                                     std::chrono::steady_clock::now()
+                                         .time_since_epoch())
+                                     .count();
+        if(_runtime->slaProgressWindowStart == 0.0) {
+            _runtime->slaProgressWindowStart = nowSeconds;
+        }
+        ++_runtime->slaProgressFrames;
+        _runtime->slaProgressMsSum += frameMs;
+        _runtime->slaProgressMsMax =
+            std::max(_runtime->slaProgressMsMax, frameMs);
+        if(nowSeconds - _runtime->slaProgressWindowStart >= 3.0) {
+            const double windowMs =
+                (nowSeconds - _runtime->slaProgressWindowStart) * 1000.0;
+            const int frames = _runtime->slaProgressFrames;
+            if(frames > 0) {
+                if(auto logger = spdlog::get("plugin")) {
+                    logger->info(
+                        "sla.accurate.progress.stats path={} windowMs={:.0f} "
+                        "frames={} avgMs={:.1f} maxMs={:.1f}",
+                        _runtime->activeMotion ? _runtime->activeMotion->path
+                                               : std::string("<none>"),
+                        windowMs, frames, _runtime->slaProgressMsSum / frames,
+                        _runtime->slaProgressMsMax);
+                }
+            }
+            _runtime->slaProgressWindowStart = nowSeconds;
+            _runtime->slaProgressFrames = 0;
+            _runtime->slaProgressMsSum = 0.0;
+            _runtime->slaProgressMsMax = 0.0;
         }
     }
 
@@ -1036,7 +1117,7 @@ namespace motion {
         if(numparams > 0 && param[0] && param[0]->Type() != tvtVoid) {
             delta = param[0]->AsReal();
         }
-        if(delta < 0 || delta > 60000) {
+        if(!std::isfinite(delta) || delta < 0 || delta > 60000) {
             delta = 0;
         }
 
@@ -1052,7 +1133,7 @@ namespace motion {
         }
 
         self->_runtime->pendingEvents.clear();
-        self->frameProgress(delta * kMotionFramesPerMillisecond);
+        self->progressFrameTransaction(delta * kMotionFramesPerMillisecond);
         const auto motionPath = self->_runtime && self->_runtime->activeMotion
             ? self->_runtime->activeMotion->path
             : std::string{};
@@ -1072,7 +1153,6 @@ namespace motion {
                 "timelineCurrentTime={:.3f} pendingEvents={} nodes={}",
                 self->_clampedEvalTime, self->_runtime->pendingEvents.size(),
                 self->_runtime->nodes.size());
-            self->updateLayers();
         }
         self->calcBounds();
 

@@ -1,6 +1,9 @@
 # MotionPlayer：TVP 与 SDL3 对照
 
-> **SDL3 真源：** `docs/sdl3/emoteplayerclass.cpp`  
+> [!WARNING]
+> **历史坐标对照。** `sdl3-ref` 是本项目历史实验快照，不是原版插件源码；本文所述旧类和绘制分工不能直接代表当前 runtime。现状以 [当前研究基线](MOTIONPLAYER_RESEARCH.md) 与当前源码为准。
+
+> **历史 SDL3 对照：** `sdl3-ref/emoteplayerclass.cpp`（本项目实验快照，非原版真源）
 > **TVP：** `emoteplayerclass.cpp`
 
 ---

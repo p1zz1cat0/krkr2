@@ -617,6 +617,35 @@ namespace motion::detail {
                 }
 
                 snapshot.timelineControlByLabel[*label] = std::move(binding);
+
+                // One-shot diagnostic: authored control-track layout.
+                if(LOGGER) {
+                    const auto &stored = snapshot.timelineControlByLabel.at(*label);
+                    for(size_t trackIndex = 0;
+                        trackIndex < stored.tracks.size(); ++trackIndex) {
+                        const auto &track = stored.tracks[trackIndex];
+                        std::string frames;
+                        for(size_t frameIndex = 0;
+                            frameIndex < track.frames.size() &&
+                            frameIndex < 24; ++frameIndex) {
+                            const auto &frame = track.frames[frameIndex];
+                            if(frameIndex > 0) {
+                                frames += ",";
+                            }
+                            frames += fmt::format("{}:{}{:.2f}",
+                                                  frame.time,
+                                                  frame.isTypeZero ? "T" : "v",
+                                                  frame.value);
+                        }
+                        LOGGER->info(
+                            "emote.tl.diag label={} diff={} loop={:.2f}..{:.2f} "
+                            "last={:.2f} track[{}]={} frames=[{}]{}",
+                            *label, isDiff ? 1 : 0, stored.loopBegin,
+                            stored.loopEnd, stored.lastTime, trackIndex,
+                            track.label, frames,
+                            track.frames.size() > 24 ? "..." : "");
+                    }
+                }
             }
         }
 

@@ -1,5 +1,8 @@
 # PSB / e-mote 数据结构说明
 
+> [!WARNING]
+> **历史样本字段调查，不是 PSB/E-mote 格式规范。** 原版插件闭源，导出的 JSON 只代表具名样本；字段含义与消费状态必须重新对照当前 parser 和 runtime。当前结论边界见 [研究基线](MOTIONPLAYER_RESEARCH.md)。
+
 > **文档索引：** [`README.md`](README.md)  
 > **位姿实现：** [`MOTIONPLAYER_TEXTURE_WORLD_COORDS.md`](MOTIONPLAYER_TEXTURE_WORLD_COORDS.md)  
 > **架构概览：** [`MOTIONPLAYER_ARCHITECTURE.md`](MOTIONPLAYER_ARCHITECTURE.md) §5
@@ -7,7 +10,7 @@
 > 文件：`tests/test_files/emote/e-mote3.0バニラパジャマa.json`  
 > 依据：
 > - JSON 实例本身（该文件）
-> - 当前解析实现：`cpp/plugins/motionplayer/EmoteFileCore.cpp`、`EmoteMetadata.cpp`、`EmoteMotion.cpp`、`EmoteNode.cpp`、`EmoteFrame.cpp`、`EmoteTimeline.cpp`、`EmotePhysics.cpp`
+> - 当前解析/消费入口应从 `PlayerMotionLoad.cpp`、`RuntimeSupport.cpp`、`NodeTree.cpp`、`PlayerFrameProgress.cpp` 与 `PlayerUpdateLayerEval.cpp` 重新核对
 >
 > 说明规则：
 > - `✅`：代码中明确读取/使用，含义较确定
@@ -68,7 +71,7 @@
 | `mirror` | int | 是否镜像开关（`1` 为镜像） | ✅ |
 | `timelineControl` | array | 时间线变量控制集合 | ✅ |
 | `variableList` | array | 可控变量定义（至少标签） | ✅ |
-| `eyeControl` | array | 眨眼控制参数 | ✅ |
+| `eyeControl` | array | 眨眼控制相关数据 | ⚠️ 当前仅确认收集部分绑定；完整参数与自动眨眼状态机未实现/未证实 |
 | `eyebrowControl` | array | 眉毛控制参数 | ✅ |
 | `bustControl` | array | 胸部物理控制参数 | ✅ |
 | `hairControl` | array | 头发物理控制参数 | ✅ |
@@ -295,7 +298,7 @@
 | `groundCorrection` | int |  | 当前实现未直接读取 |
 | `joinTarget` | string/null |  | 当前实现未直接读取 |
 | `metadata` | object/null |  | 当前实现未直接读取 |
-| `transformOrder` | int |  | 当前实现未直接读取 |
+| `transformOrder` | array | 局部 Flip/Angle/Zoom/Slant 的应用顺序 | ✅ `NodeTree.cpp` 解析，当前 update-layers 路径应用；具体样本行为仍需验证 |
 | `exportSelf` | int/bool |  | 当前实现未直接读取 |
 
 ---

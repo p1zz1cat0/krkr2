@@ -37,6 +37,7 @@ namespace motion {
 namespace motion::detail {
 
     struct MotionParameterEntry;
+    struct MotionSnapshot;
 
     struct MotionNode {
         // Identity (from PSB, set once during tree build)
@@ -348,6 +349,11 @@ namespace motion::detail {
         double originY = 0.0; // node+256
         double clipW = 0.0; // node+232
         double clipH = 0.0; // node+240
+        // Port-only cache for immutable PSB source geometry. Pixel decoding is
+        // owned by SourceCache; updateLayers only needs dimensions/origin and
+        // must not resolve the same source again every frame.
+        const MotionSnapshot *geometrySnapshot = nullptr; // non-owning identity
+        std::string geometrySourceName;
 
         // Anchor node data for nodeType=10 (sub_6C0528 at 0x6C0528)
         int anchorType = 0; // node+2376: "anchor" from PSB

@@ -1,9 +1,12 @@
 # MotionPlayer 矩阵与坐标变换管线（TVP 实现）
 
+> [!WARNING]
+> **历史渲染调查，非当前管线说明。** 本文以旧 `emotefile` / SDL3 实验代码和当时日志为基础；引用矩阵顺序或故障根因前，必须重新核对当前 `Player` / `NodeTree` 实现。先读 [当前研究基线](MOTIONPLAYER_RESEARCH.md)。
+
 > **文档索引：** [`README.md`](README.md)  
 > 权威对照：`docs/sdl3/emotefile.cpp`（GPU tessellation）、`docs/sdl3/emoteplayerclass.cpp`（Player / FBO）  
 > TVP 实现：`emoteplayerclass.cpp`、`EmoteNode.cpp`、`EmoteInternal.cpp`、`EmoteTVPRenderer.cpp`  
-> 脚本入口：`data/system/AffineSourceMotion.tjs` → `drawAffine`  
+> 历史脚本对照：游戏侧 `AffineSourceMotion.tjs` → `drawAffine`（当前仓库不存在该生产路径）
 > **TVP 坐标系 / 仿射防踩坑：** [`MOTIONPLAYER_TVP_COORDINATES.md`](MOTIONPLAYER_TVP_COORDINATES.md)  
 > **贴图在世界坐标中的定位（PSB 字段 + progress 实现）：** [`MOTIONPLAYER_TEXTURE_WORLD_COORDS.md`](MOTIONPLAYER_TEXTURE_WORLD_COORDS.md)
 
@@ -64,7 +67,7 @@ sequenceDiagram
 
 ### 2.1 脚本侧（顺序固定，影响 C++ 侧设计）
 
-`data/system/AffineSourceMotion.tjs` 的 `drawAffine`：
+历史游戏侧 `AffineSourceMotion.tjs` 样本的 `drawAffine`（不是当前仓库生产脚本）：
 
 ```javascript
 // 1) Emote 内部位姿（PSB 坐标系）
@@ -462,7 +465,7 @@ inOffscreen=1  alphaSamples~ > 0
 
 | 文件 | 职责 |
 |------|------|
-| `data/system/AffineSourceMotion.tjs` | `drawAffine` 脚本顺序 |
+| 历史游戏侧 `AffineSourceMotion.tjs` | 当时的 `drawAffine` 脚本顺序；需按具名版本重验 |
 | `emoteplayerclass.cpp` | Player、离屏、合成、`rebuildMotionRenderMethod` |
 | `EmoteNode.cpp` | `progress` 建树、`drawPatchCommon` |
 | `EmoteInternal.cpp` | `evaluatePatchPosition` |

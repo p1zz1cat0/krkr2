@@ -456,7 +456,7 @@ namespace motion {
                 const auto localPts =
                     buildAffineTrianglePoints(item.localCorners, 0.0f, 0.0f);
                 targetLayer->AffineCopy(localPts.data(), srcImage, sourceRect,
-                                        stNearest, _clearEnabled);
+                                        stFastLinear, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                 recordPostDrawCandidate(
                     targetLayerObject,
@@ -472,7 +472,7 @@ namespace motion {
                 if(item.meshType == 1 || item.meshType == 2) {
                     targetLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
                                           item.meshDivY, srcImage, sourceRect,
-                                          stNearest, _clearEnabled);
+                                          stFastLinear, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                     recordPostDrawCandidate(
                         targetLayerObject,
@@ -555,7 +555,7 @@ namespace motion {
                 const auto localPts =
                     buildAffineTrianglePoints(item.corners, offsetX, offsetY);
                 candidateLayer->AffineCopy(localPts.data(), source.image,
-                                           sourceRect, stNearest, true);
+                                           sourceRect, stFastLinear, true);
                 recordPostDrawCandidate(candidateLayerObject,
                                         "Player::executeLayerRenderCommands."
                                         "accurateSla.item.afterAffineCopy");
@@ -570,7 +570,7 @@ namespace motion {
             if(item.meshType == 1 || item.meshType == 2) {
                 candidateLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
                                          item.meshDivY, source.image,
-                                         sourceRect, stNearest, true);
+                                         sourceRect, stFastLinear, true);
                 recordPostDrawCandidate(candidateLayerObject,
                                         "Player::executeLayerRenderCommands."
                                         "accurateSla.item.afterMeshCopy");
@@ -920,7 +920,7 @@ namespace motion {
                                 executionMethod, item, renderLayer,
                                 std::shared_ptr<tTVPBaseBitmap>{},
                                 sourceArgObject, sourceArgLayer, sourceArgClass,
-                                blendMode, opa, stNearest);
+                                blendMode, opa, stFastLinear);
                         };
 #endif
                     const bool meshAsAffine = item.meshType == 1 &&
@@ -959,7 +959,7 @@ namespace motion {
                             callLayerOperateAffineLike_0x6C7440(
                                 layerClassObject, renderLayerObject,
                                 worldPts.data(), source.object, sourceRect,
-                                blendMode, opa, stNearest);
+                                blendMode, opa, stFastLinear);
                         if(TJS_FAILED(operateResult)) {
                             detail::logoChainTraceCheck(
                                 motionPath, "execute.directOperateAffine",
@@ -1008,7 +1008,7 @@ namespace motion {
                             renderLayer->OperateMesh(
                                 worldMeshPoints.data(), item.meshDivX,
                                 item.meshDivY, source.image, sourceRect,
-                                blendMode, opa, stNearest, _clearEnabled);
+                                blendMode, opa, stFastLinear, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                             emitDirectProbe(
                                 "Player::executeLayerRenderCommands.direct."

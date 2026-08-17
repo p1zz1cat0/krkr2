@@ -327,21 +327,40 @@ namespace motion {
         tjs_uint32 ordinal, const NativeSLAPayloadLike_0x6DCD0C &sourcePayload,
         iTJSDispatch2 *objthis, bool &createdOrChanged) {
         createdOrChanged = true;
+        // Position within this pass's resolution order. The prepared render
+        // list is stable-sorted by posZ, so this sequence defines the
+        // composite z-order of the part layers.
+        const tjs_int sequence = _assignSequence;
+        ++_assignSequence;
+
         auto &active = _managedTargets.ensure(ordinal);
-        active.payload = sourcePayload;
-        active.payload.layerVariant.Clear();
 
         auto retired = _assignTargets.find(ordinal);
         if(retired != _assignTargets.end()) {
-            // libkrkr2.so sub_6C6B48 reuses the previous ordinal's Layer
-            // variant, but sub_6DCB2C always returns 1 in the shipped binary,
-            // so the caller still refreshes the layer image every pass.
-            active.payload.layerVariant = retired->second.payload.layerVariant;
+            // The native helper reports changed on every pass. That is
+            // prohibitively expensive when the port's accurate SLA backend
+            // rasterizes through software OpenCV. Reusing the prior bitmap is
+            // output-equivalent when every raster input is byte-for-byte
+            // represented by an equal payload.
+            createdOrChanged = !sourcePayload.compatibleWithLike_0x6DCB2C(
+                retired->second.payload);
+            auto reusedLayer = retired->second.payload.layerVariant;
+            // Carry the last written absolute order index across the pass
+            // swap; otherwise every reused part would look "new" and be
+            // re-inserted into the parent order every frame.
+            active.hasLastAbsolute = retired->second.hasLastAbsolute;
+            active.lastAbsolute = retired->second.lastAbsolute;
             _assignTargets.erase(retired);
+            active.payload = sourcePayload;
+            active.payload.layerVariant = reusedLayer;
+        } else {
+            active.payload = sourcePayload;
+            active.payload.layerVariant.Clear();
         }
 
         if(active.payload.layerVariant.Type() != tvtObject ||
            !active.payload.layerVariant.AsObjectNoAddRef()) {
+            createdOrChanged = true;
             if(iTJSDispatch2 *created =
                    createLayerNodeObjectLike_0x6C6B48(objthis, _targetLayer)) {
                 active.payload.layerVariant = tTJSVariant(created, created);
@@ -351,11 +370,27 @@ namespace motion {
 
         if(iTJSDispatch2 *object =
                resolveAssignableLayer(active.payload.layerVariant)) {
-            setIntegerPropertyLike_0x6AC410(
-                object, TJS_W("absolute"),
-                static_cast<tjs_int>(_absolute + _assignSequence));
-            ++_assignSequence;
-            setIntegerPropertyLike_0x6AC410(object, TJS_W("hitThreshold"), 256);
+            // Write `absolute` only when this layer's order slot actually
+            // changed. Every SetAbsoluteOrderIndex invalidates the parent's
+            // exposed region and triggers sibling scans; re-asserting a
+            // stable order every frame was a constant O(parts) reorder +
+            // recomposite churn while the part set and z-order were unchanged.
+            // Newly created layers and layers whose slot moved re-insert
+            // themselves against their siblings' current stored values, which
+            // converges to the correct sequence order within the same pass.
+            const tjs_int targetAbsolute =
+                static_cast<tjs_int>(_absolute + sequence);
+            if(createdOrChanged || !active.hasLastAbsolute ||
+               active.lastAbsolute != targetAbsolute) {
+                setIntegerPropertyLike_0x6AC410(object, TJS_W("absolute"),
+                                                targetAbsolute);
+                active.hasLastAbsolute = true;
+                active.lastAbsolute = targetAbsolute;
+            }
+            if(createdOrChanged) {
+                setIntegerPropertyLike_0x6AC410(object, TJS_W("hitThreshold"),
+                                                256);
+            }
         }
 
         return active.payload.layerVariant;

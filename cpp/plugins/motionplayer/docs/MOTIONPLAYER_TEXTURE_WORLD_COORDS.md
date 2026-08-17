@@ -1,5 +1,8 @@
 # E-mote 贴图世界坐标：数据结构与实现
 
+> [!WARNING]
+> **历史字段/坐标调查。** 本文记录当时样本与旧实现的推理，不是当前 parser、矩阵顺序或渲染结果的保证。请先读 [当前研究基线](MOTIONPLAYER_RESEARCH.md)，使用任何结论前重新对照当前源码。
+
 > **文档索引：** [`README.md`](README.md)  
 > **样例资产：** [`tests/test_files/emote/e-mote3.0バニラパジャマa.json`](../../../../tests/test_files/emote/e-mote3.0バニラパジャマa.json)  
 > **相关文档：**  
@@ -338,7 +341,7 @@ for (auto ch : children)
 
 ## 6. 脚本层叠加变换
 
-`data/system/AffineSourceMotion.tjs` 的 `drawAffine` 顺序（不可打乱）：
+历史游戏侧 `AffineSourceMotion.tjs` 样本的 `drawAffine` 顺序如下；当前仓库没有该生产脚本，不能把这段顺序当作普遍契约：
 
 ```javascript
 // 1) Emote 根位姿（逻辑世界内整体移动/缩放/旋转）
@@ -367,7 +370,7 @@ _player.draw(target);
 |------|------|
 | [`e-mote3.0バニラパジャマa.json`](../../../../tests/test_files/emote/e-mote3.0バニラパジャマa.json) | 对照 PSB 字段与树结构 |
 | `EmoteDrawDbg sampleIcon <label>` | 查看某 `label` 节点 tess 后三角面顶点（判断矩阵段错误） |
-| `motionplayer-dll` 单测 | 加载 PSB 回归 |
+| 历史 `motionplayer-dll` 单测 | 当时用于加载 PSB 回归；target 当前不存在 |
 | `tests/test_files/render/motionplayer_render.tjs` | 端到端渲染 |
 
 判断位姿 bug 落在哪一段（摘自矩阵管线文档）：

@@ -33,6 +33,11 @@ namespace motion {
     struct NativeSLANodeLike_0x6DCD0C {
         tjs_uint32 ordinal = 0;
         NativeSLAPayloadLike_0x6DCD0C payload;
+        // Last absolute order index written to this node's layer. Tracked so
+        // unchanged parts are not re-inserted into the parent's absolute order
+        // every frame (each write invalidates the parent's exposed region).
+        bool hasLastAbsolute = false;
+        tjs_int lastAbsolute = 0;
     };
 
     class NativeSLAOrderedMapLike_0x6C6B48 {

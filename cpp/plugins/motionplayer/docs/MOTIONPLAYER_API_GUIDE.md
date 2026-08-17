@@ -1,10 +1,15 @@
 # MotionPlayer / EmotePlayer API 与使用指南
 
+> [!WARNING]
+> **接口研究文档。** 本地 `manual.tjs` 已与 M2 公开 2020 KiriKiri Sample SDK 对照，相关 API 声明一致；闭源内部行为和 NEKOPARA 2016 版本仍必须以当前 NCB 注册、方法实现、具名脚本与运行结果交叉验证。当前状态见 [研究基线](MOTIONPLAYER_RESEARCH.md)。
+
 > **文档索引：** [`README.md`](README.md)  
+> **三方契约对照：** [`MOTIONPLAYER_API_CONTRACT_MATRIX.md`](MOTIONPLAYER_API_CONTRACT_MATRIX.md)
 > **文档版本：** 2026-06-08  
 > **适用范围：** KrKr2 静态插件 `cpp/plugins/motionplayer/`（替代原版 `motionplayer.dll` + `emoteplayer.dll`）  
-> **脚本对照：** 仓库 `data/system/`（与 NEKOPARA 同系 KiriKiri 脚本）  
-> **官方伪代码手册：** [`../manual.tjs`](../manual.tjs)  
+> **脚本对照：** 当前可获得的具名游戏脚本/trace；不把不存在的仓库路径当作证据
+>
+> **公开样例接口：** [`../manual.tjs`](../manual.tjs)（M2 2020 KiriKiri Sample SDK 文本的规范化/拼写修正版）
 > **progress 行为对照：** [`MOTIONPLAYER_PROGRESS.md`](MOTIONPLAYER_PROGRESS.md)
 
 ---
@@ -20,7 +25,7 @@ MotionPlayer 与 EmotePlayer 均来自 **M2 Inc.** 为 KiriKiri / TVP 引擎提�
 | **E-mote 立绘** | `.PSB` 网格变形、口型/眨眼/表情变量、差分 Timeline、物理飘动 |
 | **Motion 特效** | `.MTN` 场景动画、KAG `[motion]` 标签、按钮 hit、图层 Motion |
 
-在 KrKr2 中，二者被 **合并进同一 C++ 插件目录**，静态链入 `krkr2plugin`；脚本仍通过 `Plugins.link("emoteplayer.dll")` 或 `Plugins.link("motionplayer.dll")` 触发注册（见 `data/system/motion.tjs`）。
+在 KrKr2 中，二者被 **合并进同一 C++ 插件目录**，静态链入 `krkr2plugin`；游戏脚本仍可通过 `Plugins.link("emoteplayer.dll")` 或 `Plugins.link("motionplayer.dll")` 请求注册。具体行为必须用具名脚本和当前 runtime 验证。
 
 ### 1.2 motionplayer 与 emoteplayer 的关系
 
@@ -78,7 +83,7 @@ D3DEmotePlayer（可选 Windows D3D 路径）
 1. **EmotePlayer 不是独立引擎**，而是对 **Player** 的脚本友好封装；表情、Timeline、变量最终都在 `Player` 内执行。
 2. **Player 同时服务两条产品线**：`.PSB`（E-mote）与 `.MTN`（Motion）；脚本层用不同 TJS 类区分 API 面。
 3. **ResourceManager** 由二者共享，负责 PSB/MTN 加载、缓存、layerId、PSB 解密钩子。
-4. KrKr2 另有独立 stub 文件 `cpp/plugins/emotePlayer.cpp`，仅做 `LoadModule(motionplayer.dll)`；**正式实现以 `motionplayer/main.cpp` 为准**。
+4. KrKr2 另有独立 stub 文件 `cpp/plugins/EmotePlayer/EmotePlayer.cpp`，仅做 `LoadModule(motionplayer.dll)`；**正式实现以 `motionplayer/main.cpp` 为准**。
 
 ### 1.3 与 Live2D 的相似与差异
 
@@ -132,7 +137,7 @@ MultiCache（如 `a.psb:b.psb`）由 `splitStorage` 解析，C++ 侧 `EmotePlaye
 | **字段字典** | [`MOTIONPLAYER_PSB_STRUCT.md`](MOTIONPLAYER_PSB_STRUCT.md) |
 | **贴图世界坐标** | [`MOTIONPLAYER_TEXTURE_WORLD_COORDS.md`](MOTIONPLAYER_TEXTURE_WORLD_COORDS.md) |
 | **C++ 入口** | `ResourceManager::load` → `emotefile::load` → `EmoteFileCore.cpp` |
-| **单测** | `tests/unit-tests/plugins/motionplayer-dll.cpp` |
+| **测试现状** | 旧 `motionplayer-dll.cpp` 当前不存在；见研究基线的验证缺口 |
 
 **临时调试：** `emoteplayerclass.cpp` 中 `kEmoteDebugDrawRedSquare == true` 时，每帧在 adaptor 子 layer 中央绘制红色方块，用于确认 `draw()` → `MainImage` → 屏幕合成链路；验证通过后改为 `false` 或删除。
 
@@ -143,7 +148,7 @@ MultiCache（如 `a.psb:b.psb`）由 `splitStorage` 解析，C++ 侧 `EmotePlaye
 ### 3.1 插件加载与入口
 
 ```tjs
-// data/system/motion.tjs
+// 历史/游戏侧 motion.tjs 形状示例（不是当前仓库生产脚本）
 Plugins.link("emoteplayer.dll");  // 优先；内部会加载 motionplayer.dll
 // 或 Plugins.link("motionplayer.dll");
 
@@ -587,7 +592,7 @@ Player::draw → renderToLayer / renderToSeparateLayerAdaptor / renderToD3DAdapt
 **验证建议：**
 
 - 实机：NEKOPARA Vol.0（见 PLAN §1.4）
-- 单元测试：`tests/unit-tests/plugins/motionplayer-render.cpp`
+- 单元测试：当前尚无 motionplayer 专属 target；旧 `motionplayer-render.cpp` 路径已不存在
 - 贴图 golden：`tools/psb-export` + `tools/visual-test`
 
 ### 7.4 勿混淆的概念
@@ -625,7 +630,7 @@ Player::draw → renderToLayer / renderToSeparateLayerAdaptor / renderToD3DAdapt
 
 ## 10. 维护说明
 
-- **API 真源顺序：** 运行中游戏脚本（`data/`）> `main.cpp` NCB > `manual.tjs` > 本文档。
+- **API 取证顺序：** 当前实现能力以 NCB 注册和 C++ 方法为准；闭源原版契约需由具名游戏脚本/trace、`manual.tjs` 线索和可见结果交叉验证，任一来源都不能单独定案。
 - 发现不一致时，以 **代码与 NEKOPARA 实跑** 为准，并回写本文档 §7。
 - **progress 勘误：** 见 [`MOTIONPLAYER_PROGRESS.md`](MOTIONPLAYER_PROGRESS.md) §0。
 

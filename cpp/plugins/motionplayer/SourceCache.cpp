@@ -1,6 +1,7 @@
 #include "SourceCache.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <optional>
 #include <unordered_set>
@@ -66,23 +67,8 @@ namespace {
         };
     }
 
-    std::shared_ptr<tTVPBaseBitmap> cloneBitmap32(const tTVPBaseBitmap &src) {
-        auto copy = std::make_shared<tTVPBaseBitmap>(
-            static_cast<tjs_uint>(src.GetWidth()),
-            static_cast<tjs_uint>(src.GetHeight()), 32);
-        for(tjs_uint y = 0; y < src.GetHeight(); ++y) {
-            const auto *srcRow =
-                static_cast<const std::uint8_t *>(src.GetScanLine(y));
-            auto *dstRow =
-                static_cast<std::uint8_t *>(copy->GetScanLineForWrite(y));
-            std::memcpy(dstRow, srcRow,
-                        static_cast<size_t>(src.GetWidth()) * 4u);
-        }
-        return copy;
-    }
-
-    void applyPackedCornerTintLike_0x6A7518(
-        tTVPBaseBitmap &bitmap,
+    void copyAndApplyPackedCornerTintLike_0x6A7518(
+        const tTVPBaseBitmap &source, tTVPBaseBitmap &destination,
         const std::array<std::uint32_t, 4> &packedColors, bool halfAlphaBlend) {
         const auto c0 = packedColors[0];
         const auto c1 = packedColors[1];
@@ -97,13 +83,41 @@ namespace {
         const auto topRight = unpackPackedRgba(c1);
         const auto bottomRight = unpackPackedRgba(c2);
         const auto bottomLeft = unpackPackedRgba(c3);
-        const int width = static_cast<int>(bitmap.GetWidth());
-        const int height = static_cast<int>(bitmap.GetHeight());
+        const int width = static_cast<int>(source.GetWidth());
+        const int height = static_cast<int>(source.GetHeight());
         if(width <= 0 || height <= 0) {
             return;
         }
 
         const int colorDivisor = halfAlphaBlend ? 128 : 255;
+        const bool uniform = c0 == c1 && c1 == c2 && c2 == c3;
+        if(uniform) {
+            const auto tint = topLeft;
+            for(int y = 0; y < height; ++y) {
+                const auto *srcRow = static_cast<const std::uint8_t *>(
+                    source.GetScanLine(static_cast<tjs_uint>(y)));
+                auto *dstRow = static_cast<std::uint8_t *>(
+                    destination.GetScanLineForWrite(static_cast<tjs_uint>(y)));
+                for(int x = 0; x < width; ++x) {
+                    const auto *src = srcRow + static_cast<size_t>(x) * 4u;
+                    auto *dst = dstRow + static_cast<size_t>(x) * 4u;
+                    dst[2] = static_cast<std::uint8_t>(std::min(
+                        255, tint[0] * static_cast<int>(src[2]) /
+                            colorDivisor));
+                    dst[1] = static_cast<std::uint8_t>(std::min(
+                        255, tint[1] * static_cast<int>(src[1]) /
+                            colorDivisor));
+                    dst[0] = static_cast<std::uint8_t>(std::min(
+                        255, tint[2] * static_cast<int>(src[0]) /
+                            colorDivisor));
+                    dst[3] = static_cast<std::uint8_t>(std::min(
+                        255, tint[3] * static_cast<int>(src[3]) /
+                            colorDivisor));
+                }
+            }
+            return;
+        }
+
         const int spanX = std::max(width - 1, 1);
         const int spanY = std::max(height - 1, 1);
         const auto lerpChannel = [](int a, int b, int pos, int span) -> int {
@@ -114,8 +128,10 @@ namespace {
         };
 
         for(int y = 0; y < height; ++y) {
+            const auto *srcRow = static_cast<const std::uint8_t *>(
+                source.GetScanLine(static_cast<tjs_uint>(y)));
             auto *row = static_cast<std::uint8_t *>(
-                bitmap.GetScanLineForWrite(static_cast<tjs_uint>(y)));
+                destination.GetScanLineForWrite(static_cast<tjs_uint>(y)));
             const int rowLeftR =
                 lerpChannel(topLeft[0], bottomLeft[0], y, spanY);
             const int rowLeftG =
@@ -135,18 +151,19 @@ namespace {
 
             for(int x = 0; x < width; ++x) {
                 auto *dst = row + static_cast<size_t>(x) * 4u;
+                const auto *src = srcRow + static_cast<size_t>(x) * 4u;
                 const int tintR = lerpChannel(rowLeftR, rowRightR, x, spanX);
                 const int tintG = lerpChannel(rowLeftG, rowRightG, x, spanX);
                 const int tintB = lerpChannel(rowLeftB, rowRightB, x, spanX);
                 const int tintA = lerpChannel(rowLeftA, rowRightA, x, spanX);
                 dst[2] = static_cast<std::uint8_t>(std::min(
-                    255, tintR * static_cast<int>(dst[2]) / colorDivisor));
+                    255, tintR * static_cast<int>(src[2]) / colorDivisor));
                 dst[1] = static_cast<std::uint8_t>(std::min(
-                    255, tintG * static_cast<int>(dst[1]) / colorDivisor));
+                    255, tintG * static_cast<int>(src[1]) / colorDivisor));
                 dst[0] = static_cast<std::uint8_t>(std::min(
-                    255, tintB * static_cast<int>(dst[0]) / colorDivisor));
+                    255, tintB * static_cast<int>(src[0]) / colorDivisor));
                 dst[3] = static_cast<std::uint8_t>(std::min(
-                    255, tintA * static_cast<int>(dst[3]) / colorDivisor));
+                    255, tintA * static_cast<int>(src[3]) / colorDivisor));
             }
         }
     }
@@ -540,20 +557,33 @@ namespace motion {
             _primaryLayer = tTJSVariant(parentLayerObject, parentLayerObject);
         }
 
-        if(auto *entry = findEntry(key, blendMode, packedColors)) {
-            if(entry->sourceObject.Type() == tvtObject &&
-               entry->sourceObject.AsObjectNoAddRef()) {
-                return entry->sourceObject;
-            }
-        }
-
+        // Cached entries must not re-resolve the raw source every frame.
+        // Animated scenes keep ~180 cross-PSB references permanently
+        // unresolvable; retrying loadRawSourceVariant (candidate walk +
+        // storage lookups + module load) for each of them every frame was a
+        // large hidden cost. Reuse the cached rawSource/resolvedKey and let
+        // ensureEntryBackingBitmap's backingLoadAttempted guard make known
+        // failures a cheap return.
         std::string resolvedKey;
-        auto rawSource = currentSource.Type() != tvtVoid
-            ? currentSource
-            : loadRawSourceVariant(name, resolvedKey);
-        auto &entry = ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
-                                  blendMode, packedColors);
-        entry.rawSource = rawSource;
+        tTJSVariant rawSource;
+        Entry *entryPtr = findRenderEntry(key, blendMode);
+        if(entryPtr) {
+            if(entryPtr->packedColors == packedColors &&
+               entryPtr->sourceObject.Type() == tvtObject &&
+               entryPtr->sourceObject.AsObjectNoAddRef()) {
+                return entryPtr->sourceObject;
+            }
+            resolvedKey = entryPtr->resolvedKey;
+            rawSource = entryPtr->rawSource;
+        } else {
+            rawSource = currentSource.Type() != tvtVoid
+                ? currentSource
+                : loadRawSourceVariant(name, resolvedKey);
+            entryPtr = &ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
+                                    blendMode, packedColors);
+            entryPtr->rawSource = rawSource;
+        }
+        auto &entry = *entryPtr;
 
         if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors)) {
             return entry.rawSource;
@@ -590,19 +620,25 @@ namespace motion {
             return nullptr;
         }
 
-        if(auto *entry = findEntry(key, blendMode, packedColors)) {
-            if(entry->sourceTexture) {
-                return entry->sourceTexture;
-            }
-        }
-
         std::string resolvedKey;
-        auto rawSource = currentSource.Type() != tvtVoid
-            ? currentSource
-            : loadRawSourceVariant(name, resolvedKey);
-        auto &entry = ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
-                                  blendMode, packedColors);
-        entry.rawSource = rawSource;
+        tTJSVariant rawSource;
+        Entry *entryPtr = findRenderEntry(key, blendMode);
+        if(entryPtr) {
+            if(entryPtr->packedColors == packedColors &&
+               entryPtr->sourceTexture) {
+                return entryPtr->sourceTexture;
+            }
+            resolvedKey = entryPtr->resolvedKey;
+            rawSource = entryPtr->rawSource;
+        } else {
+            rawSource = currentSource.Type() != tvtVoid
+                ? currentSource
+                : loadRawSourceVariant(name, resolvedKey);
+            entryPtr = &ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
+                                    blendMode, packedColors);
+            entryPtr->rawSource = rawSource;
+        }
+        auto &entry = *entryPtr;
 
         if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors)) {
             return nullptr;
@@ -627,13 +663,13 @@ namespace motion {
             entry.backingBitmap->Is8BPP() ? TVPTextureFormat::Gray
                                           : TVPTextureFormat::RGBA,
             RENDER_CREATE_TEXTURE_FLAG_ANY);
-        // Emote sprites are pixel art; default GL_LINEAR softens silhouettes
-        // under non-integer scale. Prefer nearest for sharp character edges.
+        // E-mote parts are painted illustration meshes. Nearest sampling
+        // turns rotated/scaled silhouettes into stair-steps.
         if(entry.sourceTexture) {
             if(auto *adapter =
                    entry.sourceTexture->GetAdapterTexture(nullptr)) {
                 adapter->setTexParameters(cocos2d::Texture2D::TexParams{
-                    GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE,
+                    GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE,
                     GL_CLAMP_TO_EDGE });
             }
         }
@@ -704,6 +740,18 @@ namespace motion {
         return nullptr;
     }
 
+    SourceCache::Entry *SourceCache::findRenderEntry(const std::string &key,
+                                                     int blendMode) {
+        for(auto it = _entries.begin(); it != _entries.end(); ++it) {
+            if((it->key == key || it->resolvedKey == key) &&
+               it->blendMode == blendMode) {
+                _entries.splice(_entries.begin(), _entries, it);
+                return &_entries.front();
+            }
+        }
+        return nullptr;
+    }
+
     SourceCache::Entry *SourceCache::findEntryByKey(const std::string &key) {
         for(auto it = _entries.begin(); it != _entries.end(); ++it) {
             if(it->key == key || it->resolvedKey == key) {
@@ -718,7 +766,7 @@ namespace motion {
     SourceCache::ensureEntry(const std::string &key,
                              const std::string &resolvedKey, int blendMode,
                              const std::array<std::uint32_t, 4> &packedColors) {
-        if(auto *entry = findEntry(key, blendMode, packedColors)) {
+        if(auto *entry = findRenderEntry(key, blendMode)) {
             return *entry;
         }
 
@@ -726,7 +774,6 @@ namespace motion {
         entry.key = key;
         entry.resolvedKey = resolvedKey.empty() ? key : resolvedKey;
         entry.blendMode = blendMode;
-        entry.packedColors = packedColors;
         _entries.push_front(std::move(entry));
         return _entries.front();
     }
@@ -734,25 +781,56 @@ namespace motion {
     bool SourceCache::ensureEntryBackingBitmap(
         Entry &entry, const std::string &key, int blendMode,
         const std::array<std::uint32_t, 4> &packedColors) {
-        if(entry.backingBitmap) {
+        const auto *activeMotion =
+            _runtime && _runtime->activeMotion
+            ? _runtime->activeMotion.get()
+            : nullptr;
+        if(entry.motionIdentity != activeMotion) {
+            releaseEntryTexture(entry);
+            entry.baseBitmap.reset();
+            entry.backingBitmap.reset();
+            entry.motionIdentity = activeMotion;
+            entry.backingLoadAttempted = false;
+        }
+
+        const bool colorsChanged = entry.packedColors != packedColors;
+        if(entry.backingBitmap && !colorsChanged) {
             return entry.backingBitmap->GetWidth() > 0 &&
                 entry.backingBitmap->GetHeight() > 0;
         }
 
-        std::shared_ptr<tTVPBaseBitmap> baseBitmap;
-        if(_runtime && _runtime->activeMotion) {
+        if(!entry.baseBitmap && activeMotion) {
+            if(entry.backingLoadAttempted) {
+                return false;
+            }
+            entry.backingLoadAttempted = true;
+            const auto loadStart = std::chrono::steady_clock::now();
             const auto path = resolveMotionSourcePathLike_0x6948E8(
-                *_runtime->activeMotion, key);
-            baseBitmap = loadGraphicBitmap(path);
-            if(!baseBitmap) {
-                baseBitmap = loadPsbBitmap(*_runtime->activeMotion, key);
+                *activeMotion, key);
+            entry.baseBitmap = loadGraphicBitmap(path);
+            if(!entry.baseBitmap) {
+                entry.baseBitmap = loadPsbBitmap(*activeMotion, key);
+            }
+            const double loadMs =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - loadStart)
+                    .count();
+            if(loadMs > 100.0) {
+                if(auto logger = spdlog::get("plugin")) {
+                    logger->warn("SourceCache decode slow key={} ms={:.1f}",
+                                 key, loadMs);
+                }
             }
         }
-        if(!baseBitmap || baseBitmap->GetWidth() <= 0 ||
-           baseBitmap->GetHeight() <= 0) {
+        if(!entry.baseBitmap || entry.baseBitmap->GetWidth() <= 0 ||
+           entry.baseBitmap->GetHeight() <= 0) {
             return false;
         }
 
+        if(colorsChanged) {
+            releaseEntryTexture(entry);
+        }
+        entry.packedColors = packedColors;
         const bool useHalfAlphaTint = (blendMode & 0xF0) == 0x10;
         const bool needsTint =
             !packedColorsAreDefault(packedColors[0], packedColors[1],
@@ -760,11 +838,25 @@ namespace motion {
             !packedColorsAreOpaqueWhite(packedColors[0], packedColors[1],
                                         packedColors[2], packedColors[3]);
         if(needsTint) {
-            entry.backingBitmap = cloneBitmap32(*baseBitmap);
-            applyPackedCornerTintLike_0x6A7518(*entry.backingBitmap,
-                                               packedColors, useHalfAlphaTint);
+            if(!entry.backingBitmap ||
+               entry.backingBitmap == entry.baseBitmap ||
+               entry.backingBitmap->GetWidth() !=
+                   entry.baseBitmap->GetWidth() ||
+               entry.backingBitmap->GetHeight() !=
+                   entry.baseBitmap->GetHeight()) {
+                entry.backingBitmap = std::make_shared<tTVPBaseBitmap>(
+                    static_cast<tjs_uint>(entry.baseBitmap->GetWidth()),
+                    static_cast<tjs_uint>(entry.baseBitmap->GetHeight()), 32);
+            }
+            // Animated tint changes used to allocate a fresh full-size bitmap,
+            // copy the source, then walk every pixel a second time. Reuse one
+            // derivative and combine source copy plus tint in a single pass so
+            // long-running character scenes do not churn hundreds of MB.
+            copyAndApplyPackedCornerTintLike_0x6A7518(
+                *entry.baseBitmap, *entry.backingBitmap, packedColors,
+                useHalfAlphaTint);
         } else {
-            entry.backingBitmap = baseBitmap;
+            entry.backingBitmap = entry.baseBitmap;
         }
         return true;
     }

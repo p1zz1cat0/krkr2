@@ -373,33 +373,16 @@ namespace motion {
                             vn.meshDivX = 0;
                             vn.meshDivY = 0;
                         } else {
-                            // Cap tess density (NEKOPARA often uses 20).
-                            constexpr int kMeshDivCap = 8;
-                            int divTotal = vn.meshDivision;
-                            if(divTotal > 50)
-                                divTotal = 50;
-                            if(divTotal < 1)
-                                divTotal = 4;
-                            if(divTotal > kMeshDivCap)
-                                divTotal = kMeshDivCap;
-
-                            // Near-identity surface → 2×2 affine quad (sharp
-                            // edges + cheap draw).
-                            const bool useAffineGrid = !hasUnitBp ||
-                                unitBpNearIdentity(unitPatch);
-                            int divX = 2;
-                            int divY = 2;
-                            if(!useAffineGrid) {
-                                divX = static_cast<int>(
-                                           static_cast<double>(divTotal) *
-                                           cw / (cw + ch)) +
-                                    1;
-                                divY = divTotal - divX + 2;
-                                if(divX < 2)
-                                    divX = 2;
-                                if(divY < 2)
-                                    divY = 2;
-                            }
+                            const bool keepDeformation =
+                                detail::sourceKeepsEmoteDeformation(
+                                    srcName, vn.parameterizeIndex);
+                            const auto meshPlan = detail::planEmoteMeshDivision(
+                                vn.meshDivision, _emoteMeshDivisionRatio,
+                                hasUnitBp, unitBpNearIdentity(unitPatch),
+                                keepDeformation, cw, ch);
+                            const bool useAffineGrid = meshPlan.useAffineGrid;
+                            const int divX = meshPlan.divX;
+                            const int divY = meshPlan.divY;
                             vn.meshDivX = divX;
                             vn.meshDivY = divY;
                             const int numPts = divX * divY;

@@ -234,6 +234,10 @@ namespace motion::detail {
         motion::SourceCache *sourceCacheNative = nullptr;
         tTJSVariant sourceCacheObject;
         std::shared_ptr<MotionSnapshot> activeMotion;
+        // Incremented for every motion activation/deactivation. Controller
+        // candidates bind to this generation so a failed init after a motion
+        // switch cannot drive the new node tree with stale state.
+        std::uint64_t motionGeneration = 0;
         std::unordered_map<std::string, TimelineState> timelines;
         std::vector<std::string> playingTimelineLabels;
         std::unordered_map<std::string, tjs_int> layerIdsByName;
@@ -261,6 +265,24 @@ namespace motion::detail {
         std::unordered_map<std::string, bool> disabledSelectorTargets;
         tTJSVariant lastCanvas;
         tTJSVariant lastViewParam;
+        // One-shot scene-entry evidence for the accurate-SLA path: the first
+        // completed render per Player logs its item/raster counts regardless
+        // of the slow-frame threshold.
+        bool slaFirstRenderLogged = false;
+        // Rolling per-frame statistics for the accurate-SLA path; emitted as
+        // "sla.accurate.stats" every ~3s so animated scenes report their
+        // average/max frame cost instead of only slow-frame spikes.
+        double slaStatsWindowStart = 0.0;
+        int slaStatsFrames = 0;
+        double slaStatsMsSum = 0.0;
+        double slaStatsMsMax = 0.0;
+        double slaStatsRendered = 0.0;
+        double slaStatsChanged = 0.0;
+        // Rolling per-frame statistics for the progress path (progressMsLike).
+        double slaProgressWindowStart = 0.0;
+        int slaProgressFrames = 0;
+        double slaProgressMsSum = 0.0;
+        double slaProgressMsMax = 0.0;
         // Aligned to libkrkr2.so player+696: internal render layer consumed by
         // sub_6CE7D8 / sub_6CE938 style post-draw update.
         tTJSVariant internalRenderLayer;

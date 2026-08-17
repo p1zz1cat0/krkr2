@@ -974,9 +974,6 @@ namespace motion {
                     // binary does not lazy-build the child tree here; the tree
                     // was already built when the child's play/onFindMotion ran.
                     child->frameProgress(_frameLastTime);
-                    if(!child->_runtime->nodes.empty()) {
-                        child->updateLayers();
-                    }
                 }
             }
         } // for each nodeType==4

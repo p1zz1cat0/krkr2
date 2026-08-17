@@ -1,0 +1,71 @@
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(condition, message) { pluginAssertTrue(message, condition); }
+
+Plugins.link("motionplayer.dll");
+Plugins.link("emoteplayer.dll");
+
+check(typeof Motion == "Object", "Motion namespace registered");
+check(typeof Motion.ResourceManager == "Object", "ResourceManager registered");
+check(typeof Motion.EmotePlayer == "Object", "EmotePlayer registered");
+
+var manager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
+// The fixture PSB is an E-mote v2 asset whose body is XOR-encrypted with the
+// same key NEKOPARA uses. Without the seed the string/name tables are garbage
+// and load() fails with "PSBArray bad length type size".
+Motion.ResourceManager.setEmotePSBDecryptSeed(742877301);
+var data = manager.load("../emote/e-mote3.0バニラパジャマa.psb");
+var player = new Motion.EmotePlayer(manager);
+player.motionKey = Storages.getPlacedPath(
+    "../emote/e-mote3.0バニラパジャマa.psb");
+player.chara = data.metadata.base.chara;
+player.play(data.metadata.base.motion, Motion.PlayFlagForce);
+
+// Make the automatic blink deterministic and short. Eye is a pre-Core
+// controller: progress(0) republishes but does not advance it.
+data.metadata.eyeControl[0].blinkIntervalMin = 0;
+data.metadata.eyeControl[0].blinkIntervalMax = 0;
+data.metadata.eyeControl[0].blinkFrameCount = 2;
+player.initPhysics(data.metadata);
+var eye0 = player.getVariable("face_eye_open");
+player.progress(0);
+pluginAssertEqual("zero dt eye republish", eye0,
+    player.getVariable("face_eye_open"));
+
+// A failed candidate must leave the active generation and outer-force state
+// untouched. This observes transactional init through the public ABI.
+player.setOuterForce("bust", 3, -2, 0, 0);
+var rejected = false;
+try {
+    player.initPhysics(%[bustControl: [%[enabled: 1]]]);
+} catch (e) {
+    rejected = true;
+}
+check(rejected, "invalid physics candidate rejected");
+var bust = player.getOuterForce();
+pluginAssertEqual("bust force x survives failed init", 3, bust.x);
+pluginAssertEqual("bust force y survives failed init", -2, bust.y);
+
+player.progress(1000.0 / 60.0);
+player.progress(1000.0 / 60.0);
+check(player.getVariable("face_eye_open") != eye0,
+    "Eye output reaches the same progress Core path");
+
+// Render-path coverage: draw twice through the recommended
+// SeparateLayerAdaptor route. The fixture contains nested motion players
+// (382 type-3 nodes), so this exercises the merged child-item path whose
+// part-layer identity must stay stable across passes.
+var drawLayer = new Layer(new Window(), null);
+drawLayer.setImageSize(1280, 720);
+var adaptor = new Motion.SeparateLayerAdaptor(drawLayer);
+adaptor.targetLayer = drawLayer;
+adaptor.absolute = 100;
+player.draw(adaptor);
+player.progress(1000.0 / 60.0);
+player.draw(adaptor);
+check(player.getVariable("face_eye_open") != void,
+    "player state intact after SLA draws");
+
+player.stopWind();
+manager.clearCache();
+pluginSmokePass("motionplayer.dll");
+System.exit(0);

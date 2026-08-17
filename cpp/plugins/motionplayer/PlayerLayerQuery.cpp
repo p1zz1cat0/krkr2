@@ -6,20 +6,11 @@
 #include "SourceCache.h"
 #include "ncbind.hpp"
 
+#include <algorithm>
+
 using namespace motion::internal;
 
 namespace {
-    bool hitTestMotionNodeShape(const motion::detail::MotionNode &node,
-                                double x, double y) {
-        motion::detail::HitData hit{};
-        hit.type = node.shapeGeomType;
-        for(size_t i = 0;
-            i < std::size(node.shapeVertices) && i < hit.values.size(); ++i) {
-            hit.values[i] = node.shapeVertices[i];
-        }
-        return motion::detail::hitTestHitData(hit, x, y);
-    }
-
     tTJSVariant
     buildLayerGetterVariant(motion::Player &player,
                             const motion::detail::MotionNode &node) {
@@ -268,9 +259,82 @@ namespace motion {
         };
 
         if(const auto *node = findNodeRecursive(findNodeRecursive, this)) {
-            return hitTestMotionNodeShape(*node, x, y);
+            motion::detail::HitData hit{};
+            hit.type = node->shapeGeomType;
+            for(size_t i = 0;
+                i < std::size(node->shapeVertices) && i < hit.values.size();
+                ++i) {
+                hit.values[i] = node->shapeVertices[i];
+            }
+            if(!motion::detail::hitDataIsDegenerate(hit) &&
+               motion::detail::hitTestHitData(hit, x, y)) {
+                return true;
+            }
+            if(motion::detail::pointInAabb(
+                   x, y, static_cast<double>(node->bounds[0]),
+                   static_cast<double>(node->bounds[1]),
+                   static_cast<double>(node->bounds[2]),
+                   static_cast<double>(node->bounds[3]))) {
+                return true;
+            }
+            double minX = node->vertices[0];
+            double minY = node->vertices[1];
+            double maxX = minX;
+            double maxY = minY;
+            for(int vi = 1; vi < 4; ++vi) {
+                minX = std::min(minX,
+                                static_cast<double>(node->vertices[vi * 2]));
+                minY = std::min(
+                    minY, static_cast<double>(node->vertices[vi * 2 + 1]));
+                maxX = std::max(maxX,
+                                static_cast<double>(node->vertices[vi * 2]));
+                maxY = std::max(
+                    maxY, static_cast<double>(node->vertices[vi * 2 + 1]));
+            }
+            return motion::detail::pointInAabb(x, y, minX, minY, maxX, maxY);
         }
         return false;
+    }
+
+    bool Player::getValidBounds(double &minX, double &minY, double &maxX,
+                                double &maxY) const {
+        if(detail::boundsAreUsable(_boundsMinX, _boundsMinY, _boundsMaxX,
+                                   _boundsMaxY)) {
+            minX = _boundsMinX;
+            minY = _boundsMinY;
+            maxX = _boundsMaxX;
+            maxY = _boundsMaxY;
+            return true;
+        }
+        if(_hasLastGoodBounds &&
+           detail::boundsAreUsable(_lastGoodBoundsMinX, _lastGoodBoundsMinY,
+                                   _lastGoodBoundsMaxX, _lastGoodBoundsMaxY)) {
+            minX = _lastGoodBoundsMinX;
+            minY = _lastGoodBoundsMinY;
+            maxX = _lastGoodBoundsMaxX;
+            maxY = _lastGoodBoundsMaxY;
+            return true;
+        }
+        return false;
+    }
+
+    bool Player::hitTestBounds(double x, double y) {
+        ensureMotionLoaded();
+        if(!_runtime || !_runtime->activeMotion) {
+            return false;
+        }
+        if(!_runtime->nodes.empty()) {
+            updateLayers();
+            calcBounds();
+        }
+        double minX = 0.0;
+        double minY = 0.0;
+        double maxX = 0.0;
+        double maxY = 0.0;
+        if(!getValidBounds(minX, minY, maxX, maxY)) {
+            return false;
+        }
+        return detail::pointInAabb(x, y, minX, minY, maxX, maxY);
     }
 
 

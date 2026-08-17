@@ -1,5 +1,8 @@
 # MotionPlayer 立绘不可见问题排查
 
+> [!WARNING]
+> **历史故障排查记录。** 本文的类名、日志字段、绘制路径和 2026-06-08 状态可能已失效，不能证明当前 runtime 存在或已修复相同问题。现状以 [当前研究基线](MOTIONPLAYER_RESEARCH.md) 和当前源码为准。
+
 > **关联代码：** `EmoteDrawDebug.h` / `EmoteDrawDebug.cpp`  
 > **架构说明：** [`MOTIONPLAYER_ARCHITECTURE.md`](MOTIONPLAYER_ARCHITECTURE.md)  
 > **文档索引：** [`README.md`](README.md)  
@@ -83,7 +86,7 @@ draw()      →  offscreen Fill(0)
 
 ### 2.8 其它（解析层已排除后）
 
-- `transformOrder` 未实现 → 姿态错误，不一定出屏  
+- `transformOrder` 已在当前源码解析并应用；历史姿态问题不能再归因于“字段未实现”
 - `zcc`/`ccc` 曲线未参与插值 → 变形错误，少见整人消失  
 - Stencil 依赖 `maskLayer`，当前 `drawWithTVP` 传 `nullptr`，个别资源可能异常  
 
@@ -211,7 +214,7 @@ EmoteDrawDbg sampleIcon[■後髪]: surf=8 totalOpa=1.0
 | `EmoteNode.cpp` | `progress` / `drawPatchCommon` / 节点 skip 统计 |
 | `EmoteTVPRenderer.cpp` | 三角形 clip、opa、sampleIcon |
 | `EmoteDrawDebug.cpp` | 汇总日志与 HINT |
-| `data/system/AffineSourceMotion.tjs` | `setScale` / 仿射 / `progress`+`draw` 调用顺序 |
+| 历史游戏侧 `AffineSourceMotion.tjs` | 当时用于观察 `setScale` / 仿射 / `progress`+`draw`；当前仓库不存在该生产路径 |
 
 ---
 

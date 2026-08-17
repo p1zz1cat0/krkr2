@@ -34,6 +34,7 @@
 #include "ScriptMgnIntf.h"
 #include "NodeTree.h"
 #include "MotionNode.h"
+#include "EmoteCompatInternal.h"
 
 #define LOGGER spdlog::get("plugin")
 #define STUB_WARN(name) LOGGER->warn("Player::" #name "() stub called")
@@ -222,6 +223,7 @@ namespace motion {
         activateMotion(detail::PlayerRuntime &runtime,
                        const std::shared_ptr<detail::MotionSnapshot> &snapshot,
                        ResourceManager *resourceManager = nullptr) {
+            ++runtime.motionGeneration;
             runtime.activeMotion = snapshot;
             runtime.timelines.clear();
             // Reset persistent node tree so it gets rebuilt for new motion
@@ -1669,7 +1671,8 @@ namespace motion {
             const detail::MotionSnapshot &snapshot, const std::string &source,
             int &outWidth, int &outHeight,
             std::vector<std::uint8_t> &decompressedOut, double &outOriginX,
-            double &outOriginY, bool *outDecodedIsBgra = nullptr) {
+            double &outOriginY, bool *outDecodedIsBgra = nullptr,
+            bool decodePixels = true) {
             outWidth = 0;
             outHeight = 0;
             outOriginX = 0.0;
@@ -1759,6 +1762,14 @@ namespace motion {
                             outOriginX = *ox;
                         if(auto oy = psbDictionaryNumber(iconNode, "originY"))
                             outOriginY = *oy;
+
+                        // Geometry evaluation only consumes the immutable
+                        // dimensions and origin. Returning here avoids
+                        // decompressing the shared atlas once per node merely
+                        // to calculate four vertices.
+                        if(!decodePixels && outWidth > 0 && outHeight > 0) {
+                            return nullptr;
+                        }
 
                         const auto iconLeft = static_cast<int>(
                             psbDictionaryNumber(iconNode, "left")
@@ -1855,10 +1866,12 @@ namespace motion {
                            outHeight > 0) {
                             auto compressStr =
                                 psbDictionaryString(iconNode, "compress");
-                            decodePsbPixelResource(
-                                snapshot, iconPath, *resIt->second, outWidth,
-                                outHeight, compressStr == "RL", decompressedOut,
-                                outDecodedIsBgra);
+                            if(decodePixels) {
+                                decodePsbPixelResource(
+                                    snapshot, iconPath, *resIt->second, outWidth,
+                                    outHeight, compressStr == "RL",
+                                    decompressedOut, outDecodedIsBgra);
+                            }
                             return resIt->second.get();
                         }
                     }
@@ -1899,7 +1912,7 @@ namespace motion {
                             }
                             auto compressStr =
                                 psbDictionaryString(node, "compress");
-                            if(outWidth > 0 && outHeight > 0) {
+                            if(decodePixels && outWidth > 0 && outHeight > 0) {
                                 decodePsbPixelResource(
                                     snapshot, parentPath, *resource, outWidth,
                                     outHeight, compressStr == "RL",

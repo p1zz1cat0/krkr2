@@ -426,6 +426,11 @@ namespace motion {
                         static_cast<float>(requestedTransition),
                         static_cast<float>(requestedEaseWeight),
                     });
+                    LOGGER->info(
+                        "emote.anim.queue key={} from={:.2f} to={:.2f} "
+                        "transition={:.2f} weight={:.2f}",
+                        targetKey, state.currentValue, targetValue,
+                        requestedTransition, requestedEaseWeight);
                     writeEvalResultValueLike_0x6C4668(targetKey,
                                                       state.currentValue);
                 };

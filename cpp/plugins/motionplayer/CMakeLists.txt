@@ -8,7 +8,9 @@ target_sources(${PROJECT_NAME}
         main.cpp
     PRIVATE
         EmotePlayer.cpp
+        MotionPhysics.cpp
         PlayerCore.cpp
+        PlayerPhysics.cpp
         PlayerFrameProgress.cpp
         PlayerResource.cpp
         PlayerMotionLoad.cpp

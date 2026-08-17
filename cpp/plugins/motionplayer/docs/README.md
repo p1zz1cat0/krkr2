@@ -1,142 +1,64 @@
 # MotionPlayer 文档索引
 
-> **代码路径：** `cpp/plugins/motionplayer/`  
-> **样本资产：** [`tests/test_files/emote/e-mote3.0バニラパジャマa.json`](../../../../tests/test_files/emote/e-mote3.0バニラパジャマa.json)（同名 `.psb` 的运行时格式）  
-> **官方 API 伪代码：** [`../manual.tjs`](../manual.tjs)  
-> **生产脚本：** [`data/system/AffineSourceMotion.tjs`](../../../../data/system/AffineSourceMotion.tjs)
+> **先读：** [MOTIONPLAYER_RESEARCH.md](MOTIONPLAYER_RESEARCH.md) 是当前现状、证据边界与施工优先级的唯一权威入口。
+>
+> 原版 `motionplayer.dll` 与 `emoteplayer.dll` 均为闭源商业插件；本目录没有已验证的原版源码或完整行为规范。
+>
+> 代码路径：`cpp/plugins/motionplayer/`
 
-KrKr2 将原版 `motionplayer.dll` + `emoteplayer.dll` 合并为静态插件，同时支持 **E-mote 立绘（`.PSB`）** 与 **Motion 场景（`.MTN`）**。本文档目录说明如何阅读各专题文档。
+本目录跨越过多轮架构和调查。除当前研究基线外，其余专题主要用于保存历史样本、排查思路和术语；不能仅凭文档标题、旧日志或旧测试命令判断当前 runtime 已实现或已验证某项能力。
 
----
+## 阅读顺序
 
-## 命名约定
+| 文档 | 定位 | 使用方式 |
+|---|---|---|
+| [MOTIONPLAYER_RESEARCH.md](MOTIONPLAYER_RESEARCH.md) | **当前权威** | 先确认当前能力、缺口、证据等级和已退役结论 |
+| [MOTIONPLAYER_API_CONTRACT_MATRIX.md](MOTIONPLAYER_API_CONTRACT_MATRIX.md) | 当前接口证据矩阵 | 对照 M2 2020、NEKOPARA 2016 二进制线索与当前 KrKr2；不作为行为兼容证明 |
+| [MOTIONPLAYER_CLOSED_SOURCE_BEHAVIOR_RESEARCH.md](MOTIONPLAYER_CLOSED_SOURCE_BEHAVIOR_RESEARCH.md) | 2016 闭源行为静态研究 | 查 metadata、blink、wind、outer force、scale 与 per-frame 消费链；不是当前实现状态或动态兼容证明 |
+| [MOTIONPLAYER_API_GUIDE.md](MOTIONPLAYER_API_GUIDE.md) | 接口调查 | 用于查名称与脚本形状；最终以当前 NCB 注册、源码和真实调用为准 |
+| [MOTIONPLAYER_PSB_STRUCT.md](MOTIONPLAYER_PSB_STRUCT.md) | 数据调查 | 用于查样本字段；最终以当前 parser/consumer 为准 |
+| [MOTIONPLAYER_PROGRESS.md](MOTIONPLAYER_PROGRESS.md) | 混合现状/历史勘误 | 用于追踪 progress 研究；不能代替当前源码审计 |
+| [MOTIONPLAYER_ARCHITECTURE.md](MOTIONPLAYER_ARCHITECTURE.md) | 历史架构 | 主要描述旧 `emotefile` 管线，不代表当前 `Player` 架构 |
+| [MOTIONPLAYER_MATRIX_PIPELINE.md](MOTIONPLAYER_MATRIX_PIPELINE.md) | 历史渲染调查 | 保留坐标与矩阵假设，引用前重新对照当前实现 |
+| [MOTIONPLAYER_TVP_COORDINATES.md](MOTIONPLAYER_TVP_COORDINATES.md) | 历史坐标调查 | 保留 TVP/SDL3 对照，不是当前行为保证 |
+| [MOTIONPLAYER_DRAW_VISIBILITY.md](MOTIONPLAYER_DRAW_VISIBILITY.md) | 历史故障排查 | 旧日志字段和旧类名可能已失效 |
+| [MOTIONPLAYER_TEXTURE_WORLD_COORDS.md](MOTIONPLAYER_TEXTURE_WORLD_COORDS.md) | 历史字段/坐标调查 | 对当前 node/parser 重新核对后再使用 |
+| [MOTIONPLAYER_HEAD_FACE_FIX.md](MOTIONPLAYER_HEAD_FACE_FIX.md) | 历史样本修复记录 | 只支持当时素材与流程，不证明普遍兼容 |
+| [MOTIONPLAYER_RENDER_TEST.md](MOTIONPLAYER_RENDER_TEST.md) | 退役测试说明 | 所列 render 脚本和 motionplayer 单测当前不存在，不能照抄执行 |
 
-| 规则 | 说明 |
-|------|------|
-| 文件名 | `MOTIONPLAYER_<主题>.md`，全大写 + 下划线 |
-| 索引 | 本文件 `README.md` 为唯一入口；子文档文首链回此处 |
-| 参考实现 | `sdl3/` 为 SDL3/GPU 对照源码，**不是**运行时文档 |
+## 参考材料分类
 
----
+| 材料 | 当前定位 |
+|---|---|
+| `../manual.tjs` | M2 公开 2020 KiriKiri Sample SDK 手册的规范化/拼写修正版；证明公开样例 API 形状，不证明内部算法 |
+| `origin/*.dll`、`origin/*.xp3` | 未跟踪的本地原版/游戏证据；2016 `emoteplayer.dll` 已用于控制状态机静态研究，仍不等于动态行为或跨版本等价；不进入 Git |
+| M2 公开 KiriKiri Sample SDK | `manual.tjs`、`emoteplayer.ks`、2020 DLL 与 PSB v3 的具名版本证据 |
+| FreeMote-SDK | 第三方公开 `IEmotePlayer` 接口与 Pure PSB 行为 oracle；KiriKiri 未实现，编译后核心不能当源码 |
+| `tests/test_files/emote/*.json` | 从素材导出的结构样本，不是 runtime 格式或完整格式规范 |
+| `sdl3-ref/` | 与历史提交 `c16210f` 对应的本项目实验快照；不是原版/M2 源码，不是当前 runtime |
+| Android `libkrkr2.so` 研究样本 | stripped 二进制的静态线索；不是仓库构建输入，也不能替代行为验证 |
+| 游戏脚本、trace 与截图 | 仅在记录游戏版本、场景、runtime commit 和可见结果后作为窄范围证据 |
 
-## 按场景选文档
+特别注意：`sdl3-ref/EmotePhysics.cpp` 明确带有 AI/演示性质，不能称为“完整头发物理”或直接移植基线；`EmoteFileCore.cpp` 的眨眼轮廓也不是当前 runtime 已实现自动眨眼的证据。
 
-### 入门与 API
+## 当前代码入口
 
-| 文档 | 何时阅读 |
-|------|----------|
-| [**MOTIONPLAYER_API_GUIDE.md**](MOTIONPLAYER_API_GUIDE.md) | TJS 插件加载、`Motion.EmotePlayer` / `Motion.Player` API、常量歧义、脚本调用链 |
-| [**MOTIONPLAYER_ARCHITECTURE.md**](MOTIONPLAYER_ARCHITECTURE.md) | 分层架构、C++ 类职责、`emotefile` 对象模型、实现状态 |
+| 主题 | 优先检查 |
+|---|---|
+| 插件注册 / TJS API | `main.cpp`、各 NCB 注册与 `Player*.cpp` 方法 |
+| PSB/MTN 加载 | `PlayerMotionLoad.cpp`、`RuntimeSupport.cpp` |
+| 节点树 / transform order | `NodeTree.cpp`、`PlayerUpdateLayersInternal.h`、`PlayerUpdateLayerEval.cpp` |
+| 帧推进 / controller / blend | `PlayerFrameProgress.cpp`、`PlayerTimeline.cpp` |
+| physics / wind | `PlayerCore.cpp` 及真实消费者；不要从方法存在推导效果存在 |
 
-### PSB / e-mote 数据
+## 维护规则
 
-| 文档 | 何时阅读 |
-|------|----------|
-| [**MOTIONPLAYER_PSB_STRUCT.md**](MOTIONPLAYER_PSB_STRUCT.md) | PSB/JSON **字段字典**（`metadata`、`layer`、`frameList`、`source` 等） |
-| [**MOTIONPLAYER_TEXTURE_WORLD_COORDS.md**](MOTIONPLAYER_TEXTURE_WORLD_COORDS.md) | 贴图**世界坐标**由谁控制、`coord`/`blank`/`source.origin`、`progress` 矩阵栈 |
-| [**MOTIONPLAYER_PROGRESS.md**](MOTIONPLAYER_PROGRESS.md) | `progress` 入口对照、KrKr2 vs sdl3、**2026-05-28 勘误**（作废的「双路径/卡死」叙述） |
-
-### 渲染与坐标
-
-| 文档 | 何时阅读 |
-|------|----------|
-| [**MOTIONPLAYER_MATRIX_PIPELINE.md**](MOTIONPLAYER_MATRIX_PIPELINE.md) | 三套坐标空间、`renderMethod` 栈、`drawAffine` 调用链、`EmoteDrawDbg tri` 分段排查 |
-| [**MOTIONPLAYER_TVP_COORDINATES.md**](MOTIONPLAYER_TVP_COORDINATES.md) | TVP 像素坐标 vs OpenGL、`setDrawAffineTranslateMatrix`、仿射防踩坑 |
-| [**MOTIONPLAYER_DRAW_VISIBILITY.md**](MOTIONPLAYER_DRAW_VISIBILITY.md) | 立绘不显示、`EmoteDrawDbg` 日志字段、`hda` / `alphaSamples` |
-| [**MOTIONPLAYER_HEAD_FACE_FIX.md**](MOTIONPLAYER_HEAD_FACE_FIX.md) | **头部/头发/五官**错位对照 JSON 的渐进修复（バニラパジャマa 样本） |
-
-### 测试与调试
-
-| 文档 | 何时阅读 |
-|------|----------|
-| [**MOTIONPLAYER_RENDER_TEST.md**](MOTIONPLAYER_RENDER_TEST.md) | `run.sh` / `startup.tjs`、Catch2 `motionplayer-dll`、编译宏、**测试策略附录** |
-
----
-
-## 文档关系（避免重复阅读）
-
-```mermaid
-flowchart TB
-    README[README.md 索引]
-    API[MOTIONPLAYER_API_GUIDE]
-    ARCH[MOTIONPLAYER_ARCHITECTURE]
-    PSB[MOTIONPLAYER_PSB_STRUCT]
-    COORD[MOTIONPLAYER_TEXTURE_WORLD_COORDS]
-    PROG[MOTIONPLAYER_PROGRESS]
-    MAT[MOTIONPLAYER_MATRIX_PIPELINE]
-    TVP[MOTIONPLAYER_TVP_COORDINATES]
-    VIS[MOTIONPLAYER_DRAW_VISIBILITY]
-    HEAD[MOTIONPLAYER_HEAD_FACE_FIX]
-    TEST[MOTIONPLAYER_RENDER_TEST]
-
-    README --> API
-    README --> ARCH
-    README --> PSB
-    README --> TEST
-    ARCH --> PSB
-    ARCH --> API
-    PSB --> COORD
-    COORD --> MAT
-    MAT --> TVP
-    MAT --> VIS
-    PSB --> HEAD
-    PROG --> HEAD
-    VIS --> HEAD
-    API --> PROG
-    TEST --> VIS
-    TEST --> MAT
-```
-
-| 主题 | 权威文档 | 其它文档中的处理 |
-|------|----------|------------------|
-| PSB/JSON 字段表 | `MOTIONPLAYER_PSB_STRUCT` | `ARCHITECTURE` §6 仅保留索引 |
-| 贴图世界坐标 | `MOTIONPLAYER_TEXTURE_WORLD_COORDS` | `PSB_STRUCT` §8/§10 链到该文 |
-| TJS API 列表 | `MOTIONPLAYER_API_GUIDE` | `ARCHITECTURE` §7 仅保留集成要点 |
-| `progress` 行为 | `MOTIONPLAYER_PROGRESS` | API 指南只引用，不重复勘误表 |
-| 矩阵 / draw 链 | `MOTIONPLAYER_MATRIX_PIPELINE` | TVP 坐标细节在 `TVP_COORDINATES` |
-| 跑测试 / 日志 | `MOTIONPLAYER_RENDER_TEST` | 原 `render-test-feasibility` 已并入附录 |
-
----
-
-## `sdl3/` 参考代码
-
-| 文件 | 用途 |
-|------|------|
-| `sdl3/emotefile.cpp` | GPU tessellation、`progress` 建树（与 TVP 行为对照） |
-| `sdl3/emoteplayerclass.cpp` | Player / FBO / 根矩阵 |
-| `sdl3/emoteplayer.cpp` | 入口示例 |
-
-**注意：** sdl3 **没有** KrKr2 `Player::frameProgress` / `updateLayers` 全量路径；勿用「sdl3 双路径」推断 KrKr2 必須分流（见 `MOTIONPLAYER_PROGRESS` §0）。
-
----
-
-## 相关插件文档
-
-| 文档 | 说明 |
-|------|------|
-| [`docs/rust/README.md`](../../../../docs/rust/README.md) | Rust 层架构、FFI 选型、迁移索引 |
-| [`docs/rust/modules/psbfile.md`](../../../../docs/rust/modules/psbfile.md) | psbfile 首个 Rust 迁移模块 |
-
-## 外部资源
-
-| 资源 | 说明 |
-|------|------|
-| [`manual.tjs`](../manual.tjs) | M2 官方 API 伪代码（日文） |
-| [`data/system/motion.tjs`](../../../../data/system/motion.tjs) | 插件 `Plugins.link` |
-| [`data/system/AffineSourceMotion.tjs`](../../../../data/system/AffineSourceMotion.tjs) | 立绘 `drawAffine` 生产链 |
-| `tests/unit-tests/plugins/motionplayer-dll.cpp` | 离屏 `drawToBitmap` 回归 |
-| `tests/test_files/render/run.sh` | 一键编译 / 窗口 / 单测 |
-
----
-
-## 维护说明
-
-1. **新增文档**须使用 `MOTIONPLAYER_` 前缀，并在本 README 登记。
-2. **字段/结构变更**以 `EmoteFileCore.cpp` / `emotefile.h` 为准，同步 `MOTIONPLAYER_PSB_STRUCT.md`。
-3. **API 变更**同步 `MOTIONPLAYER_API_GUIDE.md` 与 `main.cpp` NCB 注册。
-4. 避免在多篇文档重复大段表格；用链接指向权威文档。
+1. 当前能力和缺口只更新 `MOTIONPLAYER_RESEARCH.md`，避免多篇文档产生互相冲突的“现状”。
+2. 专题文档必须保留历史/非权威标记；若全面按当前源码重验，才可升级定位。
+3. API 结论同时核对 M2 公开样例、当前注册、方法签名和真实 TJS 调用；公开手册仍不能单独证明内部行为。
+4. 测试结论必须确认文件仍存在并执行当前命令；marker、窗口出现或旧日志不算功能成功。
+5. 不提交游戏原文件、用户路径或来源/许可不清的闭源材料。
 
 | 日期 | 说明 |
-|------|------|
-| 2026-06-08 | 统一命名、合并重复内容、建立本索引 |
-| 2026-06-08 | TVP 双阶段坐标：`model` 进 tess、`_affineTrans` 仅 composite；icon `ortho(progress lim)` 勿强制 screenSize |
+|---|---|
+| 2026-08-14 | 建立当前研究基线，明确闭源边界，降级旧架构/旧测试/历史参考实现 |

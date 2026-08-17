@@ -13,6 +13,7 @@ namespace motion {
     void Player::updateLayersEmoteLike_sdl3() {
         auto &nodes = _runtime->nodes;
         if(nodes.empty()) {
+            finishProgressTransaction();
             return;
         }
         const double currentTime = _clampedEvalTime;
@@ -46,13 +47,16 @@ namespace motion {
         for(auto &evalData : _runtime->perNodeEvalData) {
             evalData.dirtyFlag = 0;
         }
+        finishProgressTransaction();
     }
 
     void Player::updateLayers() {
         detail::motionTraceRecordUpdatePlayer(this);
         auto &nodes = _runtime->nodes;
-        if(nodes.empty())
+        if(nodes.empty()) {
+            finishProgressTransaction();
             return;
+        }
         if(detail::isEmoteLikeMotion(*_runtime)) {
             updateLayersEmoteLike_sdl3();
             return;
@@ -171,6 +175,7 @@ namespace motion {
         for(auto &evalData : _runtime->perNodeEvalData) {
             evalData.dirtyFlag = 0;
         }
+        finishProgressTransaction();
     }
 
 } // namespace motion

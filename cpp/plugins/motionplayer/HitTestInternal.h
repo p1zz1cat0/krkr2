@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 
 namespace motion::detail {
@@ -88,6 +89,39 @@ namespace motion::detail {
             }
             default:
                 return false;
+        }
+    }
+
+    inline bool hitDataIsDegenerate(const HitData &hit) {
+        switch(hit.type) {
+            case 1:
+                return !(std::isfinite(hit.values[2]) && hit.values[2] > 0.0);
+            case 2:
+                return !(std::isfinite(hit.values[3]) &&
+                         std::isfinite(hit.values[4]) &&
+                         std::isfinite(hit.values[5]) &&
+                         std::isfinite(hit.values[6]) &&
+                         hit.values[5] > hit.values[3] &&
+                         hit.values[6] > hit.values[4]);
+            case 3: {
+                const double x0 = hit.values[7];
+                const double y0 = hit.values[8];
+                const double x1 = hit.values[9];
+                const double y1 = hit.values[10];
+                const double x2 = hit.values[11];
+                const double y2 = hit.values[12];
+                const double x3 = hit.values[13];
+                const double y3 = hit.values[14];
+                const auto same = [](double ax, double ay, double bx,
+                                     double by) {
+                    return std::fabs(ax - bx) <= 1.0e-4 &&
+                        std::fabs(ay - by) <= 1.0e-4;
+                };
+                return same(x0, y0, x1, y1) || same(x1, y1, x2, y2) ||
+                    same(x0, y0, x2, y2);
+            }
+            default:
+                return true;
         }
     }
 

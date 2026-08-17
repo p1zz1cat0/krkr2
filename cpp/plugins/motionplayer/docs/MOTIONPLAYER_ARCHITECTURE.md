@@ -1,5 +1,8 @@
 # MotionPlayer 架构概览
 
+> [!WARNING]
+> **历史架构记录，非当前实现权威。** 本文大量使用旧 `emotefile` 类名与旧渲染管线；当前实现已转为 `Player*` / `NodeTree` 等文件。请先读 [当前研究基线](MOTIONPLAYER_RESEARCH.md)，任何架构结论都应重新对照当前源码。
+
 > **文档索引：** [`README.md`](README.md)  
 > **文档版本：** 2026-06-08  
 > **代码路径：** `cpp/plugins/motionplayer/`  
@@ -236,7 +239,7 @@ emotefile
 
 ### 7.1 插件入口
 
-`data/system/motion.tjs`：优先 `emoteplayer.dll`，失败则 `motionplayer.dll`（KrKr2 静态插件同名注册）。
+历史游戏脚本 `motion.tjs` 曾表现为优先 `emoteplayer.dll`、失败则 `motionplayer.dll`；当前仓库没有该生产脚本，必须用具名游戏版本和真实 `Plugins.link` 重新验证。
 
 ### 7.2 AffineSourceMotion
 
@@ -266,7 +269,7 @@ Motion.ResourceManager.setEmotePSBDecryptFunc(func);
 | **矩阵 / TVP 坐标 / 位置偏差** | [`MOTIONPLAYER_TVP_COORDINATES.md`](MOTIONPLAYER_TVP_COORDINATES.md)、[`MOTIONPLAYER_MATRIX_PIPELINE.md`](MOTIONPLAYER_MATRIX_PIPELINE.md) |
 | JSON 结构对照 | `tests/test_files/emote/e-mote3.0バニラパジャマa.json` |
 | 渲染脚本 | `tests/test_files/emote/motionplayer_render.tjs` |
-| 单元测试 | `tests/unit-tests/plugins/motionplayer-dll.cpp` |
+| 历史单元测试路径 | `tests/unit-tests/plugins/motionplayer-dll.cpp`（当前不存在，不是现行验证） |
 | PSB → JSON | `psbfile` 插件 / `tools/psb-export` |
 
 **绘制调试日志（默认开）：** 编译宏 `EMOTE_DRAW_DEBUG`（见 `EmoteDrawDebug.h`）。每帧 `draw` 输出 `EmoteDrawDbg summary` 与可选 `HINT`。
@@ -292,5 +295,5 @@ Motion.ResourceManager.setEmotePSBDecryptFunc(func);
 
 ## 11. 维护说明
 
-- **结构真源：** `emotefile.h` + `EmoteFileCore.cpp` > 导出 JSON > [`MOTIONPLAYER_PSB_STRUCT.md`](MOTIONPLAYER_PSB_STRUCT.md) > 本文档 §5–§6。
+- **历史结构证据：** 旧 `emotefile.h` / `EmoteFileCore.cpp` 与导出 JSON 只用于解释当时模型；当前结构必须从 `Player*`、`NodeTree` 和实际 parser/consumer 重新确认。
 - API 行为以 [`MOTIONPLAYER_API_GUIDE.md`](MOTIONPLAYER_API_GUIDE.md) 为准；架构变更请同步更新本文档 §2–§5。

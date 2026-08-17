@@ -2,7 +2,6 @@
 // Split from Player.cpp for maintainability.
 //
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <stdexcept>
 
@@ -13,14 +12,6 @@
 using namespace motion::internal;
 
 namespace {
-    std::string lowerAscii(std::string value) {
-        for(char &ch : value) {
-            ch =
-                static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        }
-        return value;
-    }
-
     std::uint32_t swapPackedRbLike_0x6CD710(std::uint32_t packedColor) {
         return (packedColor & 0xFF00FF00u) | ((packedColor >> 16) & 0xFFu) |
             ((packedColor & 0xFFu) << 16);
@@ -305,7 +296,19 @@ namespace motion {
     // Player pipeline.
     void
     Player::loadFromSnapshot(std::shared_ptr<detail::MotionSnapshot> snapshot) {
+        ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _hasLastGoodBounds = false;
+        _boundsMinX = 0.0;
+        _boundsMinY = 0.0;
+        _boundsMaxX = 0.0;
+        _boundsMaxY = 0.0;
+        if(!snapshot) {
+            _controllerState.reset();
+            _progressTransactionOpen = false;
+            _progressTransactionDt = 0.0;
+            _project.Clear();
+        }
         _runtime->timelines.clear();
         _runtime->playingTimelineLabels.clear();
         _runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
@@ -321,6 +324,7 @@ namespace motion {
 
         if(snapshot) {
             snapshot->attachedSnapshots.clear();
+            _project = snapshot->moduleValue;
             activateMotion(*_runtime, snapshot, &_resourceManagerNative);
             syncVariableKeysFromActiveMotion();
         }
@@ -404,6 +408,7 @@ namespace motion {
             return;
         }
         _motionKey = v;
+        ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
         _runtime->timelines.clear();
         _runtime->playingTimelineLabels.clear();
@@ -474,6 +479,7 @@ namespace motion {
 
         // Reset state and load
         self->_motionKey = motionValue;
+        ++self->_runtime->motionGeneration;
         self->_runtime->activeMotion.reset();
         self->_runtime->timelines.clear();
         self->_runtime->playingTimelineLabels.clear();
@@ -1204,8 +1210,19 @@ namespace motion {
         // selected content object, so prefer _motionKey before falling back to
         // the playing-timeline list or primary label ordering.
         if(!_motionKey.IsEmpty()) {
-            if(const auto *clip = selectByLabel(detail::narrow(_motionKey))) {
+            const auto requested = detail::narrow(_motionKey);
+            if(const auto *clip = selectByLabel(requested)) {
                 return clip;
+            }
+            const auto charaRaw = detail::narrow(_chara);
+            if(!charaRaw.empty()) {
+                for(const auto &clip : motion.clipList) {
+                    if(clip.owner == charaRaw &&
+                       detail::clipLabelMatchesRequest(clip.label,
+                                                       requested)) {
+                        return &clip;
+                    }
+                }
             }
         }
 
@@ -1335,17 +1352,6 @@ namespace motion {
         return 0.0;
     }
 
-    // Aligned to libkrkr2.so sub_6709AC at 0x6709AC:
-    // initPhysics(min, max, amp, freq1, freq2) creates a Spring physics object
-    // at player+1128 (1564 bytes, sub_670AFC). Stores params at
-    // player+1136..1152. The Spring physics system drives emote hair/bust/parts
-    // oscillation. Full spring simulation not yet implemented for web port —
-    // store params only.
-    void Player::initPhysics(tTJSVariant metadata) {
-        // 参考 sdl3/emoteplayerclass.cpp initPhysics()（不编译）；libkrkr2.so
-        // 弹簧参数待补全 player+1128 = physics object (not created)
-        // player+1136..1152 = min, max, amplitude, freq1, freq2
-    }
     tTJSVariant Player::serialize() {
         ensureMotionLoaded();
 
@@ -1597,95 +1603,6 @@ namespace motion {
     void Player::setPartsScale(double s) { _partsScale = s; }
     // sub_681F30: player+1200 = a2
     void Player::setBustScale(double s) { _bustScale = s; }
-
-    // Aligned to D3DEmotePlayer_startWind (0x530680) -> Player_startWind
-    // (0x6709AC): normalize amplitude, optionally destroy/rebuild wind
-    // simulator state, then store min/max/amplitude/freq and reset the active
-    // counter.
-    void Player::startWind(double minAngle, double maxAngle, double amplitude,
-                           double freqX, double freqY) {
-        const double absAmplitude = std::abs(amplitude);
-        const double normalizedMin = amplitude >= 0.0 ? minAngle : maxAngle;
-        const double normalizedMax = amplitude >= 0.0 ? maxAngle : minAngle;
-
-        if(absAmplitude == 0.0 || normalizedMin == normalizedMax ||
-           (freqX == 0.0 && freqY == 0.0)) {
-            stopWind();
-            return;
-        }
-
-        const bool rebuild = !_windState.active ||
-            _windState.minAngle != normalizedMin ||
-            _windState.maxAngle != normalizedMax;
-        if(rebuild) {
-            _windState = {};
-            _windState.active = true;
-        }
-
-        _windState.active = true;
-        _windState.minAngle = normalizedMin;
-        _windState.maxAngle = normalizedMax;
-        _windState.amplitude = absAmplitude;
-        _windState.freqX = freqX;
-        _windState.freqY = freqY;
-        const double direction =
-            _windState.prevPhase > _windState.phase ? -1.0 : 1.0;
-        const double ratio =
-            _emoteMeshDivisionRatio != 0.0 ? _emoteMeshDivisionRatio : 1.0;
-        _windState.scaledAmplitude = direction * (absAmplitude / ratio);
-        _windState.counter = 0;
-        _emoteDirty = true;
-    }
-
-    // Aligned to sub_681A38: delete wind simulator and clear player+1128.
-    void Player::stopWind() {
-        _windState = {};
-        _emoteDirty = true;
-    }
-
-    // Aligned to D3DEmotePlayer_setOuterForce (0x530A8C) ->
-    // Player_setOuterForce (0x672D58): case-insensitive label dispatch for
-    // "bust", "h", and "parts", carrying transition/ease through the sink.
-    void Player::setOuterForce(ttstr label, double x, double y,
-                               double transition, double ease) {
-        const auto key = lowerAscii(detail::narrow(label));
-        OuterForceState *target = nullptr;
-        if(key == "bust") {
-            target = &_bustOuterForce;
-        } else if(key == "h") {
-            target = &_hairOuterForce;
-        } else if(key == "parts") {
-            target = &_partsOuterForce;
-        } else {
-            return;
-        }
-
-        target->active = true;
-        target->x = x;
-        target->y = y;
-        target->transition = transition;
-        target->ease = ease;
-        _emoteDirty = true;
-    }
-
-    tTJSVariant Player::getOuterForce(ttstr label) {
-        const auto key = lowerAscii(detail::narrow(label));
-        const OuterForceState *target = nullptr;
-        if(key == "bust") {
-            target = &_bustOuterForce;
-        } else if(key == "h") {
-            target = &_hairOuterForce;
-        } else if(key == "parts") {
-            target = &_partsOuterForce;
-        } else {
-            return tTJSVariant();
-        }
-
-        return detail::makeDictionary({
-            { "x", target->x },
-            { "y", target->y },
-        });
-    }
 
     // Aligned to libkrkr2.so sub_681EF8 at 0x681EF8:
     // Stores translate (x,y) to runtime+144/148 (cameraOffsetX/Y).

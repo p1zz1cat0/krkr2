@@ -10,6 +10,7 @@ set(SOURCES
         alphamovie-dll.cpp
         extNagano-dll.cpp
         plugin-safety-dll.cpp
+        motionplayer-physics.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")
@@ -21,7 +22,13 @@ set(COMMON_SOURCES
 )
 
 foreach(name ${TARGETS})
-    add_executable(${name} ${name}.cpp ${COMMON_SOURCES})
+    if(name STREQUAL "motionplayer-physics")
+        add_executable(${name}
+            ${name}.cpp
+            ${KRKR2PLUGIN_PATH}/motionplayer/MotionPhysics.cpp)
+    else()
+        add_executable(${name} ${name}.cpp ${COMMON_SOURCES})
+    endif()
 endforeach()
 
 set(ALL_TARGETS
@@ -29,12 +36,16 @@ set(ALL_TARGETS
 )
 
 foreach(name ${ALL_TARGETS})
-    target_link_libraries(${name}
-        PRIVATE
-            Catch2::Catch2
-        PUBLIC
-            krkr2plugin krkr2core
-    )
+    if(name STREQUAL "motionplayer-physics")
+        target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain)
+    else()
+        target_link_libraries(${name}
+            PRIVATE
+                Catch2::Catch2
+            PUBLIC
+                krkr2plugin krkr2core
+        )
+    endif()
     target_include_directories(${name}
         PRIVATE
             "${TEST_CONFIG_DIR}"

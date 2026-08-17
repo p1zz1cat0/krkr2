@@ -15,6 +15,7 @@
 #include <vector>
 #include <spdlog/spdlog.h>
 #include "tjs.h"
+#include "MotionPhysics.h"
 #include "ResourceManager.h"
 #include "RuntimeSupport.h"
 
@@ -268,8 +269,8 @@ namespace motion {
         void setHairScale(double s);
         void setPartsScale(double s);
         void setBustScale(double s);
-        void startWind(double minAngle, double maxAngle, double amplitude,
-                       double freqX, double freqY);
+        void startWind(double start, double goal, double speed,
+                       double powerMin, double powerMax);
         void stopWind();
         void setOuterForce(ttstr label, double x, double y,
                            double transition = 0.0, double ease = 0.0);
@@ -364,6 +365,13 @@ namespace motion {
         void playTimeline(ttstr label, tjs_int flags);
         void stopTimeline(ttstr label);
         void setTimelineBlendRatio(ttstr label, double ratio);
+        // Full-arity form matching the M2 contract:
+        // (name, ratio, time, easing, stopWhenBlendDone). time is in frames
+        // (the game multiplies ms by 60/1000); easing maps through
+        // timelineBlendEaseWeightLike. Instant when time <= 0.
+        void setTimelineBlendRatioEx(ttstr label, double ratio,
+                                     double transition, double easing,
+                                     bool stopWhenBlendDone);
         double getTimelineBlendRatio(ttstr label);
         void fadeInTimeline(ttstr label, double duration, tjs_int flags);
         void fadeOutTimeline(ttstr label, double duration, tjs_int flags);
@@ -380,10 +388,16 @@ namespace motion {
         void onFindMotion(ttstr name, int flags = 0);
         bool playMotionLike_0x6B2284(ttstr label, tjs_int flags);
         void progressMsLike_0x6D2A54(double deltaMs);
+        void recordSlaProgressStatsLike_0x6D2A54(
+            std::chrono::steady_clock::time_point progressStart);
         // sdl3/emoteplayerclass.cpp::progress + emotemotion::progress(0) 路径。
         void progressEmoteLike_sdl3(double deltaMs, iTJSDispatch2 *objthis);
         void updateLayersEmoteLike_sdl3();
         void dispatchPendingMotionEvents(iTJSDispatch2 *objthis);
+        void beginProgressTransaction(double dt);
+        void finishProgressTransaction();
+        void frameProgressPhases(double dt);
+        void progressFrameTransaction(double dt);
         void setParentPlayerLike_0x6B1ABC(Player *parentPlayer) {
             _parentPlayer = parentPlayer;
         }
@@ -414,6 +428,10 @@ namespace motion {
                                                  tjs_int numparams,
                                                  tTJSVariant **param,
                                                  iTJSDispatch2 *objthis);
+        static tjs_error setTimelineBlendRatioCompat(tTJSVariant *result,
+                                                     tjs_int numparams,
+                                                     tTJSVariant **param,
+                                                     iTJSDispatch2 *objthis);
         static tjs_error isPlayingCompat(tTJSVariant *result, tjs_int numparams,
                                          tTJSVariant **param,
                                          iTJSDispatch2 *objthis);
@@ -435,6 +453,9 @@ namespace motion {
         double getActiveMotionWidth() const;
         double getActiveMotionHeight() const;
         bool hitTestLayer(ttstr name, double x, double y);
+        bool hitTestBounds(double x, double y);
+        bool getValidBounds(double &minX, double &minY, double &maxX,
+                            double &maxY) const;
 
         // Root node position (x/y/left/top)
         // Aligned to libkrkr2.so:
@@ -670,6 +691,11 @@ namespace motion {
         double _boundsMinY = 1e308;
         double _boundsMaxX = -1e308;
         double _boundsMaxY = -1e308;
+        double _lastGoodBoundsMinX = 0.0;
+        double _lastGoodBoundsMinY = 0.0;
+        double _lastGoodBoundsMaxX = 0.0;
+        double _lastGoodBoundsMaxY = 0.0;
+        bool _hasLastGoodBounds = false;
         bool _needsInternalAssignImages =
             false; // flag +613 for updateLayerAfterDraw
         std::unordered_map<std::string, double> _variableValues;
@@ -767,30 +793,9 @@ namespace motion {
             double ease = 0.0;
         } _emoteColorState;
 
-        struct WindState {
-            bool active = false;
-            double minAngle = 0.0;
-            double maxAngle = 0.0;
-            double amplitude = 0.0;
-            double freqX = 0.0;
-            double freqY = 0.0;
-            double phase = 0.0;
-            double prevPhase = 0.0;
-            double scaledAmplitude = 0.0;
-            int counter = 0;
-        } _windState;
-
-        struct OuterForceState {
-            bool active = false;
-            double x = 0.0;
-            double y = 0.0;
-            double transition = 0.0;
-            double ease = 0.0;
-        };
-
-        OuterForceState _bustOuterForce;
-        OuterForceState _hairOuterForce;
-        OuterForceState _partsOuterForce;
+        std::unique_ptr<physics::ControllerRuntimeState> _controllerState;
+        bool _progressTransactionOpen = false;
+        double _progressTransactionDt = 0.0;
 
         // Aligned to libkrkr2.so player+992: TJS Math.RandomGenerator object.
         // sub_6BA7B8 calls its "random" method to get [0.0, 1.0) doubles.

@@ -1,152 +1,21 @@
 {
   "schemaVersion": 1,
   "sourceExclusions": [
-    {
-      "path": "cpp/plugins/csvParser/**",
-      "classification": "third-party",
-      "reason": "Upstream KAG parser compatibility source"
-    },
-    {
-      "path": "cpp/plugins/layerExBtoA/**",
-      "classification": "third-party",
-      "reason": "Upstream wtnbgo plugin port"
-    },
-    {
-      "path": "cpp/plugins/layerExDraw/**",
-      "classification": "third-party",
-      "reason": "Blend2D and Windows upstream implementation"
-    },
-    {
-      "path": "cpp/plugins/layerExRaster/**",
-      "classification": "third-party",
-      "reason": "Upstream layerExRaster compatibility source"
-    },
-    {
-      "path": "cpp/plugins/psbfile/**",
-      "classification": "third-party",
-      "reason": "Upstream FreeMote PSB implementation"
-    },
-    {
-      "path": "cpp/plugins/varfile/**",
-      "classification": "third-party",
-      "reason": "Upstream compatibility plugin"
-    },
-    {
-      "path": "cpp/plugins/wutcwf/**",
-      "classification": "third-party",
-      "reason": "Upstream compatibility plugin"
-    }
+    {"path": "cpp/plugins/csvParser/**", "classification": "third-party", "reason": "Upstream KAG parser compatibility source"},
+    {"path": "cpp/plugins/layerExBtoA/**", "classification": "third-party", "reason": "Upstream wtnbgo plugin port"},
+    {"path": "cpp/plugins/layerExDraw/**", "classification": "third-party", "reason": "Blend2D and Windows upstream implementation"},
+    {"path": "cpp/plugins/layerExRaster/**", "classification": "third-party", "reason": "Upstream layerExRaster compatibility source"},
+    {"path": "cpp/plugins/psbfile/**", "classification": "third-party", "reason": "Upstream FreeMote PSB implementation"},
+    {"path": "cpp/plugins/varfile/**", "classification": "third-party", "reason": "Upstream compatibility plugin"},
+    {"path": "cpp/plugins/wutcwf/**", "classification": "third-party", "reason": "Upstream compatibility plugin"}
   ],
   "plugins": [
-    {
-      "name": "extNagano",
-      "dll": "extNagano.dll",
-      "sourceRoots": [
-        "cpp/plugins/extNagano",
-        "cpp/plugins/common"
-      ],
-      "platforms": [
-        "linux",
-        "macos"
-      ],
-      "buildTarget": "extNagano-dll",
-      "ctestLabel": "plugin",
-      "fixture": "tests/test_files/extNagano",
-      "marker": "PLUGIN_SMOKE_PASS plugin=extNagano.dll",
-      "timeoutSeconds": 30,
-      "anchor": "TVPExtNaganoPluginAnchor",
-      "smokeKind": "gui"
-    },
-    {
-      "name": "Extrans",
-      "dll": "extrans.dll",
-      "sourceRoots": [
-        "cpp/plugins/Extrans",
-        "cpp/plugins/common"
-      ],
-      "platforms": [
-        "linux",
-        "macos"
-      ],
-      "buildTarget": "extrans-dll",
-      "ctestLabel": "plugin",
-      "fixture": "tests/test_files/extrans-transitions",
-      "marker": "PLUGIN_SMOKE_PASS plugin=extrans.dll",
-      "timeoutSeconds": 45,
-      "anchor": "TVPExtransPluginAnchor",
-      "smokeKind": "gui"
-    },
-    {
-      "name": "alphamovie",
-      "dll": "AlphaMovie.dll",
-      "sourceRoots": [
-        "cpp/plugins/alphamovie",
-        "cpp/plugins/common"
-      ],
-      "platforms": [
-        "linux",
-        "macos"
-      ],
-      "buildTarget": "alphamovie-dll",
-      "ctestLabel": "plugin",
-      "fixture": "tests/test_files/alphamovie",
-      "marker": "PLUGIN_SMOKE_PASS plugin=AlphaMovie.dll",
-      "timeoutSeconds": 30,
-      "anchor": "TVPAlphaMoviePluginAnchor"
-    },
-    {
-      "name": "shrinkCopy",
-      "dll": "shrinkCopy.dll",
-      "sourceRoots": [
-        "cpp/plugins/shrinkCopy",
-        "cpp/plugins/common"
-      ],
-      "platforms": [
-        "linux",
-        "macos"
-      ],
-      "buildTarget": "shrinkCopy-dll",
-      "ctestLabel": "plugin",
-      "fixture": "tests/test_files/shrinkCopy",
-      "marker": "PLUGIN_SMOKE_PASS plugin=shrinkCopy.dll",
-      "timeoutSeconds": 30,
-      "anchor": "TVPShrinkCopyPluginAnchor"
-    },
-    {
-      "name": "packinone",
-      "dll": "PackinOne.dll",
-      "sourceRoots": [
-        "cpp/plugins/packinone",
-        "cpp/plugins/common"
-      ],
-      "platforms": [
-        "linux",
-        "macos"
-      ],
-      "buildTarget": "layerExImage-dll",
-      "ctestLabel": "plugin",
-      "fixture": "tests/test_files/packinone-layerExImage",
-      "marker": "PLUGIN_SMOKE_PASS plugin=PackinOne.dll",
-      "timeoutSeconds": 30,
-      "anchor": "TVPPackinOnePluginAnchor"
-    },
-    {
-      "name": "wuvorbis",
-      "dll": "wuvorbis.dll",
-      "sourceRoots": [
-        "cpp/plugins/wuvorbis",
-        "cpp/plugins/common"
-      ],
-      "platforms": [
-        "linux",
-        "macos"
-      ],
-      "buildTarget": "plugin-tests",
-      "ctestLabel": "plugin",
-      "fixture": "tests/test_files/wuvorbis",
-      "marker": "PLUGIN_SMOKE_PASS plugin=wuvorbis.dll",
-      "timeoutSeconds": 30,
-      "anchor": "TVPWuVorbisPluginAnchor"
-    }
+    {"name": "extNagano", "dll": "extNagano.dll", "sourceRoots": ["cpp/plugins/extNagano", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "extNagano-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/extNagano", "marker": "PLUGIN_SMOKE_PASS plugin=extNagano.dll", "timeoutSeconds": 30, "anchor": "TVPExtNaganoPluginAnchor", "smokeKind": "gui"},
+    {"name": "Extrans", "dll": "extrans.dll", "sourceRoots": ["cpp/plugins/Extrans", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "extrans-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/extrans-transitions", "marker": "PLUGIN_SMOKE_PASS plugin=extrans.dll", "timeoutSeconds": 45, "anchor": "TVPExtransPluginAnchor", "smokeKind": "gui"},
+    {"name": "alphamovie", "dll": "AlphaMovie.dll", "sourceRoots": ["cpp/plugins/alphamovie", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "alphamovie-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/alphamovie", "marker": "PLUGIN_SMOKE_PASS plugin=AlphaMovie.dll", "timeoutSeconds": 30, "anchor": "TVPAlphaMoviePluginAnchor"},
+    {"name": "shrinkCopy", "dll": "shrinkCopy.dll", "sourceRoots": ["cpp/plugins/shrinkCopy", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "shrinkCopy-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/shrinkCopy", "marker": "PLUGIN_SMOKE_PASS plugin=shrinkCopy.dll", "timeoutSeconds": 30, "anchor": "TVPShrinkCopyPluginAnchor"},
+    {"name": "packinone", "dll": "PackinOne.dll", "sourceRoots": ["cpp/plugins/packinone", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "layerExImage-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/packinone-layerExImage", "marker": "PLUGIN_SMOKE_PASS plugin=PackinOne.dll", "timeoutSeconds": 30, "anchor": "TVPPackinOnePluginAnchor"},
+    {"name": "wuvorbis", "dll": "wuvorbis.dll", "sourceRoots": ["cpp/plugins/wuvorbis", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/wuvorbis", "marker": "PLUGIN_SMOKE_PASS plugin=wuvorbis.dll", "timeoutSeconds": 30, "anchor": "TVPWuVorbisPluginAnchor"},
+    {"name": "motionplayer", "dll": "motionplayer.dll", "sourceRoots": ["cpp/plugins/motionplayer", "cpp/plugins/EmotePlayer", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "motionplayer-physics", "ctestLabel": "plugin", "fixture": "tests/test_files/motionplayer", "marker": "PLUGIN_SMOKE_PASS plugin=motionplayer.dll", "timeoutSeconds": 45, "anchor": "TVPMotionPlayerPluginAnchor", "smokeKind": "gui"}
   ]
 }

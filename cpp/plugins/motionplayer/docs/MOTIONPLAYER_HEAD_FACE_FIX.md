@@ -1,5 +1,8 @@
 # MotionPlayer 头部 / 头发 / 五官渐进修复指南
 
+> [!WARNING]
+> **历史样本修复记录。** 本文的阶段、日志锚点和“典型组合”只属于当时素材与代码快照，不能外推为当前 NEKOPARA 全流程或完整 E-mote 兼容。请先读 [当前研究基线](MOTIONPLAYER_RESEARCH.md)。
+
 > **黄金样本：** [`tests/test_files/emote/e-mote3.0バニラパジャマa.json`](../../../../tests/test_files/emote/e-mote3.0バニラパジャマa.json)（同名 `.psb`）  
 > **索引：** [README.md](README.md)  
 > **相关：** [MOTIONPLAYER_PSB_STRUCT.md](MOTIONPLAYER_PSB_STRUCT.md)、[MOTIONPLAYER_PROGRESS.md](MOTIONPLAYER_PROGRESS.md)、[MOTIONPLAYER_DRAW_VISIBILITY.md](MOTIONPLAYER_DRAW_VISIBILITY.md)
@@ -26,7 +29,7 @@
 
 ```bash
 # 见 MOTIONPLAYER_RENDER_TEST.md
-./tests/test_files/render/run.sh   # 或单独跑 motionplayer-dll
+# 历史命令已退役；当前不存在 render/run.sh 或 motionplayer-dll target
 # 过滤器: "motionplayer drawToBitmap alpha bbox regression"
 # 期望: bbox≈(0,65)-(799,629), lim=800×1080, alphaSamples>0
 ```
@@ -44,7 +47,7 @@
 | 五官显示但帧错误（半闭眼当全开等） | `metadata.eyeControl[].edge` + `node`；`instantVariableList`；各层 `frameList` 多帧 `icon1..6` | `updateEyeControl` **未移植**；`eyeControl` 仅登记 `controllerBindings`，不驱动 `目影L` 等层的帧时间 |
 | 口型不动 | `mouthControl[].talkLabel` → `face_talk`；`face_parts/口_*` 的 `parameter[].id` | `face_talk→talk` 已在 `applyEvalResultPostProcess`；子 motion 的 `parameter` 表需随 `progress` 同步到子 Player |
 
-**基线变量（catalog `基礎状態`）：** 所有 `face_*`、`head_*` 应为 `0`（见 JSON `metadata.catalog[0].key`）。修复时先用该状态对比官方预览，再测 `挨拶` 等 preset。
+**历史基线假设（catalog `基礎状態`）：** 当时样本把所有 `face_*`、`head_*` 设为 `0`（见 JSON `metadata.catalog[0].key`）。若有来源明确的参考预览，可先对比该状态，再测 `挨拶` 等 preset；不能外推到其它素材。
 
 ---
 
@@ -325,7 +328,7 @@ e-mote `prepare` / `visibility` 使用 bitmask **6153**（含 nodeType 0、3、1
 **验收：**
 
 - 变量扫描：`face_eye_open` 从 0→15→20，离屏眼部贴片名称/外形随之变化  
-- 与官方 e-mote 预览或导出的参考图对比（可用 `tools/psb-export`）
+- 与来源、版本和许可明确的 e-mote 参考预览或导出图对比（工具路径也需按当前仓库核对）
 
 ---
 
@@ -350,7 +353,7 @@ e-mote `prepare` / `visibility` 使用 bitmask **6153**（含 nodeType 0、3、1
 
 | 项 | 做法 |
 |----|------|
-| 单测 | 扩展 `motionplayer-dll`：头部 ROI 像素计数 / bbox 上限下限 |
+| 待重建测试 | 以当前架构新增头部 ROI 像素计数 / bbox 上限下限；旧 `motionplayer-dll` target 已不存在 |
 | 黄金图 | 基线 + `挨拶` catalog 两帧 snapshot diff |
 | 性能 | child merge 后 profiling `prepareRenderItems`；必要时缓存子树 prepare 结果 |
 

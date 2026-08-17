@@ -1,5 +1,8 @@
 # Motion `progress` 逻辑流程对照
 
+> [!WARNING]
+> **混合现状与历史勘误的研究记录。** 本文不能单独代表当前完成度或商业游戏兼容性；涉及当前能力、缺口与证据等级时，以 [当前研究基线](MOTIONPLAYER_RESEARCH.md) 和当前源码为准。
+
 > **文档索引：** [`README.md`](README.md)  
 > **版本：** 2026-05-28（勘误）  
 > **API 入口：** [`MOTIONPLAYER_API_GUIDE.md`](MOTIONPLAYER_API_GUIDE.md)  
@@ -193,7 +196,7 @@ else → Phase1/2 + 全量 Phase3（Vertex/Particle/Shape/…）
 | Player progress | `PlayerFrameProgress.cpp` — `progressCompatMethod` / `progressEmoteLike_sdl3` / `frameProgress` |
 | updateLayers | `PlayerUpdateLayers.cpp` |
 | 启发式 | `RuntimeSupport.h` — `isEmoteLikeMotion` |
-| 脚本 | `data/system/AffineSourceMotion.tjs` |
+| 历史脚本证据 | 游戏侧 `AffineSourceMotion.tjs` 样本；当前仓库不存在该生产路径 |
 
 ---
 

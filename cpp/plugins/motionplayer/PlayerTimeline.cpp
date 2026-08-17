@@ -292,6 +292,38 @@ namespace motion {
     }
 
     void Player::setTimelineBlendRatio(ttstr label, double ratio) {
+        // Legacy 2-arg form: instant blend.
+        setTimelineBlendRatioEx(label, ratio, 0.0, 0.0, false);
+    }
+
+    tjs_error Player::setTimelineBlendRatioCompat(tTJSVariant *,
+                                                   tjs_int numparams,
+                                                   tTJSVariant **param,
+                                                   iTJSDispatch2 *objthis) {
+        auto *self =
+            ncbInstanceAdaptor<Player>::GetNativeInstance(objthis, true);
+        if(!self) {
+            return TJS_E_INVALIDOBJECT;
+        }
+        if(numparams < 2 || !param[0] || !param[1]) {
+            return TJS_E_BADPARAMCOUNT;
+        }
+        const ttstr label(*param[0]);
+        const double ratio = param[1]->AsReal();
+        const double transition =
+            (numparams >= 3 && param[2]) ? param[2]->AsReal() : 0.0;
+        const double easing =
+            (numparams >= 4 && param[3]) ? param[3]->AsReal() : 0.0;
+        const bool stopWhenBlendDone =
+            (numparams >= 5 && param[4]) ? param[4]->AsInteger() != 0 : false;
+        self->setTimelineBlendRatioEx(label, ratio, transition, easing,
+                                      stopWhenBlendDone);
+        return TJS_S_OK;
+    }
+
+    void Player::setTimelineBlendRatioEx(ttstr label, double ratio,
+                                         double transition, double easing,
+                                         bool stopWhenBlendDone) {
         ensureMotionLoaded();
         if(_runtime->timelines.empty() && _runtime->activeMotion) {
             detail::primeTimelineStates(_runtime->timelines,
@@ -299,11 +331,22 @@ namespace motion {
         }
 
         const auto key = detail::narrow(label);
-        auto &state = _runtime->timelines[key];
-        state.label = key;
-        state.blendRatio = ratio;
-        state.blendAnimator = {};
-        state.blendAutoStop = false;
+        if(transition <= 0.0) {
+            auto &state = _runtime->timelines[key];
+            state.label = key;
+            state.blendRatio = ratio;
+            state.blendAnimator = {};
+            state.blendAutoStop = false;
+            return;
+        }
+        // Animate the blend over `transition` frames with the easing
+        // mapping used by the native timeline blend path. The game passes
+        // time*60/1000 (frames) plus an accel value, exactly as the M2
+        // manual describes setTimelineBlendRatio(name, ratio, time, easing,
+        // stopWhenBlendDone).
+        setTimelineBlendLike_0x6735AC(key, stopWhenBlendDone, ratio,
+                                      transition, easing);
+        _emoteDirty = true;
     }
 
     double Player::getTimelineBlendRatio(ttstr label) {
@@ -427,16 +470,15 @@ namespace motion {
             }
         }
 
-        if(!started) {
-            const auto &primary =
-                !_runtime->activeMotion->mainTimelineLabels.empty()
-                ? _runtime->activeMotion->mainTimelineLabels
-                : _runtime->activeMotion->diffTimelineLabels;
-            for(const auto &timelineLabel : primary) {
-                playOne(timelineLabel);
-                started = true;
-            }
-        }
+        // A label that is not a timeline label (the base clip "全体構造"
+        // played through play(metadata.base.motion, Force)) starts NO
+        // timeline. NEKOPARA drives pose timelines explicitly via
+        // playTimeline/_playTimeline from TJS; auto-starting every main
+        // timeline here runs all authored control tracks at once and each
+        // crossing rewrites the same pose variables — the fixed
+        // choreography replay seen on every play()/switch. The M2 manual's
+        // sample flow likewise pairs play(base.motion) with plain
+        // progress/draw and no timeline calls.
 
         _allplaying = !_runtime->playingTimelineLabels.empty();
         return started;
@@ -582,16 +624,10 @@ namespace motion {
             }
         }
 
-        if(!started) {
-            const auto &primary =
-                !self->_runtime->activeMotion->mainTimelineLabels.empty()
-                ? self->_runtime->activeMotion->mainTimelineLabels
-                : self->_runtime->activeMotion->diffTimelineLabels;
-            for(const auto &timelineLabel : primary) {
-                playOne(timelineLabel);
-                started = true;
-            }
-        }
+        // A label that is not a timeline label (the base clip "全体構造"
+        // played through play(metadata.base.motion, Force)) starts NO
+        // timeline; pose timelines are driven explicitly from TJS. See
+        // playMotionLike_0x6B2284 for the full rationale.
 
         self->_allplaying = !self->_runtime->playingTimelineLabels.empty();
 

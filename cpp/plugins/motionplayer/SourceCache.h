@@ -46,8 +46,16 @@ namespace motion {
                                                        0xFF808080u };
             tTJSVariant rawSource;
             tTJSVariant sourceObject;
+            // Immutable decoded source, shared across animated tint changes.
+            // backingBitmap is the current (possibly tinted) derivative.
+            std::shared_ptr<tTVPBaseBitmap> baseBitmap;
             std::shared_ptr<tTVPBaseBitmap> backingBitmap;
             iTVPTexture2D *sourceTexture = nullptr;
+            // A missing source is authoritative for one active motion. Keep
+            // that result so render retries do not rescan every mounted XP3
+            // on every frame. A motion identity change reopens the lookup.
+            const void *motionIdentity = nullptr;
+            bool backingLoadAttempted = false;
         };
 
         SourceCache();
@@ -85,6 +93,7 @@ namespace motion {
     private:
         Entry *findEntry(const std::string &key, int blendMode,
                          const std::array<std::uint32_t, 4> &packedColors);
+        Entry *findRenderEntry(const std::string &key, int blendMode);
         Entry *findEntryByKey(const std::string &key);
         Entry &ensureEntry(const std::string &key,
                            const std::string &resolvedKey, int blendMode,

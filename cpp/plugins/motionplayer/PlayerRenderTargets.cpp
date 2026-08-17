@@ -771,6 +771,7 @@ namespace motion {
 
         const auto motionPath = _runtime->activeMotion->path;
 
+        const auto renderStart = std::chrono::steady_clock::now();
         buildRenderCommands(canvasWidth, canvasHeight);
 
         iTJSDispatch2 *layerTreeOwner = resolveMainWindowOwnerObject();
@@ -800,7 +801,8 @@ namespace motion {
 
         auto ensureAccurateSlaItemLayer =
             [&](PreparedRenderItem &item,
-                tTVPLayerType layerType) -> AccurateSlaItemLayer {
+                tTVPLayerType layerType,
+                const RenderClipRect &clip) -> AccurateSlaItemLayer {
             const tjs_int stateLayerId = item.layerId;
             if(stateLayerId == 0) {
                 return { ensureReusableLayerObject(
@@ -814,14 +816,64 @@ namespace motion {
             payload.visible = true;
             payload.key = detail::widen(item.sourceKey);
             payload.flags = item.blendMode;
-            payload.affine = { item.paintBox[0], item.paintBox[1],
-                               item.paintBox[2], item.paintBox[3],
-                               item.viewport[0], item.viewport[1],
-                               item.viewport[2], item.viewport[3] };
+            const auto clipWidth = clip.right - clip.left;
+            const auto clipHeight = clip.bottom - clip.top;
+            payload.affine = {
+                static_cast<float>(clipWidth),
+                static_cast<float>(clipHeight),
+                static_cast<float>(item.meshType),
+                static_cast<float>(item.meshDivX),
+                static_cast<float>(item.meshDivY), 0.0f, 0.0f, 0.0f
+            };
+            payload.origin = { static_cast<float>(clipWidth),
+                               static_cast<float>(clipHeight) };
+            const float offsetX = -0.5f - static_cast<float>(clip.left);
+            const float offsetY = -0.5f - static_cast<float>(clip.top);
+            const bool meshAsAffine = item.meshType == 1 &&
+                item.meshDivX <= 2 && item.meshDivY <= 2;
+            if(item.meshType == 0 || meshAsAffine) {
+                payload.vertices = {
+                    item.corners[0] + offsetX,
+                    item.corners[1] + offsetY,
+                    item.corners[2] + offsetX,
+                    item.corners[3] + offsetY,
+                    item.corners[6] + offsetX,
+                    item.corners[7] + offsetY,
+                };
+            } else {
+                payload.vertices.reserve(item.meshPoints.size());
+                for(std::size_t pointIndex = 0;
+                    pointIndex + 1 < item.meshPoints.size();
+                    pointIndex += 2) {
+                    payload.vertices.push_back(
+                        item.meshPoints[pointIndex] + offsetX);
+                    payload.vertices.push_back(
+                        item.meshPoints[pointIndex + 1] + offsetY);
+                }
+            }
+            for(std::size_t colorIndex = 0;
+                colorIndex < item.packedColors.size(); ++colorIndex) {
+                const auto color = item.packedColors[colorIndex];
+                payload.color[colorIndex * 2] =
+                    static_cast<float>(color & 0xffffu);
+                payload.color[colorIndex * 2 + 1] =
+                    static_cast<float>((color >> 16u) & 0xffffu);
+            }
             bool createdOrChanged = false;
+            // layerId is allocated per node from this player tree's shared
+            // ResourceManager. Nested motion/particle child players inherit
+            // the parent's RM, so layerIds are unique and stable across the
+            // whole merged prepared list. nodeIndex is NOT: merged child
+            // items carry indices into the child player's node deque, which
+            // collide with parent node indices. Two different parts that
+            // shared a nodeIndex therefore evicted each other's SLA layer
+            // node every frame — the wrong raster stayed composited and the
+            // part order jumped during animations (layer mix-ups).
+            // stateLayerId == 0 was already routed to the reusable layer
+            // above, so the ordinal is always a nonzero RM-allocated id.
+            const auto cacheOrdinal = static_cast<tjs_uint32>(stateLayerId);
             tTJSVariant layerVariant = sla->resolveRenderLayerNodeLike_0x6C6B48(
-                static_cast<tjs_uint32>(stateLayerId), payload, slaObject,
-                createdOrChanged);
+                cacheOrdinal, payload, slaObject, createdOrChanged);
 
             auto *layerObject = tryResolveLayerDispatch(layerVariant);
             if(!layerObject) {
@@ -835,9 +887,19 @@ namespace motion {
         };
 
         int renderedItems = 0;
+        int changedItems = 0;
+        int skippedGate = 0;
+        int skippedClip = 0;
+        int skippedLayer = 0;
+        int skippedSource = 0;
+        int skippedSize = 0;
+        int skippedCopy = 0;
         for(auto *itemPtr : _runtime->preparedRenderItemsTopLevel) {
-            if(!itemPtr ||
-               !shouldRenderAccurateSlaItemLike_0x6C9CA8(*itemPtr)) {
+            if(!itemPtr) {
+                continue;
+            }
+            if(!shouldRenderAccurateSlaItemLike_0x6C9CA8(*itemPtr)) {
+                ++skippedGate;
                 continue;
             }
             auto &item = *itemPtr;
@@ -846,6 +908,19 @@ namespace motion {
             if(!computeAccurateSlaClipLike_0x6C9CA8(
                    item, static_cast<int>(canvasWidth),
                    static_cast<int>(canvasHeight), clip)) {
+                ++skippedClip;
+                if(skippedClip <= 6 && _runtime && !_runtime->slaFirstRenderLogged) {
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->warn(
+                            "sla.accurate.clip.skip path={} item={} "
+                            "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] "
+                            "viewport={} corners={} source={}",
+                            motionPath, item.nodeIndex, item.paintBox[0],
+                            item.paintBox[1], item.paintBox[2], item.paintBox[3],
+                            item.hasViewport ? 1 : 0, item.corners.size(),
+                            item.sourceKey);
+                    }
+                }
                 continue;
             }
 
@@ -854,14 +929,16 @@ namespace motion {
             const auto layerType =
                 accurateSlaLayerTypeLike_0x6C9CA8(item.blendMode);
             const auto itemLayerResult =
-                ensureAccurateSlaItemLayer(item, layerType);
+                ensureAccurateSlaItemLayer(item, layerType, clip);
             auto *itemLayerObject = itemLayerResult.object;
             auto *itemLayer = resolveNativeLayer(itemLayerObject);
             if(!itemLayerObject || !itemLayer) {
+                ++skippedLayer;
                 continue;
             }
 
             if(itemLayerResult.createdOrChanged) {
+                ++changedItems;
                 tTJSVariant sourceObject =
                     _runtime->sourceCacheNative->loadRenderSourceByName(
                         detail::widen(item.sourceKey), item.srcRef,
@@ -869,6 +946,7 @@ namespace motion {
                         targetLayerObject);
                 if(sourceObject.Type() != tvtObject ||
                    !sourceObject.AsObjectNoAddRef()) {
+                    ++skippedSource;
                     continue;
                 }
                 auto *sourceLayerObject = sourceObject.AsObjectNoAddRef();
@@ -879,6 +957,7 @@ namespace motion {
                    sourceImage->GetHeight() <= 0 ||
                    !setLayerSizeLike_0x6CE19C(itemLayerObject, clipWidth,
                                               clipHeight)) {
+                    ++skippedSize;
                     continue;
                 }
 
@@ -894,7 +973,7 @@ namespace motion {
                     const auto localPts = buildAffineTrianglePoints(
                         item.corners, offsetX, offsetY);
                     itemLayer->AffineCopy(localPts.data(), sourceImage,
-                                          sourceRect, stNearest, true);
+                                          sourceRect, stFastLinear, true);
                     copied = true;
                 } else if((item.meshType == 1 || item.meshType == 2) &&
                           item.meshDivX >= 2 && item.meshDivY >= 2 &&
@@ -903,10 +982,11 @@ namespace motion {
                         buildMeshPoints(item.meshPoints, offsetX, offsetY);
                     itemLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
                                         item.meshDivY, sourceImage, sourceRect,
-                                        stNearest, true);
+                                        stFastLinear, true);
                     copied = true;
                 }
                 if(!copied) {
+                    ++skippedCopy;
                     continue;
                 }
             }
@@ -936,6 +1016,87 @@ namespace motion {
             "targetLayer={} canvas={}x{} renderedItems={}",
             static_cast<const void *>(targetLayerObject), canvasWidth,
             canvasHeight, renderedItems);
+
+        // Rate-limited performance signal for real-game sampling. Only the
+        // slowest frames produce output, so a healthy scene stays quiet while
+        // a frozen entry or an animated dialogue scene reports its cost with
+        // enough breakdown to attribute it (raster vs geometry vs layers).
+        const double frameMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - renderStart)
+                .count();
+        if(_runtime && !_runtime->slaFirstRenderLogged) {
+            _runtime->slaFirstRenderLogged = true;
+            if(auto logger = spdlog::get("plugin")) {
+                logger->info(
+                    "sla.accurate.first path={} frameMs={:.1f} "
+                    "items={} rendered={} changed={} canvas={}x{} "
+                    "skip=[gate={},clip={},layer={},source={},size={},"
+                    "copy={}]",
+                    motionPath, frameMs,
+                    _runtime->preparedRenderItemsTopLevel.size(),
+                    renderedItems, changedItems, canvasWidth, canvasHeight,
+                    skippedGate, skippedClip, skippedLayer, skippedSource,
+                    skippedSize, skippedCopy);
+            }
+        }
+        if(frameMs > 100.0) {
+            static auto lastSlowLog = std::chrono::steady_clock::now();
+            const auto now = std::chrono::steady_clock::now();
+            if(now - lastSlowLog > std::chrono::seconds(2)) {
+                lastSlowLog = now;
+                if(auto logger = spdlog::get("plugin")) {
+                    logger->warn(
+                        "sla.accurate.slow path={} frameMs={:.1f} "
+                        "items={} rendered={} changed={} canvas={}x{}",
+                        motionPath, frameMs,
+                        _runtime->preparedRenderItemsTopLevel.size(),
+                        renderedItems, changedItems, canvasWidth, canvasHeight);
+                }
+            }
+        }
+
+        // Rolling aggregate so animated scenes report average/max cost
+        // instead of isolated spikes.
+        if(_runtime) {
+            const double nowSeconds = std::chrono::duration<double>(
+                                         std::chrono::steady_clock::now()
+                                             .time_since_epoch())
+                                         .count();
+            if(_runtime->slaStatsWindowStart == 0.0) {
+                _runtime->slaStatsWindowStart = nowSeconds;
+            }
+            ++_runtime->slaStatsFrames;
+            _runtime->slaStatsMsSum += frameMs;
+            _runtime->slaStatsMsMax = std::max(_runtime->slaStatsMsMax, frameMs);
+            _runtime->slaStatsRendered += renderedItems;
+            _runtime->slaStatsChanged += changedItems;
+            if(nowSeconds - _runtime->slaStatsWindowStart >= 3.0) {
+                const double windowMs =
+                    (nowSeconds - _runtime->slaStatsWindowStart) * 1000.0;
+                const int frames = _runtime->slaStatsFrames;
+                if(frames > 0) {
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->info(
+                            "sla.accurate.stats path={} windowMs={:.0f} "
+                            "frames={} avgMs={:.1f} maxMs={:.1f} "
+                            "avgRendered={:.1f} avgChanged={:.1f} canvas={}x{}",
+                            motionPath, windowMs, frames,
+                            _runtime->slaStatsMsSum / frames,
+                            _runtime->slaStatsMsMax,
+                            _runtime->slaStatsRendered / frames,
+                            _runtime->slaStatsChanged / frames, canvasWidth,
+                            canvasHeight);
+                    }
+                }
+                _runtime->slaStatsWindowStart = nowSeconds;
+                _runtime->slaStatsFrames = 0;
+                _runtime->slaStatsMsSum = 0.0;
+                _runtime->slaStatsMsMax = 0.0;
+                _runtime->slaStatsRendered = 0.0;
+                _runtime->slaStatsChanged = 0.0;
+            }
+        }
         return true;
     }
 
@@ -1548,12 +1709,12 @@ namespace motion {
         const auto motionPath = _runtime && _runtime->activeMotion
             ? _runtime->activeMotion->path
             : std::string{};
+        const auto postStart = std::chrono::steady_clock::now();
 
         if(!_needsInternalAssignImages) {
             detail::logoChainTraceLogf(motionPath, "post.sla.accurate",
                                        "0x6CE938", _clampedEvalTime,
                                        "needsInternalAssignImages=0");
-            return true;
         }
 
         int canvasWidth = 0;
@@ -1590,10 +1751,79 @@ namespace motion {
             return false;
         }
 
+        // The internal render layer is created invisible and nothing in the
+        // accurate-SLA path reads it back: the part layers composite directly
+        // into the target layer, and the ordinary-path assignImages flow does
+        // not run here. Copying the whole composed canvas into an invisible,
+        // unread layer was therefore dead work that cost one full-canvas
+        // composite plus copy per portrait per frame in the software
+        // renderer. Skip it while the layer stays hidden.
+        if(auto *internalLayer = resolveNativeLayer(internalLayerObject);
+           internalLayer && !internalLayer->GetVisible()) {
+            detail::logoChainTraceLogf(motionPath, "post.sla.accurate.skip",
+                                       "0x6CE938", _clampedEvalTime,
+                                       "hidden-internal-layer");
+            // Rate-limited composite probe: one piledCopy per ~3s measures
+            // what the engine pays to composite all part children into the
+            // target canvas. The copy itself is discarded (layer invisible).
+            // The game can legitimately draw while the target layer has no
+            // image yet (mid-transition), and PiledCopy throws on either
+            // side lacking an image — the probe must never propagate that.
+            static auto lastCompositeProbe =
+                std::chrono::steady_clock::now();
+            const auto probeNow = std::chrono::steady_clock::now();
+            if(probeNow - lastCompositeProbe > std::chrono::seconds(3)) {
+                lastCompositeProbe = probeNow;
+                auto *targetLayer = resolveNativeLayer(targetLayerObject);
+                if(targetLayer && targetLayer->GetHasImage() &&
+                   targetLayer->GetMainImage() && internalLayer &&
+                   internalLayer->GetHasImage() &&
+                   internalLayer->GetMainImage()) {
+                    const auto probeStart = std::chrono::steady_clock::now();
+                    try {
+                        piledCopyLayerLike_0x6CE938(internalLayerObject,
+                                                    targetLayerObject,
+                                                    canvasWidth, canvasHeight);
+                    } catch(...) {
+                        // Probe only; ignore engine-state surprises.
+                    }
+                    const double compositeMs =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - probeStart)
+                            .count();
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->info(
+                            "sla.accurate.composite.ms path={} ms={:.1f} "
+                            "canvas={}x{}",
+                            motionPath, compositeMs, canvasWidth,
+                            canvasHeight);
+                    }
+                }
+            }
+            return true;
+        }
+
         try {
             const bool ok = piledCopyLayerLike_0x6CE938(
                 internalLayerObject, targetLayerObject, canvasWidth,
                 canvasHeight);
+            const double postMs =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - postStart)
+                    .count();
+            if(postMs > 10.0) {
+                static auto lastPostLog = std::chrono::steady_clock::now();
+                const auto now = std::chrono::steady_clock::now();
+                if(now - lastPostLog > std::chrono::seconds(2)) {
+                    lastPostLog = now;
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->warn(
+                            "sla.accurate.post.slow path={} postMs={:.1f} "
+                            "canvas={}x{}",
+                            motionPath, postMs, canvasWidth, canvasHeight);
+                    }
+                }
+            }
             detail::logoChainTraceCheck(
                 motionPath, "post.sla.accurate", "0x6CE938", _clampedEvalTime,
                 fmt::format("internalLayer.piledCopy(0,0,target,0,0,{},{})",

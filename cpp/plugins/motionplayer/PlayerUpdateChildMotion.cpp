@@ -662,10 +662,8 @@ namespace motion {
                 if(emoteLike) {
                     child._clampedEvalTime = 0.0;
                     child.frameProgress(0.0);
-                    child.updateLayers();
                 } else if(runChildStep) {
                     child.frameProgress(_frameLastTime);
-                    child.updateLayers();
                 }
             }
         }

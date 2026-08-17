@@ -149,7 +149,15 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
         LOGGER->debug("ResourceManager::load emote/psb: {}", rawPath);
     }
 
+    const auto loadStart = std::chrono::steady_clock::now();
     const auto loaded = detail::loadPSBVariant(path, _decryptSeed);
+    const double loadMs = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - loadStart)
+                              .count();
+    if(loadMs > 100.0) {
+        LOGGER->warn("ResourceManager::load slow path={} ms={:.1f}", rawPath,
+                     loadMs);
+    }
     if(loaded.Type() != tvtObject || !_state) {
         if(loaded.Type() == tvtVoid) {
             LOGGER->warn("ResourceManager::load({}) failed", rawPath);
