@@ -21,3 +21,6 @@ __pycache__/
 
 # Local closed-source research input. Never commit game archives or vendor DLLs.
 cpp/plugins/motionplayer/origin/
+
+# Local runtime console output from manual plugin smokes
+tests/test_files/savedata/
