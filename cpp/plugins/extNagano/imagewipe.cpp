@@ -76,19 +76,21 @@ protected:
 	tjs_int RuleHeight;               // ルール画像高
 	tjs_int *RuleEdge;                // 行ごとの切り替えエッジ (+0x30, size=Height)
 
-	void Setup(); // RuleEdge を構築 (元 FUN_100070a0)
+	void Setup(pluginSafety::OperationBudget &budget); // RuleEdge を構築 (元 FUN_100070a0)
 
 public:
 	tTVPImageWipeTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-			iTVPScanLineProvider *rule, tjs_int dir)
+			iTVPScanLineProvider *rule, tjs_int dir,
+			pluginSafety::OperationBudget &budget)
 		: StartTick(0), Time(time), Width(width), Height(height),
 		  Elapsed(0), Threshold(0), Rule(rule), Dir(dir), First(true),
 		  FrameCount(0), RuleWidth(0), RuleHeight(0), RuleEdge(NULL)
 	{
 		RefCount = 1;
 		if(Rule) Rule->AddRef();
-		Setup();
+		Setup(budget);
 	}
+	bool IsValid() const { return RuleEdge != nullptr; }
 	virtual ~tTVPImageWipeTransHandler()
 	{
 		if(RuleEdge) delete[] RuleEdge;
@@ -114,11 +116,13 @@ public:
 	}
 };
 //---------------------------------------------------------------------------
-void tTVPImageWipeTransHandler::Setup()
+void tTVPImageWipeTransHandler::Setup(pluginSafety::OperationBudget &budget)
 {
 	// ルール画像の各行について「アルファ(MSB) が 0xf0 を超える一番右の列」を
 	// その行の切り替えエッジとする。存在しなければ幅/2。(元 FUN_100070a0)
-	RuleEdge = new tjs_int[Height > 0 ? Height : 1];
+	RuleEdge = extNagano::AllocateArray<tjs_int>(
+		static_cast<size_t>(Height > 0 ? Height : 1), budget);
+	if(!RuleEdge) return;
 
 	RuleWidth = 0;
 	RuleHeight = 0;
@@ -166,8 +170,9 @@ tjs_error TJS_INTF_METHOD tTVPImageWipeTransHandler::StartProcess(tjs_uint64 tic
 	// 左へずらす。dir0 は経過に従い増加、dir1 は減少 (左右反転)。
 	//   dir0: elapsed=0 で -RuleWidth, elapsed=Time で Width
 	//   dir1: elapsed=0 で  Width,     elapsed=Time で -RuleWidth
-	tjs_int64 span = (tjs_int64)(Width + RuleWidth);
-	tjs_int64 num = (Dir == 0) ? (tjs_int64)elapsed : (tjs_int64)(Time - elapsed);
+	tjs_int64 span = static_cast<tjs_int64>(Width) + static_cast<tjs_int64>(RuleWidth);
+	tjs_int64 num = (Dir == 0) ? static_cast<tjs_int64>(elapsed) :
+		static_cast<tjs_int64>(Time) - static_cast<tjs_int64>(elapsed);
 	Threshold = (tjs_int)(span * num / (tjs_int64)Time) - RuleWidth;
 
 	return TJS_S_TRUE;
@@ -301,10 +306,21 @@ public:
 		tjs_int dir = 0;
 		tTJSVariant dirvar;
 		if(TJS_SUCCEEDED(options->GetValue(TJS_W("dir"), &dirvar)) &&
-		   dirvar.Type() != tvtVoid)
-			dir = (tjs_int)(tjs_int64)dirvar;
+		   dirvar.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(dirvar, 0, 1);
+			if(!value) { scpro->Release(); return TJS_E_FAIL; }
+			dir = static_cast<tjs_int>(value.value);
+		}
 
-		*handler = new tTVPImageWipeTransHandler(time, src1w, src1h, scpro, dir);
+		pluginSafety::OperationBudget budget;
+		auto *created = new(std::nothrow) tTVPImageWipeTransHandler(
+			time, src1w, src1h, scpro, dir, budget);
+		if(!created || !created->IsValid()) {
+			delete created;
+			scpro->Release();
+			return TJS_E_FAIL;
+		}
+		*handler = created;
 		scpro->Release(); // ハンドラ側で AddRef 済 (元コードと同じ)
 		return TJS_S_OK;
 	}

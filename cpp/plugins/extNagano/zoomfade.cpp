@@ -54,7 +54,7 @@ protected:
 
 public:
 	tTVPZoomFadeTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-			tjs_int zoom1, tjs_int zoom2)
+			tjs_int zoom1, tjs_int zoom2, pluginSafety::OperationBudget &budget)
 		: StartTick(0), Time(time), CurElapsed(0), Width(width), Height(height),
 		  Zoom1(zoom1 / 100.0), Zoom2(zoom2 / 100.0), Phase(0),
 		  SrcScale(1.0), DestScale(1.0), First(true),
@@ -64,10 +64,11 @@ public:
 		// 列サンプルマップを確保 (FUN_10019090 の this+0x54 / this+0x58)
 		if(Width > 0)
 		{
-			XMap1 = new tjs_int[Width];
-			XMap2 = new tjs_int[Width];
+			XMap1 = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(Width), budget);
+			XMap2 = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(Width), budget);
 		}
 	}
+	bool IsValid() const { return XMap1 && XMap2; }
 	virtual ~tTVPZoomFadeTransHandler()
 	{
 		if(XMap1) delete [] XMap1;
@@ -255,10 +256,9 @@ public:
 		tTJSVariant tmp;
 
 		// time は必須
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// zoom1 / zoom2 は任意。既定値は元DLL より zoom1=100(%), zoom2=200(%)。
 		tjs_int zoom1 = 100;  // 元画像の目標ズーム値 (FUN_10019190 の 0x64)
@@ -268,7 +268,11 @@ public:
 		if(TJS_SUCCEEDED(options->GetValue(TJS_W("zoom2"), &tmp)) && tmp.Type() != tvtVoid)
 			zoom2 = (tjs_int)(tjs_int64)tmp;
 
-		*handler = new tTVPZoomFadeTransHandler(time, src1w, src1h, zoom1, zoom2);
+		pluginSafety::OperationBudget budget;
+		auto *created = new(std::nothrow) tTVPZoomFadeTransHandler(
+			time, src1w, src1h, zoom1, zoom2, budget);
+		if(!created || !created->IsValid()) { delete created; return TJS_E_FAIL; }
+		*handler = created;
 		return TJS_S_OK;
 	}
 

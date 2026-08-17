@@ -1,5 +1,7 @@
 #include <math.h>
 #include <stdlib.h>
+#include <algorithm>
+#include <memory>
 #include "multiripple.h"
 #include "common.h"
 
@@ -65,14 +67,15 @@ public:
 	tjs_int Height;
 	tjs_uint16 *Map;
 
-	tTVPMRDistMap(tjs_int width, tjs_int height, float roundness)
+	tTVPMRDistMap(tjs_int width, tjs_int height, float roundness,
+		const pluginSafety::ValidatedAllocation &allocation)
 	{
 		Width = width;
 		Height = height;
 		Map = 0;
 		if(!extNagano::CheckImageSize(width, height))
 			return;
-		Map = new tjs_uint16[(size_t)width * (size_t)height];
+		Map = new tjs_uint16[allocation.bytes() / sizeof(tjs_uint16)];
 		tjs_uint16 *p = Map;
 		for(tjs_int y = 0; y < height; y++)
 		{
@@ -129,13 +132,19 @@ public:
 	tjs_int Len;
 
 	tTVPMRDriftTable(tjs_int len, tjs_int travel, tjs_int rwidth,
-		tjs_int maxdrift, tjs_int blendunit)
+		tjs_int maxdrift, tjs_int blendunit,
+		const pluginSafety::ValidatedAllocation &waveAllocation,
+		const pluginSafety::ValidatedAllocation &blendAllocation)
 	{
 		if(len < travel) len = travel;
 		if(len < 1) len = 1;
 		Len = len;
-		A = new tjs_int[len];
-		B = new tjs_int[len];
+		std::unique_ptr<tjs_int[]> wave(
+			new tjs_int[waveAllocation.bytes() / sizeof(tjs_int)]);
+		std::unique_ptr<tjs_int[]> blend(
+			new tjs_int[blendAllocation.bytes() / sizeof(tjs_int)]);
+		A = wave.get();
+		B = blend.get();
 		double rcp_rw = (rwidth > 0) ? (1.0 / (double)rwidth) : 0.0;
 		for(tjs_int i = 0; i < len; i++)
 		{
@@ -155,6 +164,8 @@ public:
 				B[i] = blendunit;
 			}
 		}
+		wave.release();
+		blend.release();
 	}
 	~tTVPMRDriftTable()
 	{
@@ -210,12 +221,25 @@ protected:
 	tTVPMRDistMap    *DistMap;
 	tTVPMRDriftTable *DriftTable;
 	tTVPMRRipple     *Ripples;
+	const tjs_uint32 **S1Rows;
+	const tjs_uint32 **S2Rows;
 
 public:
 	tTVPMultiRippleTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
 		tjs_int count, tjs_int rwidth, tjs_int wavecount, tjs_int maxdrift,
-		float roundness, double delaylast)
+		tjs_int rippleTravel, tjs_int driftlen, float roundness, double delaylast,
+		const pluginSafety::ValidatedAllocation &distMapAllocation,
+		const pluginSafety::ValidatedAllocation &waveAllocation,
+		const pluginSafety::ValidatedAllocation &blendAllocation,
+		const pluginSafety::ValidatedAllocation &rippleAllocation,
+		const pluginSafety::ValidatedAllocation &firstRowCacheAllocation,
+		const pluginSafety::ValidatedAllocation &secondRowCacheAllocation)
 	{
+		DistMap = nullptr;
+		DriftTable = nullptr;
+		Ripples = nullptr;
+		S1Rows = nullptr;
+		S2Rows = nullptr;
 		RefCount = 1;
 		First = true;
 		FrameCount = 0;
@@ -235,17 +259,28 @@ public:
 		if(wavecount < 1) wavecount = 1;
 		if(maxdrift < 0) maxdrift = 0;
 		MaxDrift = maxdrift;
-		RippleTravel = rwidth * wavecount;               // param_1[0x13]
+		RippleTravel = rippleTravel;                     // param_1[0x13]
 		BlendUnit = (tjs_int)(0x2fd / (tjs_int64)Count);  // param_1[0x11] = 765/count
 		MaxDist = (tjs_int)(sqrt((double)width * width +
 			(double)height * height) + 0.5);              // param_1[0x10]
 
 		// テーブル生成
-		DistMap = new tTVPMRDistMap(width, height, roundness);
-		tjs_int driftlen = MaxDist * 2;                   // FUN_100160d0: max(2*MaxDist, Travel)
-		DriftTable = new tTVPMRDriftTable(driftlen, RippleTravel, rwidth, maxdrift, BlendUnit);
-
-		Ripples = new tTVPMRRipple[Count];
+		std::unique_ptr<tTVPMRDistMap> distMap(
+			new tTVPMRDistMap(width, height, roundness, distMapAllocation));
+		std::unique_ptr<tTVPMRDriftTable> driftTable(
+			new tTVPMRDriftTable(driftlen, RippleTravel, rwidth,
+				maxdrift, BlendUnit, waveAllocation, blendAllocation));
+		std::unique_ptr<tTVPMRRipple[]> ripples(
+			new tTVPMRRipple[rippleAllocation.bytes() / sizeof(tTVPMRRipple)]);
+		std::unique_ptr<const tjs_uint32 *[]> firstRows(
+			new const tjs_uint32*[firstRowCacheAllocation.bytes() / sizeof(tjs_uint32 *)]);
+		std::unique_ptr<const tjs_uint32 *[]> secondRows(
+			new const tjs_uint32*[secondRowCacheAllocation.bytes() / sizeof(tjs_uint32 *)]);
+		DistMap = distMap.release();
+		DriftTable = driftTable.release();
+		Ripples = ripples.release();
+		S1Rows = firstRows.release();
+		S2Rows = secondRows.release();
 
 		BuildRipples(delaylast);
 	}
@@ -255,6 +290,8 @@ public:
 		if(DistMap)    delete DistMap;
 		if(DriftTable) delete DriftTable;
 		if(Ripples)    delete [] Ripples;
+		if(S1Rows)     delete [] S1Rows;
+		if(S2Rows)     delete [] S2Rows;
 	}
 
 	tjs_error TJS_INTF_METHOD AddRef()  { RefCount++; return TJS_S_OK; }
@@ -290,7 +327,7 @@ void tTVPMultiRippleTransHandler::BuildRipples(double delaylast)
 	if(Count < 2)
 	{
 		// 単一波源 ( 中央、遅延なし )
-		tjs_int speed = (tjs_int)(((tjs_int64)(MaxDist + RippleTravel) * 0x400) / (tjs_int64)Time);
+		tjs_int speed = (tjs_int)(((tjs_int64)MaxDist + (tjs_int64)RippleTravel) * 0x400 / (tjs_int64)Time);
 		if(speed < 1) speed = 1;
 		tjs_int dirval = DistMap->MaxCornerDist(cx, cy);
 		tTVPMRRipple &r = Ripples[0];
@@ -299,7 +336,7 @@ void tTVPMultiRippleTransHandler::BuildRipples(double delaylast)
 		r.Phase     = 0;
 		r.Speed     = speed;
 		r.StartTime = 0;
-		r.Duration  = (tjs_int)(((tjs_int64)(dirval + RippleTravel) * 0x400) / (tjs_int64)speed);
+		r.Duration  = (tjs_int)(((tjs_int64)dirval + (tjs_int64)RippleTravel) * 0x400 / (tjs_int64)speed);
 		r.EndTime   = r.Duration;
 		r.Drift     = 0;
 		r.State     = 0;
@@ -307,7 +344,7 @@ void tTVPMultiRippleTransHandler::BuildRipples(double delaylast)
 	}
 
 	// 複数波源: 速度は単一時の 2 倍 ( time/2 で割る )
-	tjs_int speed = (tjs_int)(((tjs_int64)(MaxDist + RippleTravel) * 0x400) / (tjs_int64)(Time >> 1));
+	tjs_int speed = (tjs_int)(((tjs_int64)MaxDist + (tjs_int64)RippleTravel) * 0x400 / (tjs_int64)(Time >> 1));
 	if(speed < 1) speed = 1;
 	tjs_int last = Count - 1;
 
@@ -319,7 +356,7 @@ void tTVPMultiRippleTransHandler::BuildRipples(double delaylast)
 		r.Phase    = 0;
 		r.Speed    = speed;
 		tjs_int dirval = DistMap->MaxCornerDist(cx, cy);
-		r.Duration = (tjs_int)(((tjs_int64)(dirval + RippleTravel) * 0x400) / (tjs_int64)speed);
+		r.Duration = (tjs_int)(((tjs_int64)dirval + (tjs_int64)RippleTravel) * 0x400 / (tjs_int64)speed);
 		r.Drift    = 0;
 		r.State    = 0;
 	}
@@ -345,7 +382,7 @@ void tTVPMultiRippleTransHandler::BuildRipples(double delaylast)
 		r.Phase    = 0;
 		r.Speed    = speed;
 		tjs_int dirval = DistMap->MaxCornerDist(rx, ry);
-		r.Duration = (tjs_int)(((tjs_int64)(dirval + RippleTravel) * 0x400) / (tjs_int64)speed);
+		r.Duration = (tjs_int)(((tjs_int64)dirval + (tjs_int64)RippleTravel) * 0x400 / (tjs_int64)speed);
 		r.Drift    = 0;
 		r.State    = 0;
 	}
@@ -355,7 +392,7 @@ void tTVPMultiRippleTransHandler::BuildRipples(double delaylast)
 	tjs_int64 dtmin = (tjs_int64)Time;
 	for(tjs_int j = 1; j <= last - 1; j++)
 	{
-		tjs_int64 v = ((tjs_int64)Time - Ripples[j].Duration) / j;
+		tjs_int64 v = ((tjs_int64)Time - (tjs_int64)Ripples[j].Duration) / j;
 		if(v < dtmin) dtmin = v;
 	}
 	if(dtmin < 0) dtmin = 0;
@@ -389,8 +426,9 @@ tjs_error TJS_INTF_METHOD tTVPMultiRippleTransHandler::StartProcess(tjs_uint64 t
 		StartTick = tick;
 	}
 
-	CurTime = (tjs_int64)(tick - StartTick);
-	if(CurTime > (tjs_int64)Time) CurTime = (tjs_int64)Time; // クランプ
+	tjs_uint64 elapsed = tick >= StartTick ? tick - StartTick : 0;
+	if(elapsed > Time) elapsed = Time;
+	CurTime = static_cast<tjs_int64>(elapsed);
 
 	// 各波源の phase / drift / 状態を更新 ( FUN_10016940 )
 	FinishedCount = 0;
@@ -432,9 +470,7 @@ tjs_error TJS_INTF_METHOD tTVPMultiRippleTransHandler::Process(tTVPDivisibleData
 {
 	// 縦方向の変位を伴うため、変位先の行 (y+vdisp) のスキャンラインを
 	// 遅延取得してキャッシュする。
-	const tjs_uint32 **s1rows = new const tjs_uint32*[Height];
-	const tjs_uint32 **s2rows = new const tjs_uint32*[Height];
-	for(tjs_int i = 0; i < Height; i++) { s1rows[i] = 0; s2rows[i] = 0; }
+	for(tjs_int i = 0; i < Height; i++) { S1Rows[i] = 0; S2Rows[i] = 0; }
 
 	tjs_error result = TJS_S_OK;
 
@@ -477,19 +513,19 @@ tjs_error TJS_INTF_METHOD tTVPMultiRippleTransHandler::Process(tTVPDivisibleData
 			tjs_int row = y + vdisp;
 			if(row < 0) row = 0; else if(row >= Height) row = Height - 1;
 
-			const tjs_uint32 *s1 = s1rows[row];
+			const tjs_uint32 *s1 = S1Rows[row];
 			if(!s1)
 			{
 				if(TJS_FAILED(ExtNaganoGetSrcScanLine(data->Src1, row, (const void**)&s1)))
 				{ result = TJS_E_FAIL; break; }
-				s1rows[row] = s1;
+				S1Rows[row] = s1;
 			}
-			const tjs_uint32 *s2 = s2rows[row];
+			const tjs_uint32 *s2 = S2Rows[row];
 			if(!s2)
 			{
 				if(TJS_FAILED(ExtNaganoGetSrcScanLine(data->Src2, row, (const void**)&s2)))
 				{ result = TJS_E_FAIL; break; }
-				s2rows[row] = s2;
+				S2Rows[row] = s2;
 			}
 
 			tjs_int ratio = blend & 0xff;
@@ -502,8 +538,6 @@ tjs_error TJS_INTF_METHOD tTVPMultiRippleTransHandler::Process(tTVPDivisibleData
 		if(result != TJS_S_OK) break;
 	}
 
-	delete [] s1rows;
-	delete [] s2rows;
 	return result;
 }
 //---------------------------------------------------------------------------
@@ -545,10 +579,9 @@ public:
 
 		// time は必須
 		tTJSVariant tmp;
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// 以降は任意 ( 既定値は元 DLL では x87 経由で不明瞭なため妥当値を採用 )
 		tjs_int count     = 1;
@@ -558,23 +591,88 @@ public:
 		float   roundness = 1.0f;
 		double  delaylast = 1.0;
 
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("count"), &tmp)) && tmp.Type() != tvtVoid)
-			count = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("wavecount"), &tmp)) && tmp.Type() != tvtVoid)
-			wavecount = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("rwidth"), &tmp)) && tmp.Type() != tvtVoid)
-			rwidth = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("maxdrift"), &tmp)) && tmp.Type() != tvtVoid)
-			maxdrift = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("roundness"), &tmp)) && tmp.Type() != tvtVoid)
-			roundness = (float)(double)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("delaylast"), &tmp)) && tmp.Type() != tvtVoid)
-			delaylast = (double)tmp;
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("count"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 20);
+			if(!value) return TJS_E_FAIL;
+			count = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("wavecount"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 256);
+			if(!value) return TJS_E_FAIL;
+			wavecount = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("rwidth"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 4096);
+			if(!value) return TJS_E_FAIL;
+			rwidth = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("maxdrift"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 0, 4096);
+			if(!value) return TJS_E_FAIL;
+			maxdrift = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("roundness"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readFiniteReal(tmp, 0.01, 16.0);
+			if(!value) return TJS_E_FAIL;
+			roundness = static_cast<float>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("delaylast"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readFiniteReal(tmp, 0.0, 20.0);
+			if(!value) return TJS_E_FAIL;
+			delaylast = value.value;
+		}
 
-		if(roundness <= 0.0f) roundness = 1.0f;
+		const auto travel = pluginSafety::checkedMultiply(
+			static_cast<size_t>(rwidth), static_cast<size_t>(wavecount));
+		if(!travel || travel.value > static_cast<size_t>(std::numeric_limits<tjs_int>::max()))
+			return TJS_E_FAIL;
+		const double maxDistance = sqrt(static_cast<double>(src1w) * src1w +
+			static_cast<double>(src1h) * src1h) + 0.5;
+		if(maxDistance > static_cast<double>(std::numeric_limits<tjs_int>::max() / 2))
+			return TJS_E_FAIL;
+		const tjs_int maxDist = static_cast<tjs_int>(maxDistance);
+		const auto doubledDistance = pluginSafety::checkedMultiply(
+			static_cast<size_t>(maxDist), static_cast<size_t>(2));
+		if(!doubledDistance ||
+		   doubledDistance.value > static_cast<size_t>(std::numeric_limits<tjs_int>::max()))
+			return TJS_E_FAIL;
+		const tjs_int driftlen = std::max(static_cast<tjs_int>(doubledDistance.value),
+			static_cast<tjs_int>(travel.value));
 
-		*handler = new tTVPMultiRippleTransHandler(time, src1w, src1h,
-			count, rwidth, wavecount, maxdrift, roundness, delaylast);
+		pluginSafety::OperationBudget budget;
+		const auto pixelCount = pluginSafety::checkedMultiply(
+			static_cast<size_t>(src1w), static_cast<size_t>(src1h));
+		if(!pixelCount) return TJS_E_FAIL;
+		const auto distMapBytes = pluginSafety::checkedElementBytes(
+			pixelCount.value, sizeof(tjs_uint16));
+		const auto driftBytes = pluginSafety::checkedElementBytes(
+			static_cast<size_t>(driftlen), sizeof(tjs_int));
+		const auto rippleBytes = pluginSafety::checkedElementBytes(
+			static_cast<size_t>(count), sizeof(tTVPMRRipple));
+		const auto rowCacheBytes = pluginSafety::checkedElementBytes(
+			static_cast<size_t>(src1h), sizeof(const tjs_uint32 *));
+		if(!distMapBytes || !driftBytes || !rippleBytes || !rowCacheBytes)
+			return TJS_E_FAIL;
+		const auto distMapAllocation = pluginSafety::validateAllocationBudget(distMapBytes.value, budget);
+		const auto waveAllocation = pluginSafety::validateAllocationBudget(driftBytes.value, budget);
+		const auto blendAllocation = pluginSafety::validateAllocationBudget(driftBytes.value, budget);
+		const auto rippleAllocation = pluginSafety::validateAllocationBudget(rippleBytes.value, budget);
+		const auto firstRowCacheAllocation = pluginSafety::validateAllocationBudget(rowCacheBytes.value, budget);
+		const auto secondRowCacheAllocation = pluginSafety::validateAllocationBudget(rowCacheBytes.value, budget);
+		if(!distMapAllocation || !waveAllocation || !blendAllocation ||
+		   !rippleAllocation || !firstRowCacheAllocation || !secondRowCacheAllocation)
+			return TJS_E_FAIL;
+
+		try {
+			*handler = new tTVPMultiRippleTransHandler(time, src1w, src1h,
+				count, rwidth, wavecount, maxdrift,
+				static_cast<tjs_int>(travel.value), driftlen, roundness, delaylast,
+				distMapAllocation.value, waveAllocation.value, blendAllocation.value,
+				rippleAllocation.value, firstRowCacheAllocation.value,
+				secondRowCacheAllocation.value);
+		} catch(...) {
+			return TJS_E_FAIL;
+		}
 		return TJS_S_OK;
 	}
 

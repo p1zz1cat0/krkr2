@@ -20,6 +20,8 @@ extern "C" void TVPLayerExRasterPluginAnchor() {}
 extern "C" void TVPFstatPluginAnchor() {}
 extern "C" void TVPLayerExBtoAPluginAnchor() {}
 extern "C" void TVPPackinOnePluginAnchor() {}
+extern "C" void TVPExtransPluginAnchor() {}
 extern "C" void TVPAlphaMoviePluginAnchor() {}
 extern "C" void TVPWuVorbisPluginAnchor() {}
 extern "C" void TVPExtNaganoPluginAnchor() {}
+extern "C" void TVPMotionPlayerPluginAnchor() {}

@@ -37,14 +37,21 @@
 //        - Layer 缓冲 pitch 必须为正 (原版只查非零)。
 //        - zlib 展开失败时通过 plugin logger 输出警告 (行为仍回退为
 //          不透明 alpha=255，与原版一致)。
+//        - 帧长度与 stream 边界在扫描阶段校验，避免声明长度导致错误分配。
+//        - 熵流 EOF、marker、非法 Huffman code 和越界 ZRL 明确报告损坏。
+//        - blit 使用 64 位坐标计算，避免极端 Left/Top 绕回。
 //   其余算法 (Huffman 表、共享 DC 预测子、IDCT、YCbCr→BGRA、blit 裁剪)
-//   与上游逐行一致。
+//   与上游语义一致。
 //---------------------------------------------------------------------------
 
 #include "ncbind.hpp"
+#include "common/PluginSafety.h"
 
 #include <zlib.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <limits>
 #include <math.h>
 #include <string.h>
 #include <vector>
@@ -62,9 +69,22 @@ static inline tjs_uint32 rdU32(const tjs_uint8 *p) {
 
 static const tjs_uint32 AMV_MAGIC  = 0x4d504a41; // 'AJPM'
 static const tjs_uint32 FRAM_MAGIC = 0x4d415246; // 'FRAM'
+static const tjs_uint64 kMaxFramePayloadBytes = 64ull * 1024 * 1024;
+static const tjs_uint32 kMaxFrameCount = 1000000;
+static const tjs_int kMaxFrameDimension = 4096;
 
 static inline tjs_uint8 clip8(int v) {
 	return (tjs_uint8)(v < 0 ? 0 : (v > 255 ? 255 : v));
+}
+
+static inline tjs_uint8 clip8(double v) {
+	return (tjs_uint8)(v <= 0.0 ? 0 : (v >= 255.0 ? 255 : floor(v + 0.5)));
+}
+
+static void validateFrameDimensions(tjs_int fw, tjs_int fh) {
+	if (fw <= 0 || fh <= 0 || (fw & 0x0f) || (fh & 0x0f) ||
+		fw > kMaxFrameDimension || fh > kMaxFrameDimension)
+		TVPThrowExceptionMessage(TJS_W("File format error."));
 }
 
 //---------------------------------------------------------------------------
@@ -175,16 +195,20 @@ struct BitReader {
 	const tjs_uint8 *p, *end;
 	tjs_uint32 acc;   // 現在のバイトのビット
 	int cnt;          // 残りビット数
-	BitReader(const tjs_uint8 *d, size_t n) : p(d), end(d + n), acc(0), cnt(0) {}
+	bool failed;
+	BitReader(const tjs_uint8 *d, size_t n) : p(d), end(d + n), acc(0), cnt(0), failed(false) {}
 
 	inline int bit() {
 		if (cnt == 0) {
-			if (p >= end) return 0;         // データ枯渇時は 0 で埋める
+			if (p >= end) {
+				failed = true;
+				return 0;
+			}
 			tjs_uint8 b = *p++;
 			if (b == 0xFF) {
-				// 0xFF00 は literal 0xFF、0xFFxx(marker) は終端扱い
+				// 0xFF00 は literal 0xFF。その他の marker は壊れた熵流。
 				if (p < end && *p == 0x00) p++;
-				else { /* marker: これ以上読まない */ }
+				else failed = true;
 			}
 			acc = b; cnt = 8;
 		}
@@ -198,16 +222,21 @@ struct BitReader {
 		while (code > h.maxcode[l]) {
 			code = (code << 1) | bit();
 			l++;
-			if (l > 16) return 0;
+			if (l > 16) {
+				failed = true;
+				return 0;
+			}
 		}
 		return h.huffval[h.valptr[l] + code - h.mincode[l]];
 	}
+	inline bool hasFailed() const { return failed; }
+	inline void markFailed() { failed = true; }
 };
 
 static inline int receive_extend(BitReader &br, int s) {
 	if (s == 0) return 0;
 	int v = br.bits(s);
-	if (v < (1 << (s - 1))) v += (-1 << s) + 1;
+	if (v < (1 << (s - 1))) v -= (1 << s) - 1;
 	return v;
 }
 
@@ -226,11 +255,11 @@ static void initCos() {
 }
 
 // 自然順の逆量子化済み係数 coef[64] → 空間 8x8 (レベルシフト +128 / クランプ)
-static void idct8x8(const int *coef, tjs_uint8 *out /*[64] raster*/) {
+static void idct8x8(const int64_t *coef, tjs_uint8 *out /*[64] raster*/) {
 	double tmp[64];
 	// 行方向 (u について)
 	for (int v = 0; v < 8; v++) {
-		const int *row = coef + v * 8;
+		const int64_t *row = coef + v * 8;
 		for (int x = 0; x < 8; x++) {
 			double s = 0.0;
 			for (int u = 0; u < 8; u++) s += g_cosT[x][u] * row[u];
@@ -242,7 +271,7 @@ static void idct8x8(const int *coef, tjs_uint8 *out /*[64] raster*/) {
 		for (int y = 0; y < 8; y++) {
 			double s = 0.0;
 			for (int v = 0; v < 8; v++) s += g_cosT[y][v] * tmp[v * 8 + x];
-			out[y * 8 + x] = clip8((int)floor(s + 128.0 + 0.5));
+			out[y * 8 + x] = clip8(s + 128.0);
 		}
 	}
 }
@@ -258,8 +287,8 @@ struct Comp {
 };
 
 // 1 ブロック復号 → 自然順の逆量子化係数
-static void decodeBlock(BitReader &br, const Comp &c, int &pred, int *coef) {
-	memset(coef, 0, 64 * sizeof(int));
+static void decodeBlock(BitReader &br, const Comp &c, int64_t &pred, int64_t *coef) {
+	memset(coef, 0, 64 * sizeof(*coef));
 	int t = br.decode(*c.dc);
 	int diff = receive_extend(br, t);
 	pred += diff;
@@ -269,11 +298,21 @@ static void decodeBlock(BitReader &br, const Comp &c, int &pred, int *coef) {
 		int rs = br.decode(*c.ac);
 		int r = rs >> 4, s = rs & 15;
 		if (s == 0) {
-			if (r == 15) { k += 16; continue; }  // ZRL
+			if (r == 15) {
+				if (k + 16 > 63) {
+					br.markFailed();
+					return;
+				}
+				k += 16;
+				continue;
+			}  // ZRL
 			break;                               // EOB
 		}
 		k += r;
-		if (k > 63) break;
+		if (k > 63) {
+			br.markFailed();
+			return;
+		}
 		int val = receive_extend(br, s);
 		coef[ZIGZAG[k]] = val * c.quant[k];      // 逆量子化 (ともにジグザグ順)
 		k++;
@@ -301,8 +340,8 @@ static void decodeScan(const tjs_uint8 *entropy, size_t elen,
 	}
 
 	BitReader br(entropy, elen);
-	int pred[2] = { 0, 0 };
-	int coef[64];
+	int64_t pred[2] = { 0, 0 };
+	int64_t coef[64];
 	tjs_uint8 blk[64];
 
 	for (int my = 0; my < mcuH; my++) {
@@ -312,11 +351,14 @@ static void decodeScan(const tjs_uint8 *entropy, size_t elen,
 				for (int by = 0; by < c.v; by++) {
 					for (int bx = 0; bx < c.h; bx++) {
 						decodeBlock(br, c, pred[c.predIdx], coef);
+						if (br.hasFailed())
+							TVPThrowExceptionMessage(TJS_W("AlphaMovie: truncated entropy stream."));
 						idct8x8(coef, blk);
 						int px = (mx * c.h + bx) * 8;
 						int py = (my * c.v + by) * 8;
 						for (int r = 0; r < 8; r++)
-							memcpy(&c.plane[(size_t)(py + r) * c.pw + px], &blk[r * 8], 8);
+								memcpy(&c.plane[(static_cast<size_t>(py) + static_cast<size_t>(r)) *
+									c.pw + static_cast<size_t>(px)], &blk[r * 8], 8);
 					}
 				}
 			}
@@ -331,29 +373,15 @@ static void decodeScan(const tjs_uint8 *entropy, size_t elen,
 //   参考: src/plugins/layerExSave/utils.cpp
 //---------------------------------------------------------------------------
 static bool getLayerWriteBuffer(iTJSDispatch2 *lay, tjs_int &w, tjs_int &h,
-								tjs_uint8 *&ptr, tjs_int &pitch)
+									tjs_uint8 *&ptr, tjs_int &pitch)
 {
-	if (!lay || TJS_FAILED(lay->IsInstanceOf(0, 0, 0, TJS_W("Layer"), lay))) return false;
-
-	tTJSVariant val;
-	if (TJS_FAILED(lay->PropGet(0, TJS_W("hasImage"), 0, &val, lay)) || val.AsInteger() == 0)
-		return false;
-
-	val.Clear();
-	if (TJS_FAILED(lay->PropGet(0, TJS_W("imageWidth"), 0, &val, lay))) return false;
-	w = (tjs_int)val.AsInteger();
-	val.Clear();
-	if (TJS_FAILED(lay->PropGet(0, TJS_W("imageHeight"), 0, &val, lay))) return false;
-	h = (tjs_int)val.AsInteger();
-	val.Clear();
-	if (TJS_FAILED(lay->PropGet(0, TJS_W("mainImageBufferPitch"), 0, &val, lay))) return false;
-	pitch = (tjs_int)val.AsInteger();
-	val.Clear();
-	if (TJS_FAILED(lay->PropGet(0, TJS_W("mainImageBufferForWrite"), 0, &val, lay))) return false;
-	ptr = reinterpret_cast<tjs_uint8*>(val.AsInteger());
-
-	// 原版只检查 pitch != 0；负 pitch 会写出缓冲前界，此处直接拒绝。
-	return (ptr != 0 && w > 0 && h > 0 && pitch > 0);
+	const auto view = pluginSafety::LayerWriteView::create(lay);
+	if(!view) return false;
+	w = view.value.width();
+	h = view.value.height();
+	pitch = view.value.pitchBytes();
+	ptr = view.value.pixels();
+	return true;
 }
 
 //---------------------------------------------------------------------------
@@ -364,8 +392,6 @@ static bool getLayerWriteBuffer(iTJSDispatch2 *lay, tjs_int &w, tjs_int &h,
 //   color/colorLen   : 颜色熵 (JPEG 路径 4 成分 / zlib 路径 3 成分)
 //   fw/fh       : 帧矩形尺寸 (16 的倍数)
 //---------------------------------------------------------------------------
-static const tjs_int kMaxFrameDimension = 4096; // 单帧边上限，见文件头注释
-
 static void decodeFramePayloadToBGRA(
 	const tjs_uint8 quant[3][64],
 	const amvdec::HuffTable &hdcLuma,  const amvdec::HuffTable &hdcChroma,
@@ -376,8 +402,9 @@ static void decodeFramePayloadToBGRA(
 	tjs_int fw, tjs_int fh,
 	std::vector<tjs_uint8> &bgra)
 {
-	if (fw <= 0 || fh <= 0 || (fw & 0x0f) || (fh & 0x0f) ||
-		fw > kMaxFrameDimension || fh > kMaxFrameDimension)
+	validateFrameDimensions(fw, fh);
+	if ((alphaZLen && !alphaZ) || (colorLen && !color) ||
+		static_cast<tjs_uint64>(alphaZLen) + colorLen > kMaxFramePayloadBytes)
 		TVPThrowExceptionMessage(TJS_W("File format error."));
 
 	if (isZlibAlpha) {
@@ -471,7 +498,7 @@ static void decodeFramePayloadToBGRA(
 class AlphaMovie {
 public:
 	AlphaMovie()
-		: Stream(0), NumOfFrame(0), FirstFrameOfs(0),
+		: Stream(0), StreamSize(0), NumOfFrame(0), FirstFrameOfs(0),
 		  Width(0), Height(0), FpsScale(0), FpsRate(0),
 		  IsZlibAlpha(false), QuantSize(0),
 		  CurrentIndex(0), Left(0), Top(0), Loop(false),
@@ -493,10 +520,7 @@ public:
 
 	// amv を開く
 	void open(ttstr filename) {
-		closeStream();
-		Frames.clear();
-		CurrentIndex = 0;
-		Playing = false;
+		resetLoadedState();
 
 		Stream = TVPCreateStream(filename, TJS_BS_READ);
 		if (!Stream) TVPThrowExceptionMessage(TJS_W("AlphaMovie: cannot open storage."));
@@ -504,13 +528,18 @@ public:
 			parseHeader();
 			scanFrames();
 		} catch (...) {
-			closeStream();
+			resetLoadedState();
 			throw;
 		}
 	}
 
 	//----------------------------------------------------------- ヘッダ解析
 	void parseHeader() {
+		StreamSize = Stream->GetSize();
+		if (StreamSize < 0x28 ||
+			StreamSize > static_cast<tjs_uint64>(std::numeric_limits<tjs_int64>::max()))
+			TVPThrowExceptionMessage(TJS_W("Invalid file size."));
+
 		tjs_uint8 hdr[0x28];
 		seekRead(0, hdr, 0x28);
 
@@ -525,6 +554,8 @@ public:
 		if (QuantSize != 0x80 && QuantSize != 0xc0)
 			TVPThrowExceptionMessage(TJS_W("Invalid Quantaization table size."));
 		FirstFrameOfs = headerSize;
+		if (FirstFrameOfs > StreamSize)
+			TVPThrowExceptionMessage(TJS_W("Invalid header size."));
 
 		NumOfFrame = rdU32(hdr + 0x14);
 		if (NumOfFrame == 0) TVPThrowExceptionMessage(TJS_W("Not found frame in this file."));
@@ -549,6 +580,11 @@ public:
 			(!IsZlibAlpha && QuantSize != 0xc0))
 			TVPThrowExceptionMessage(TJS_W("Invalid Quantaization table size."));
 
+		const tjs_uint64 minFrameBytes = IsZlibAlpha ? 24 : 20;
+		if (NumOfFrame > kMaxFrameCount ||
+			NumOfFrame > (StreamSize - FirstFrameOfs) / minFrameBytes)
+			TVPThrowExceptionMessage(TJS_W("Invalid frame count."));
+
 		// 量子化テーブル (各 64 バイト, ジグザグ順で格納)
 		tjs_uint8 qbuf[0xc0];
 		seekRead(0x28, qbuf, QuantSize);
@@ -563,13 +599,17 @@ public:
 	//----------------------------------------------------------- フレーム走査
 	void scanFrames() {
 		Frames.clear();
-		tjs_int64 ofs = FirstFrameOfs;
+		Frames.reserve(NumOfFrame);
+		tjs_uint64 ofs = FirstFrameOfs;
+		const tjs_uint32 fixedFrameBytes = IsZlibAlpha ? 16 : 12;
 		for (tjs_uint32 i = 0; i < NumOfFrame; i++) {
-			tjs_uint8 fh[12];
-			seekRead(ofs, fh, 12);
+			tjs_uint8 fh[20];
+			seekRead(ofs, fh, 20);
 			if (rdU32(fh + 0) != FRAM_MAGIC)
 				TVPThrowExceptionMessage(TJS_W("File format error."));
 			tjs_uint32 size = rdU32(fh + 4);
+			validateFrameDimensions(rdU16(fh + 16), rdU16(fh + 18));
+			validateFrameChunk(ofs, size, fixedFrameBytes);
 			FrameInfo fi;
 			fi.offset = ofs;
 			fi.number = rdU32(fh + 8);
@@ -586,7 +626,7 @@ public:
 		if (index < 0 || index >= (tjs_int)Frames.size())
 			TVPThrowExceptionMessage(TJS_W("AlphaMovie: frame index out of range."));
 
-		tjs_int64 ofs = Frames[index].offset;
+		tjs_uint64 ofs = Frames[index].offset;
 		if (!IsZlibAlpha)
 			decodeJpegAlpha(ofs, bgra, fleft, ftop, fw, fh);
 		else
@@ -658,11 +698,12 @@ public:
 
 private:
 	//----------------------------------------------------------- フレーム情報
-	struct FrameInfo { tjs_int64 offset; tjs_uint32 number; };
+	struct FrameInfo { tjs_uint64 offset; tjs_uint32 number; };
 
 	tTJSBinaryStream *Stream;
+	tjs_uint64 StreamSize;
 	tjs_uint32 NumOfFrame;
-	tjs_int64  FirstFrameOfs;
+	tjs_uint64 FirstFrameOfs;
 	tjs_uint16 Width, Height;
 	tjs_uint32 FpsScale, FpsRate;
 	bool       IsZlibAlpha;
@@ -680,9 +721,41 @@ private:
 	ttstr    NextMovieFile;
 
 	//----------------------------------------------------------- ストリーム I/O
-	void seekRead(tjs_int64 ofs, tjs_uint8 *buf, tjs_uint len) {
+	void resetLoadedState() {
+		closeStream();
+		StreamSize = 0;
+		NumOfFrame = 0;
+		FirstFrameOfs = 0;
+		Width = Height = 0;
+		FpsScale = FpsRate = 0;
+		IsZlibAlpha = false;
+		QuantSize = 0;
+		memset(Quant, 0, sizeof(Quant));
+		Frames.clear();
+		CurrentIndex = 0;
+		Playing = false;
+	}
+
+	tjs_uint32 validateFrameChunk(tjs_uint64 ofs, tjs_uint32 size,
+							  tjs_uint32 fixedFrameBytes) const {
+		if (size < fixedFrameBytes)
+			TVPThrowExceptionMessage(TJS_W("File format error."));
+		const tjs_uint64 totalBytes = static_cast<tjs_uint64>(size) + 8;
+		if (ofs > StreamSize || totalBytes > StreamSize - ofs)
+			TVPThrowExceptionMessage(TJS_W("File format error."));
+		const tjs_uint64 payloadBytes = size - fixedFrameBytes;
+		if (payloadBytes > kMaxFramePayloadBytes)
+			TVPThrowExceptionMessage(TJS_W("AlphaMovie: frame payload too large."));
+		return static_cast<tjs_uint32>(payloadBytes);
+	}
+
+	void seekRead(tjs_uint64 ofs, tjs_uint8 *buf, tjs_uint len) {
 		if (!Stream) TVPThrowExceptionMessage(TJS_W("AlphaMovie: stream not opened."));
-		Stream->Seek(ofs, TJS_BS_SEEK_SET);
+		if (ofs > StreamSize || static_cast<tjs_uint64>(len) > StreamSize - ofs ||
+			ofs > static_cast<tjs_uint64>(std::numeric_limits<tjs_int64>::max()))
+			TVPThrowExceptionMessage(TJS_W("AlphaMovie: read outside storage."));
+		if (Stream->Seek(static_cast<tjs_int64>(ofs), TJS_BS_SEEK_SET) != ofs)
+			TVPThrowExceptionMessage(TJS_W("AlphaMovie: seek error."));
 		tjs_uint got = Stream->Read(buf, len);
 		if (got != len) TVPThrowExceptionMessage(TJS_W("AlphaMovie: read error."));
 	}
@@ -694,7 +767,7 @@ private:
 	//   Cb: h1v1 quant1 chroma / Cr: h1v1 quant1 chroma
 	//   Y : h2v2 quant0 luma   / A : h2v2 quant2 luma
 	//   DC 予測子: luma(Y,A 共有) と chroma(Cb,Cr 共有) の 2 個。
-	void decodeJpegAlpha(tjs_int64 ofs, std::vector<tjs_uint8> &bgra,
+	void decodeJpegAlpha(tjs_uint64 ofs, std::vector<tjs_uint8> &bgra,
 						 tjs_int &fleft, tjs_int &ftop, tjs_int &fw, tjs_int &fh)
 	{
 		tjs_uint8 fh20[20];
@@ -707,9 +780,7 @@ private:
 		fw    = rdU16(fh20 + 16);
 		fh    = rdU16(fh20 + 18);
 
-		// size 字段包含 frameNum..payload；payload = size - 12，防下溢
-		if (size < 12) TVPThrowExceptionMessage(TJS_W("File format error."));
-		tjs_uint payloadLen = size - 12;
+		tjs_uint payloadLen = validateFrameChunk(ofs, size, 12);
 		std::vector<tjs_uint8> entropy(payloadLen ? payloadLen : 1);
 		if (payloadLen) {
 			tjs_uint got = Stream->Read(&entropy[0], payloadLen);
@@ -726,7 +797,7 @@ private:
 	//   データ順は【alpha(zlib) が先 → color(JPEG) が後】(デコンパイル FUN_1800151a0)。
 	//     alpha zlib データ  : alphaZlibSize バイト → inflate で w*h の 8bit グレースケール
 	//     color エントロピー : (size - alphaZlibSize - 16) バイト、3 成分 (Cb,Cr,Y) 4:2:0
-	void decodeZlibAlpha(tjs_int64 ofs, std::vector<tjs_uint8> &bgra,
+	void decodeZlibAlpha(tjs_uint64 ofs, std::vector<tjs_uint8> &bgra,
 						 tjs_int &fleft, tjs_int &ftop, tjs_int &fw, tjs_int &fh)
 	{
 		tjs_uint8 fh24[24];
@@ -740,9 +811,8 @@ private:
 		fh    = rdU16(fh24 + 18);
 		tjs_uint32 alphaZlibLen  = rdU32(fh24 + 20);
 
-		// size 字段包含 frameNum..payload；payload = size - 16，
-		// alphaZlibLen 是其子区间，越界即数据损坏 (原版负向回绕后继续解码)。
-		if (size < 16 || alphaZlibLen > size - 16)
+		const tjs_uint32 payloadLen = validateFrameChunk(ofs, size, 16);
+		if (alphaZlibLen > payloadLen)
 			TVPThrowExceptionMessage(TJS_W("File format error."));
 
 		// alpha(zlib) が先
@@ -752,7 +822,7 @@ private:
 			if (got != alphaZlibLen) TVPThrowExceptionMessage(TJS_W("AlphaMovie: read error."));
 		}
 		// color(JPEG) が後 = size - alphaZlibSize - 16
-		tjs_uint colorSize = size - alphaZlibLen - 16;
+		tjs_uint colorSize = payloadLen - alphaZlibLen;
 		std::vector<tjs_uint8> color(colorSize ? colorSize : 1);
 		if (colorSize) {
 			tjs_uint got = Stream->Read(&color[0], colorSize);
@@ -776,21 +846,25 @@ private:
 		if (!getLayerWriteBuffer(layer, lw, lh, lbuf, pitch))
 			TVPThrowExceptionMessage(TJS_W("AlphaMovie: target must be a Layer with image."));
 
-		tjs_int dx0 = Left + fleft;
-		tjs_int dy0 = Top + ftop;
+		const tjs_int64 frameLeft = static_cast<tjs_int64>(Left) + fleft;
+		const tjs_int64 frameTop = static_cast<tjs_int64>(Top) + ftop;
+		const tjs_int64 frameRight = frameLeft + fw;
+		const tjs_int64 frameBottom = frameTop + fh;
+		const tjs_int64 dstLeft = std::max<tjs_int64>(0, frameLeft);
+		const tjs_int64 dstTop = std::max<tjs_int64>(0, frameTop);
+		const tjs_int64 dstRight = std::min<tjs_int64>(lw, frameRight);
+		const tjs_int64 dstBottom = std::min<tjs_int64>(lh, frameBottom);
+		if (dstLeft >= dstRight || dstTop >= dstBottom) return;
 
-		tjs_int sx = 0, sy = 0;
-		tjs_int cw = fw, ch = fh;
-		if (dx0 < 0) { sx = -dx0; cw += dx0; dx0 = 0; }
-		if (dy0 < 0) { sy = -dy0; ch += dy0; dy0 = 0; }
-		if (dx0 + cw > lw) cw = lw - dx0;
-		if (dy0 + ch > lh) ch = lh - dy0;
-		if (cw <= 0 || ch <= 0) return;
-
-		for (tjs_int y = 0; y < ch; y++) {
-			const tjs_uint8 *src = &bgra[(size_t)(sy + y) * fw * 4 + (size_t)sx * 4];
-			tjs_uint8 *dst = lbuf + (size_t)(dy0 + y) * pitch + (size_t)dx0 * 4;
-			memcpy(dst, src, (size_t)cw * 4);
+		const size_t srcX = static_cast<size_t>(dstLeft - frameLeft);
+		const size_t srcY = static_cast<size_t>(dstTop - frameTop);
+		const size_t copyWidth = static_cast<size_t>(dstRight - dstLeft);
+		const size_t copyHeight = static_cast<size_t>(dstBottom - dstTop);
+		for (size_t y = 0; y < copyHeight; y++) {
+			const tjs_uint8 *src = &bgra[(srcY + y) * static_cast<size_t>(fw) * 4 + srcX * 4];
+			tjs_uint8 *dst = lbuf + (static_cast<size_t>(dstTop) + y) * static_cast<size_t>(pitch) +
+				static_cast<size_t>(dstLeft) * 4;
+			memcpy(dst, src, copyWidth * 4);
 		}
 	}
 };

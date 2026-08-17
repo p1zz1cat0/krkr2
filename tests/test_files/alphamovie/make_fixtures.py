@@ -9,6 +9,7 @@
   sample_jpeg.amv    JPEG-alpha 路径 (flags=1, 3 张量化表, 2 帧)
   sample_zlib.amv    zlib-alpha 路径 (flags=2, 2 张量化表, 2 帧)
   sample_garbage.amv 非法文件（负向用例）
+  sample_oversized.amv 声明超大帧长度但文件很小（资源预算负向用例）
 """
 
 import struct
@@ -140,5 +141,10 @@ z1 = encode_frame_zlib(1, 2, -4, 16, 16, [0, 0, 0, 0], alpha1)
 
 # ---- 非法文件 ----
 (OUT / "sample_garbage.amv").write_bytes(b"this is not an amv file")
+
+# ---- 恶意长度声明：实际文件只有帧头，size 却接近 uint32 上限 ----
+oversized_frame = b"FRAM" + struct.pack("<IIhhHH", 0xffffffff, 0, 0, 0, 16, 16)
+(OUT / "sample_oversized.amv").write_bytes(
+    build_amv(1, [QUANT, QUANT, QUANT], [oversized_frame]))
 
 print("fixtures written")

@@ -1,8 +1,9 @@
 // AlphaMovie.dll 插件 smoke test
 // 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
 // 固件由 make_fixtures.py 合成（16x16，DC-only 帧）。
+Scripts.execStorage("../common/plugin_assert.tjs");
 function check(cond, msg) {
-    if (!cond) throw new Exception("AlphaMovie smoke failed: " + msg);
+    pluginAssertTrue(msg, cond);
 }
 
 // Plugins.link 的原生 API 返回 void，加载结果由导出的成员确认。
@@ -23,6 +24,12 @@ check(err != null, "missing file throws");
 err = null;
 try { am.open("sample_garbage.amv"); } catch (e) { err = e; }
 check(err != null, "garbage file throws");
+err = null;
+try { am.open("sample_oversized.amv"); } catch (e) { err = e; }
+check(err != null, "oversized declared frame throws");
+check(am.numOfFrame == 0 && am.screenWidth == 0 && am.screenHeight == 0 &&
+      am.FPSScale == 0 && am.FPSRate == 0,
+      "failed open clears loaded metadata");
 
 // 打开 JPEG-alpha 固件并验证头部属性
 am.open("sample_jpeg.amv");
@@ -55,6 +62,16 @@ am.loop = false;
 var m1 = am.showNextImage(lay);
 var m2 = am.showNextImage(lay);
 check(m1 == 1 && m2 == 1, "jpeg end hold");
+
+// 极端位置只应被裁剪掉，不能在 Left + frame offset 处发生整数溢出。
+am.frame = 0;
+am.left = 2147483647;
+am.top = 2147483647;
+check(am.showNextImage(lay) == 0, "positive extreme position clipped");
+am.frame = 0;
+am.left = -2147483647;
+am.top = -2147483647;
+check(am.showNextImage(lay) == 0, "negative extreme position clipped");
 
 // 播放控制
 check(!am.isPlaying(), "not playing initially");
@@ -109,4 +126,5 @@ check(am2.numOfFrame == 2, "second instance opens");
 am2.showNextImage(lay);
 invalidate am2;
 
+pluginSmokePass("AlphaMovie.dll");
 System.exit(0);

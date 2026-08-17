@@ -3,8 +3,9 @@
 // 断言两层契约：
 //   1. Plugins.link("wuvorbis.dll") 成功（旧游戏 system 脚本依赖此分支）。
 //   2. .ogg 播放由核心原生解码器承担：WaveSoundBuffer 真实打开并渲染固件。
+Scripts.execStorage("../common/plugin_assert.tjs");
 function check(cond, msg) {
-    if (!cond) throw new Exception("wuvorbis smoke failed: " + msg);
+    pluginAssertTrue(msg, cond);
 }
 
 // 模块链接（link 返回 void，失败时由后续断言与日志暴露）
@@ -39,4 +40,5 @@ check(err != null, "missing ogg rejected");
 
 invalidate wsb;
 
+pluginSmokePass("wuvorbis.dll");
 System.exit(0);

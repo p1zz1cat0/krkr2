@@ -13,6 +13,12 @@
 // 链接成功后 .ogg 的实际解码走核心原生解码器（优于旧版 patched libvorbis）。
 //
 // 注意：本模块不注册任何 TJS 可见类/函数；旧 wuvorbis 也没有 TJS 可见成员。
+// 原 DLL 另有 GetOptionDesc、wu_SetCPUType、wu_DetectCPU、wu_ScaleOutput、
+// Query_sizeof_OggVorbis_File 及 wu_ov_* 等宿主侧 ABI 导出；它们不是 TJS
+// 接口。当前 macOS runtime 使用静态链接的核心 VorbisWaveDecoder，不经过
+// DLL LoadLibrary/GetProcAddress，因此这里不提供这些导出，也不添加可能造成
+// 虚假兼容或 ABI 误用的空实现。若未来需要二进制宿主 ABI 兼容，应单独按完整
+// 签名、调用约定、结构体布局和生命周期实现并测试。
 //---------------------------------------------------------------------------
 
 #include "ncbind.hpp"

@@ -5,6 +5,7 @@ set(SOURCES
         getLangName-dll.cpp
         psbfile-dll.cpp
         shrinkCopy-dll.cpp
+        extrans-dll.cpp
         alphamovie-dll.cpp
         extNagano-dll.cpp
         plugin-safety-dll.cpp

@@ -237,8 +237,8 @@ TEST_CASE("AlphaMovie rejects invalid frame dimensions") {
                     eTJSError);
 }
 
-TEST_CASE("AlphaMovie truncated entropy terminates without crash") {
-    // 熵流只有 Cb 的半个块，解码器以 0 补位并终止
+TEST_CASE("AlphaMovie rejects truncated entropy") {
+	// 熵流只有 Cb 的半个块，必须报告损坏而不是用 0 补位生成伪像素。
     amvdec::HuffTable dcL, dcC, acL, acC;
     makeTables(dcL, dcC, acL, acC);
     uint8_t quant[3][64] = {};
@@ -246,9 +246,9 @@ TEST_CASE("AlphaMovie truncated entropy terminates without crash") {
         for (int i = 0; i < 64; i++) quant[t][i] = 16;
     const uint8_t tiny[] = { 0x00 };
     std::vector<uint8_t> bgra;
-    CHECK_NOTHROW(decodeFramePayloadToBGRA(quant, dcL, dcC, acL, acC, false,
-                                           nullptr, 0, tiny, 1, 16, 16, bgra));
-    CHECK(bgra.size() == (size_t)16 * 16 * 4);
+	CHECK_THROWS_AS(decodeFramePayloadToBGRA(quant, dcL, dcC, acL, acC, false,
+	                                         nullptr, 0, tiny, 1, 16, 16, bgra),
+	                eTJSError);
 }
 
 TEST_CASE("AlphaMovie corrupted zlib alpha falls back to opaque") {

@@ -1,7 +1,8 @@
 // shrinkCopy.dll 插件 smoke test
 // 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+Scripts.execStorage("../common/plugin_assert.tjs");
 function check(cond, msg) {
-    if (!cond) throw new Exception("shrinkCopy smoke failed: " + msg);
+    pluginAssertTrue(msg, cond);
 }
 
 // 在首次创建 Window/Layer 前加载，覆盖原生类惰性初始化场景。
@@ -28,4 +29,5 @@ dst2.setImageSize(1, 1);
 dst2.shrinkCopyFast(src, 3, 3);
 check(dst2.imageWidth == 3 && dst2.imageHeight == 3, "shrinkCopyFast resized to ceil(8/3)");
 
+pluginSmokePass("shrinkCopy.dll");
 System.exit(0);

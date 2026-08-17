@@ -71,8 +71,18 @@ public:
 	tRuleScanLineProvider(tjs_int w, tjs_int h)
 		: RefCount(1), W(w), H(h), Buf(0)
 	{
-		if(extNagano::CheckImageSize(w, h))
-			Buf = (tjs_uint32*)malloc(sizeof(tjs_uint32) * (size_t)w * (size_t)h);
+		if(!extNagano::CheckImageSize(w, h)) return;
+		pluginSafety::OperationBudget budget;
+		const auto pixels = pluginSafety::checkedMultiply(
+			static_cast<size_t>(w), static_cast<size_t>(h));
+		if(!pixels) return;
+		const auto bytes = pluginSafety::checkedElementBytes(
+			pixels.value, sizeof(tjs_uint32));
+		if(!bytes) return;
+		const auto allocation = pluginSafety::validateAllocationBudget(
+			bytes.value, budget);
+		if(allocation)
+			Buf = static_cast<tjs_uint32 *>(malloc(allocation.value.bytes()));
 	}
 	~tRuleScanLineProvider() { if(Buf) free(Buf); }
 
@@ -108,33 +118,20 @@ static tjs_error CreateRuleProvider(iTVPSimpleOptionProvider *options,
 	{
 		// --- レイヤ/ビットマップオブジェクト -------------------------------
 		iTJSDispatch2 *obj = rule.AsObjectNoAddRef();
-		if(!obj) return TJS_E_FAIL;
-
-		tTJSVariant val;
-		tjs_int rw = 0, rh = 0, pitch = 0;
-		const tjs_uint8 *buffer = 0;
-		if(TJS_FAILED(obj->PropGet(0, TJS_W("imageWidth"), 0, &val, obj))) return TJS_E_FAIL;
-		rw = (tjs_int)val;
-		if(TJS_FAILED(obj->PropGet(0, TJS_W("imageHeight"), 0, &val, obj))) return TJS_E_FAIL;
-		rh = (tjs_int)val;
-		if(TJS_FAILED(obj->PropGet(0, TJS_W("mainImageBufferPitch"), 0, &val, obj))) return TJS_E_FAIL;
-		pitch = (tjs_int)val;
-		if(TJS_FAILED(obj->PropGet(0, TJS_W("mainImageBuffer"), 0, &val, obj))) return TJS_E_FAIL;
-		buffer = reinterpret_cast<const tjs_uint8 *>(
-			static_cast<tjs_intptr_t>((tjs_int64)val));
-		if(!extNagano::CheckImageSize(rw, rh) || !buffer) return TJS_E_FAIL;
-		const tjs_int64 minAbsPitch = static_cast<tjs_int64>(rw) * 4;
-		if(pitch == 0 ||
-		   (pitch > 0 ? static_cast<tjs_int64>(pitch)
-		              : -static_cast<tjs_int64>(pitch)) < minAbsPitch)
-			return TJS_E_FAIL;
+		const auto view = pluginSafety::LayerReadView::create(obj);
+		if(!view) return TJS_E_FAIL;
+		const tjs_int rw = view.value.width();
+		const tjs_int rh = view.value.height();
 
 		tRuleScanLineProvider *p = new tRuleScanLineProvider(rw, rh);
 		if(!p->GetBuffer()) { p->Release(); return TJS_E_FAIL; }
 		tjs_uint32 *dst = p->GetBuffer();
 		for(tjs_int y = 0; y < rh; y++)
 		{
-			const tjs_uint32 *src = reinterpret_cast<const tjs_uint32 *>(buffer + y * pitch);
+			const auto row = view.value.row(y);
+			if(!row) { p->Release(); return TJS_E_FAIL; }
+			const tjs_uint32 *src =
+				reinterpret_cast<const tjs_uint32 *>(row.value);
 			memcpy(dst + y * rw, src, sizeof(tjs_uint32) * rw);
 		}
 		*out = p;
@@ -168,10 +165,12 @@ static tjs_error CreateRuleProvider(iTVPSimpleOptionProvider *options,
 		for(tjs_int y = 0; y < rh; y++)
 		{
 			const void *src = 0;
-			if(TJS_SUCCEEDED(ExtNaganoGetSrcScanLine(loaded, y, &src)) && src)
-				memcpy(dst + y * rw, src, sizeof(tjs_uint32) * rw);
-			else
-				memset(dst + y * rw, 0, sizeof(tjs_uint32) * rw);
+			if(TJS_FAILED(ExtNaganoGetSrcScanLine(loaded, y, &src)) || !src) {
+				p->Release();
+				loaded->Release();
+				return TJS_E_FAIL;
+			}
+			memcpy(dst + y * rw, src, sizeof(tjs_uint32) * rw);
 		}
 		loaded->Release();
 		*out = p;

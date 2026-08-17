@@ -14,6 +14,7 @@
 #include "LayerBitmapIntf.h"
 #include "MsgIntf.h"
 #include "DebugIntf.h"
+#include "common/PluginSafety.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -64,9 +65,21 @@ namespace extNagano {
 constexpr tjs_int kMaxDimension = 4096;
 constexpr tjs_int64 kMaxPixels = 4096LL * 4096LL;
 constexpr tjs_int kMaxMorphElements = 256 * 6; // official triangle cap is 0x100
+constexpr tjs_int kMaxMorphCoordinate = kMaxDimension * 4;
 
 inline void LogError(const char *msg) {
 	TVPAddImportantLog(ttstr(TJS_W("[extNagano] ")) + ttstr(msg));
+}
+
+template <typename T>
+inline T *AllocateArray(size_t count, pluginSafety::OperationBudget &budget) noexcept {
+	const auto bytes = pluginSafety::checkedElementBytes(count, sizeof(T));
+	if(!bytes)
+		return nullptr;
+	const auto allocation = pluginSafety::validateAllocationBudget(bytes.value, budget);
+	if(!allocation)
+		return nullptr;
+	return new(std::nothrow) T[allocation.value.elementCount()];
 }
 
 inline bool CheckImageSize(tjs_uint w, tjs_uint h) {
@@ -97,12 +110,12 @@ inline tjs_uint64 ReadRequiredTime(iTVPSimpleOptionProvider *options,
 		return 2;
 	if(tmp.Type() == tvtVoid)
 		return 2;
-	const tjs_int64 raw = static_cast<tjs_int64>(tmp);
+	const auto duration = pluginSafety::readDuration(tmp);
+	if(!duration)
+		return 2;
 	if(ok)
 		*ok = true;
-	if(raw < 2)
-		return 2;
-	return static_cast<tjs_uint64>(raw);
+	return duration.value;
 }
 
 inline tjs_error GetSrcScanLine(iTVPScanLineProvider *provider, tjs_int line,
@@ -148,10 +161,8 @@ SnapshotPixels(const tjs_uint8 *buffer, tjs_int width, tjs_int height,
                tjs_int pitch) {
 	if(!buffer || !CheckImageSize(width, height))
 		return nullptr;
-	const tjs_int64 minAbsPitch = static_cast<tjs_int64>(width) * 4;
-	if(pitch == 0 ||
-	   (pitch > 0 ? static_cast<tjs_int64>(pitch)
-	              : -static_cast<tjs_int64>(pitch)) < minAbsPitch) {
+	const auto layout = pluginSafety::validateLayerLayout(width, height, pitch);
+	if(!layout) {
 		LogError("rule image pitch is too small");
 		return nullptr;
 	}
@@ -161,8 +172,8 @@ SnapshotPixels(const tjs_uint8 *buffer, tjs_int width, tjs_int height,
 		bitmap = new tTVPBaseTexture(static_cast<tjs_uint>(width),
 		                             static_cast<tjs_uint>(height));
 		for(tjs_int y = 0; y < height; ++y) {
-			const tjs_uint8 *src =
-			    buffer + static_cast<tjs_int64>(y) * pitch;
+			const tjs_uint8 *src = buffer + static_cast<size_t>(y) *
+			                                      static_cast<size_t>(pitch);
 			void *dst = bitmap->GetScanLineForWrite(static_cast<tjs_uint>(y));
 			if(!dst) {
 				delete bitmap;
@@ -180,34 +191,13 @@ SnapshotPixels(const tjs_uint8 *buffer, tjs_int width, tjs_int height,
 
 inline iTVPScanLineProvider *
 SnapshotLayerObject(iTJSDispatch2 *obj) {
-	if(!obj)
-		return nullptr;
-	if(TJS_FAILED(obj->IsInstanceOf(0, nullptr, nullptr, TJS_W("Layer"), obj))) {
+	const auto view = pluginSafety::LayerReadView::create(obj);
+	if(!view) {
 		LogError("rule object is not a Layer");
 		return nullptr;
 	}
-
-	tTJSVariant val;
-	tjs_int width = 0, height = 0, pitch = 0;
-	if(TJS_FAILED(obj->PropGet(0, TJS_W("imageWidth"), nullptr, &val, obj)))
-		return nullptr;
-	width = static_cast<tjs_int>(static_cast<tjs_int64>(val));
-	if(TJS_FAILED(obj->PropGet(0, TJS_W("imageHeight"), nullptr, &val, obj)))
-		return nullptr;
-	height = static_cast<tjs_int>(static_cast<tjs_int64>(val));
-	if(TJS_FAILED(obj->PropGet(0, TJS_W("mainImageBufferPitch"), nullptr, &val,
-	                           obj)))
-		return nullptr;
-	pitch = static_cast<tjs_int>(static_cast<tjs_int64>(val));
-	if(TJS_FAILED(obj->PropGet(0, TJS_W("mainImageBuffer"), nullptr, &val, obj)))
-		return nullptr;
-	const tjs_uint8 *buffer = reinterpret_cast<const tjs_uint8 *>(
-	    static_cast<tjs_intptr_t>(static_cast<tjs_int64>(val)));
-	if(!buffer) {
-		LogError("rule layer has a null mainImageBuffer");
-		return nullptr;
-	}
-	return SnapshotPixels(buffer, width, height, pitch);
+	return SnapshotPixels(view.value.pixels(), view.value.width(),
+	                      view.value.height(), view.value.pitchBytes());
 }
 
 inline iTVPScanLineProvider *

@@ -38,6 +38,10 @@ check(System.commandExecute("/usr/bin/true") == 0, "command execution");
 check(System.confirm("PackinOne smoke"), "confirmation compatibility");
 System.addFont("definitely-missing-font.ttf");
 
+Plugins.link("getSample.dll");
+WaveSoundBuffer.setDefaultAheads(3);
+WaveSoundBuffer.setDefaultCounts(16);
+
 var copyName = "packinone-api-copy.tmp";
 var renamedName = "packinone-api-renamed.tmp";
 files.remove(copyName);

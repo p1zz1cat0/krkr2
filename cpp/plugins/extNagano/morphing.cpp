@@ -79,14 +79,19 @@ protected:
 
 public:
 	tTVPMorphingTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-			tTVPMorphPatch *patches, tjs_int numtri)
+			tTVPMorphPatch *patches, tjs_int numtri,
+			pluginSafety::OperationBudget &operationBudget)
 		: Time(time), Width(width), Height(height), Alpha(0), FrameCount(0),
 		  First(true), NumTri(numtri), Patches(patches)
 	{
 		RefCount = 1;
-		CurX = new tjs_int[NumTri > 0 ? NumTri * 3 : 1];
-		CurY = new tjs_int[NumTri > 0 ? NumTri * 3 : 1];
+		const auto pointCount = pluginSafety::checkedMultiply(
+			static_cast<size_t>(NumTri > 0 ? NumTri : 0), static_cast<size_t>(3));
+		const size_t allocatedPoints = pointCount && pointCount.value > 0 ? pointCount.value : 1;
+		CurX = extNagano::AllocateArray<tjs_int>(allocatedPoints, operationBudget);
+		CurY = extNagano::AllocateArray<tjs_int>(allocatedPoints, operationBudget);
 	}
+	bool IsValid() const { return Patches && CurX && CurY; }
 	virtual ~tTVPMorphingTransHandler()
 	{
 		delete [] Patches;
@@ -139,8 +144,18 @@ tjs_error TJS_INTF_METHOD tTVPMorphingTransHandler::StartProcess(tjs_uint64 tick
 		for(tjs_int v = 0; v < 3; v++)
 		{
 			tjs_int k = i * 3 + v;
-			CurX[k] = p.BeforeX[v] + (tjs_int)((tjs_int64)(p.AfterX[v] - p.BeforeX[v]) * (tjs_int64)elapsed / (tjs_int64)Time);
-			CurY[k] = p.BeforeY[v] + (tjs_int)((tjs_int64)(p.AfterY[v] - p.BeforeY[v]) * (tjs_int64)elapsed / (tjs_int64)Time);
+			const tjs_int64 deltaX = static_cast<tjs_int64>(p.AfterX[v]) -
+			                           static_cast<tjs_int64>(p.BeforeX[v]);
+			const tjs_int64 deltaY = static_cast<tjs_int64>(p.AfterY[v]) -
+			                           static_cast<tjs_int64>(p.BeforeY[v]);
+			CurX[k] = static_cast<tjs_int>(
+				static_cast<tjs_int64>(p.BeforeX[v]) +
+				deltaX * static_cast<tjs_int64>(elapsed) /
+					static_cast<tjs_int64>(Time));
+			CurY[k] = static_cast<tjs_int>(
+				static_cast<tjs_int64>(p.BeforeY[v]) +
+				deltaY * static_cast<tjs_int64>(elapsed) /
+					static_cast<tjs_int64>(Time));
 		}
 	}
 	return TJS_S_TRUE;
@@ -172,7 +187,11 @@ void tTVPMorphingTransHandler::RasterizePatch(tTVPDivisibleData *data, tjs_int i
 	tjs_int dx2 = CurX[idx*3+2], dy2 = CurY[idx*3+2];
 
 	// 面積の 2 倍 (符号は巻き方向)。0 は退化三角形なのでスキップ。
-	tjs_int den = (dy1 - dy2) * (dx0 - dx2) + (dx2 - dx1) * (dy0 - dy2);
+	const tjs_int64 den =
+		(static_cast<tjs_int64>(dy1) - dy2) *
+			(static_cast<tjs_int64>(dx0) - dx2) +
+		(static_cast<tjs_int64>(dx2) - dx1) *
+			(static_cast<tjs_int64>(dy0) - dy2);
 	if(den == 0) return;
 
 	// このバンド [Left,Left+Width) x [Top,Top+Height) との交差範囲
@@ -200,9 +219,17 @@ void tTVPMorphingTransHandler::RasterizePatch(tTVPDivisibleData *data, tjs_int i
 		for(tjs_int px = minx; px <= maxx; px++)
 		{
 			// dest 三角形における重心座標 (整数)
-			tjs_int w0 = (dy1 - dy2) * (px - dx2) + (dx2 - dx1) * (py - dy2);
-			tjs_int w1 = (dy2 - dy0) * (px - dx2) + (dx0 - dx2) * (py - dy2);
-			tjs_int w2 = den - w0 - w1;
+			const tjs_int64 w0 =
+				(static_cast<tjs_int64>(dy1) - dy2) *
+					(static_cast<tjs_int64>(px) - dx2) +
+				(static_cast<tjs_int64>(dx2) - dx1) *
+					(static_cast<tjs_int64>(py) - dy2);
+			const tjs_int64 w1 =
+				(static_cast<tjs_int64>(dy2) - dy0) *
+					(static_cast<tjs_int64>(px) - dx2) +
+				(static_cast<tjs_int64>(dx0) - dx2) *
+					(static_cast<tjs_int64>(py) - dy2);
+			const tjs_int64 w2 = den - w0 - w1;
 
 			// den の符号にそろえて内外判定 (境界含む)
 			if(den > 0) { if(w0 < 0 || w1 < 0 || w2 < 0) continue; }
@@ -283,7 +310,8 @@ tjs_error TJS_INTF_METHOD tTVPMorphingTransHandler::Process(tTVPDivisibleData *d
 //   戻り値は取得できた要素数 (失敗時 -1)。
 //---------------------------------------------------------------------------
 static tjs_int ReadIntArray(iTVPSimpleOptionProvider *options,
-		const tjs_char *name, std::vector<tjs_int> &out)
+		const tjs_char *name, std::vector<tjs_int> &out,
+		pluginSafety::OperationBudget &operationBudget)
 {
 	tTJSVariant var;
 	if(TJS_FAILED(options->GetValue(name, &var))) return -1;
@@ -294,20 +322,30 @@ static tjs_int ReadIntArray(iTVPSimpleOptionProvider *options,
 	// 要素数 ( Array.count )
 	tTJSVariant cntvar;
 	if(TJS_FAILED(arr->PropGet(0, TJS_W("count"), NULL, &cntvar, arr))) return -1;
-	tjs_int count = (tjs_int)cntvar;
-	if(count < 0) count = 0;
-	if(count > extNagano::kMaxMorphElements)
-		count = extNagano::kMaxMorphElements;
+	const auto boundedCount = pluginSafety::readBoundedInteger(
+		cntvar, 0, extNagano::kMaxMorphElements);
+	if(!boundedCount) return -1;
+	tjs_int count = static_cast<tjs_int>(boundedCount.value);
 
 	out.clear();
-	out.reserve(static_cast<size_t>(count));
+	const auto bytes = pluginSafety::checkedElementBytes(
+		static_cast<size_t>(count), sizeof(tjs_int));
+	if(!bytes)
+		return -1;
+	const auto allocation =
+		pluginSafety::validateAllocationBudget(bytes.value, operationBudget);
+	if(!allocation)
+		return -1;
+	out.reserve(allocation.value.elementCount());
 	for(tjs_int i = 0; i < count; i++)
 	{
 		tTJSVariant e;
-		if(TJS_FAILED(arr->PropGetByNum(0, i, &e, arr)))
-			out.push_back(0);
-		else
-			out.push_back((tjs_int)e);
+		if(TJS_FAILED(arr->PropGetByNum(0, i, &e, arr))) return -1;
+		const auto coordinate = pluginSafety::readBoundedInteger(
+			e, -extNagano::kMaxMorphCoordinate,
+			extNagano::kMaxMorphCoordinate);
+		if(!coordinate) return -1;
+		out.push_back(static_cast<tjs_int>(coordinate.value));
 	}
 	return count;
 }
@@ -347,23 +385,27 @@ public:
 
 		// time
 		tTJSVariant tmp;
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// before / after 配列 (※ 実キーは "before"。仕様書の "befor" は誤記)
+		pluginSafety::OperationBudget operationBudget;
 		std::vector<tjs_int> before, after;
-		tjs_int nb = ReadIntArray(options, TJS_W("before"), before);
-		tjs_int na = ReadIntArray(options, TJS_W("after"),  after);
+		tjs_int nb = ReadIntArray(options, TJS_W("before"), before, operationBudget);
+		tjs_int na = ReadIntArray(options, TJS_W("after"),  after, operationBudget);
 
 		tjs_int tb = (nb > 0) ? nb / 6 : 0;
 		tjs_int ta = (na > 0) ? na / 6 : 0;
 		tjs_int numtri = (tb < ta) ? tb : ta; // 両者の少ない方
 		if(numtri > 256) numtri = 256;        // 元 DLL は 0x100 で上限
 		if(numtri < 0) numtri = 0;
+		if(nb < 0 || na < 0) return TJS_E_FAIL;
 
-		tTVPMorphPatch *patches = new tTVPMorphPatch[numtri > 0 ? numtri : 1];
+		const size_t patchCount = static_cast<size_t>(numtri > 0 ? numtri : 1);
+		tTVPMorphPatch *patches =
+			extNagano::AllocateArray<tTVPMorphPatch>(patchCount, operationBudget);
+		if(!patches) return TJS_E_FAIL;
 		for(tjs_int i = 0; i < numtri; i++)
 		{
 			for(tjs_int v = 0; v < 3; v++)
@@ -375,7 +417,11 @@ public:
 			}
 		}
 
-		*handler = new tTVPMorphingTransHandler(time, src1w, src1h, patches, numtri);
+		auto *created = new(std::nothrow) tTVPMorphingTransHandler(
+			time, src1w, src1h, patches, numtri, operationBudget);
+		if(!created) { delete [] patches; return TJS_E_FAIL; }
+		if(!created->IsValid()) { delete created; return TJS_E_FAIL; }
+		*handler = created;
 		return TJS_S_OK;
 	}
 

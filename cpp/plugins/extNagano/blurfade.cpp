@@ -74,7 +74,7 @@ protected:
 	bool NeedGen1;          // 今フレーム Src1 のぼかしを再生成すべきか
 	bool NeedGen2;          // 今フレーム Src2 のぼかしを再生成すべきか
 
-	void EnsureBuffers();
+	void EnsureBuffers(pluginSafety::OperationBudget &budget);
 	void GenerateBlur(iTVPScanLineProvider *src, tjs_uint32 *dst, tjs_int rx, tjs_int ry);
 	void BoxBlur(iTVPScanLineProvider *src, tjs_uint32 *dst, tjs_int rx, tjs_int ry);
 	void BilinearBlur(iTVPScanLineProvider *src, tjs_uint32 *dst, tjs_int rx, tjs_int ry);
@@ -82,7 +82,8 @@ protected:
 public:
 	tTVPBlurFadeTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
 			double exponent, tjs_int blur1x, tjs_int blur1y,
-			tjs_int blur2x, tjs_int blur2y, tjs_int type, tjs_int prerender)
+			tjs_int blur2x, tjs_int blur2y, tjs_int type, tjs_int prerender,
+			pluginSafety::OperationBudget &budget)
 		: StartTick(0), Time(time), Width(width), Height(height), Exponent(exponent),
 		  Blur1x(blur1x), Blur1y(blur1y), Blur2x(blur2x), Blur2y(blur2y),
 		  Type(type), PreRender(prerender),
@@ -98,8 +99,10 @@ public:
 		if(Blur2x < 0 || Blur2x >= Width  / 2) Blur2x = 0;
 		if(Blur2y < 0 || Blur2y >= Height / 2) Blur2y = 0;
 
-		if(Exponent <= 0.0) Exponent = 1.0; // 0以下は無効なので既定へ
-	}
+			if(Exponent <= 0.0) Exponent = 1.0; // 0以下は無効なので既定へ
+			EnsureBuffers(budget);
+		}
+	bool IsValid() const { return Buffer1 && Buffer2 && Scratch; }
 	virtual ~tTVPBlurFadeTransHandler()
 	{
 		if(Buffer1) delete [] Buffer1;
@@ -126,14 +129,16 @@ public:
 	}
 };
 //---------------------------------------------------------------------------
-void tTVPBlurFadeTransHandler::EnsureBuffers()
+void tTVPBlurFadeTransHandler::EnsureBuffers(pluginSafety::OperationBudget &budget)
 {
 	if(!extNagano::CheckImageSize(Width, Height))
 		return;
-	const size_t size = (size_t)Width * (size_t)Height;
-	if(!Buffer1) Buffer1 = new tjs_uint32[size];
-	if(!Buffer2) Buffer2 = new tjs_uint32[size];
-	if(!Scratch) Scratch = new tjs_uint32[size];
+	const auto size = pluginSafety::checkedMultiply(
+		static_cast<size_t>(Width), static_cast<size_t>(Height));
+	if(!size) return;
+	if(!Buffer1) Buffer1 = extNagano::AllocateArray<tjs_uint32>(size.value, budget);
+	if(!Buffer2) Buffer2 = extNagano::AllocateArray<tjs_uint32>(size.value, budget);
+	if(!Scratch) Scratch = extNagano::AllocateArray<tjs_uint32>(size.value, budget);
 }
 //---------------------------------------------------------------------------
 // 分離 box blur (平均値ぼかし, type==0)。端は窓を縮めて実効画素数で平均する。
@@ -340,8 +345,8 @@ tjs_error TJS_INTF_METHOD tTVPBlurFadeTransHandler::Process(tTVPDivisibleData *d
 	tjs_int right = data->Left + data->Width;
 
 	// 今フレームで必要なぼかし画像を(未生成なら)生成する。
-	if(NeedGen1) { EnsureBuffers(); GenerateBlur(data->Src1, Buffer1, CurBlur1x, CurBlur1y); NeedGen1 = false; }
-	if(NeedGen2) { EnsureBuffers(); GenerateBlur(data->Src2, Buffer2, CurBlur2x, CurBlur2y); NeedGen2 = false; }
+	if(NeedGen1) { GenerateBlur(data->Src1, Buffer1, CurBlur1x, CurBlur1y); NeedGen1 = false; }
+	if(NeedGen2) { GenerateBlur(data->Src2, Buffer2, CurBlur2x, CurBlur2y); NeedGen2 = false; }
 
 	const bool useBlur1 = (CurBlur1x > 0 || CurBlur1y > 0) && Buffer1;
 	const bool useBlur2 = (CurBlur2x > 0 || CurBlur2y > 0) && Buffer2;
@@ -426,10 +431,9 @@ public:
 		tTJSVariant tmp;
 
 		// time は必須
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// blur1 -> blur1x/blur1y 両方の既定、blur2 -> blur2x/blur2y 両方の既定。
 		// blur1x/blur1y (blur2x/blur2y) が個別指定されればそちらを優先。
@@ -462,8 +466,11 @@ public:
 		if(TJS_SUCCEEDED(options->GetValue(TJS_W("exponent"), &tmp)) && tmp.Type() != tvtVoid)
 			exponent = (double)(tTVReal)tmp;
 
-		*handler = new tTVPBlurFadeTransHandler(time, src1w, src1h,
-				exponent, blur1x, blur1y, blur2x, blur2y, type_opt, prerender);
+		pluginSafety::OperationBudget budget;
+		auto *created = new(std::nothrow) tTVPBlurFadeTransHandler(time, src1w, src1h,
+			exponent, blur1x, blur1y, blur2x, blur2y, type_opt, prerender, budget);
+		if(!created || !created->IsValid()) { delete created; return TJS_E_FAIL; }
+		*handler = created;
 		return TJS_S_OK;
 	}
 

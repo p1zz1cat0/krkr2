@@ -58,6 +58,25 @@
       "smokeKind": "gui"
     },
     {
+      "name": "Extrans",
+      "dll": "extrans.dll",
+      "sourceRoots": [
+        "cpp/plugins/Extrans",
+        "cpp/plugins/common"
+      ],
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "buildTarget": "extrans-dll",
+      "ctestLabel": "plugin",
+      "fixture": "tests/test_files/extrans-transitions",
+      "marker": "PLUGIN_SMOKE_PASS plugin=extrans.dll",
+      "timeoutSeconds": 45,
+      "anchor": "TVPExtransPluginAnchor",
+      "smokeKind": "gui"
+    },
+    {
       "name": "alphamovie",
       "dll": "AlphaMovie.dll",
       "sourceRoots": [

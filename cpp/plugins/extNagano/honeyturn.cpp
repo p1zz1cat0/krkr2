@@ -104,19 +104,21 @@ protected:
 
 	// 六角形タイル分割 + delay を前計算する ( 元 FUN_10006330 / FUN_10006600 に相当。
 	// ただし幾何は sqrt(3) ベースで再構成 )
-	void BuildMap();
+	void BuildMap(pluginSafety::OperationBudget &budget);
 
 public:
 	tTVPHoneyTurnTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-			tjs_int size, tjs_int twist, tjs_int order, tjs_int dir)
+			tjs_int size, tjs_int twist, tjs_int order, tjs_int dir,
+			pluginSafety::OperationBudget &budget)
 		: Time(time), Width(width), Height(height), Size(size),
 		  Twist(twist), Order(order), Dir(dir),
 		  Phase(0), FrameCount(0), First(true), Map(0)
 	{
 		RefCount = 1;
 		if(Size < 4) Size = 4; // 極端に小さいと分割が破綻するので下限
-		BuildMap();
+		BuildMap(budget);
 	}
+	bool IsValid() const { return Map != nullptr; }
 
 	virtual ~tTVPHoneyTurnTransHandler()
 	{
@@ -153,14 +155,18 @@ public:
 //
 //   NOTE: 元 DLL は flat/pointy いずれの向きだったか、行スペーシング等の
 //         定数も FPU 部が失われ確定できない。ここは再構成 (確信度低)。
-void tTVPHoneyTurnTransHandler::BuildMap()
+void tTVPHoneyTurnTransHandler::BuildMap(pluginSafety::OperationBudget &budget)
 {
 	if(!extNagano::CheckImageSize(Width, Height))
 	{
 		Map = 0;
 		return;
 	}
-	Map = new tTVPHoneyCell[(size_t)Width * (size_t)Height];
+	const auto cells = pluginSafety::checkedMultiply(
+		static_cast<size_t>(Width), static_cast<size_t>(Height));
+	if(!cells) { Map = 0; return; }
+	Map = extNagano::AllocateArray<tTVPHoneyCell>(cells.value, budget);
+	if(!Map) return;
 
 	const double s   = (double)Size;          // 一辺の長さ
 	const double sq3 = M_SQRT3;
@@ -434,10 +440,9 @@ public:
 		tTJSVariant tmp;
 
 		// time : 必須 ( 元コードも void なら失敗 )
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// size / twist / order / dir :
 		//   元 DLL (FUN_10006ec0) は size/twist/order を必須として読むが、
@@ -448,18 +453,32 @@ public:
 		tjs_int order = 2;  // 上->下
 		tjs_int dir   = 6;  // 右 ( 参考値・効果は近似 )
 
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("size"), &tmp)) && tmp.Type() != tvtVoid)
-			size = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("twist"), &tmp)) && tmp.Type() != tvtVoid)
-			twist = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("order"), &tmp)) && tmp.Type() != tvtVoid)
-			order = (tjs_int)tmp;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("dir"), &tmp)) && tmp.Type() != tvtVoid)
-			dir = (tjs_int)tmp;
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("size"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 4, 4096);
+			if(!value) return TJS_E_FAIL;
+			size = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("twist"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, -4096, 4096);
+			if(!value) return TJS_E_FAIL;
+			twist = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("order"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 9);
+			if(!value) return TJS_E_FAIL;
+			order = static_cast<tjs_int>(value.value);
+		}
+		if(TJS_SUCCEEDED(options->GetValue(TJS_W("dir"), &tmp)) && tmp.Type() != tvtVoid) {
+			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 9);
+			if(!value) return TJS_E_FAIL;
+			dir = static_cast<tjs_int>(value.value);
+		}
 
-		if(size < 1) size = 1;
-
-		*handler = new tTVPHoneyTurnTransHandler(time, src1w, src1h, size, twist, order, dir);
+		pluginSafety::OperationBudget budget;
+		auto *created = new(std::nothrow) tTVPHoneyTurnTransHandler(
+			time, src1w, src1h, size, twist, order, dir, budget);
+		if(!created || !created->IsValid()) { delete created; return TJS_E_FAIL; }
+		*handler = created;
 		return TJS_S_OK;
 	}
 

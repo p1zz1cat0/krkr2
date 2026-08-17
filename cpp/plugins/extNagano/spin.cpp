@@ -96,7 +96,7 @@ private:
 
 public:
 	tTVPSpinFadeTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-			tjs_int type1, tjs_int type2)
+			tjs_int type1, tjs_int type2, pluginSafety::OperationBudget &budget)
 		: StartTick(0), Time(time), CurPos(0), Width(width), Height(height),
 		  Type1(type1), Type2(type2), First(true), FrameCount(0)
 	{
@@ -105,13 +105,14 @@ public:
 		Col1 = Col2 = Slope1 = Slope2 = Select = 0;
 		if(extNagano::CheckImageSize(width, height > 0 ? height : 1))
 		{
-			Col1   = new tjs_int[width];
-			Col2   = new tjs_int[width];
-			Slope1 = new tjs_int[width];
-			Slope2 = new tjs_int[width];
-			Select = new tjs_int[width];
+			Col1   = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(width), budget);
+			Col2   = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(width), budget);
+			Slope1 = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(width), budget);
+			Slope2 = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(width), budget);
+			Select = extNagano::AllocateArray<tjs_int>(static_cast<size_t>(width), budget);
 		}
 	}
+	bool IsValid() const { return Col1 && Col2 && Slope1 && Slope2 && Select; }
 	virtual ~tTVPSpinFadeTransHandler()
 	{
 		// FUN_10018870 / Catch_10018806 に対応
@@ -382,10 +383,9 @@ public:
 		tTJSVariant tmp;
 
 		// time は必須
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// type1 既定 0 / type2 既定 1 (FUN_100188d0: uVar3=0, uVar4=1)
 		tjs_int type1 = 0;
@@ -395,7 +395,11 @@ public:
 		if(TJS_SUCCEEDED(options->GetValue(TJS_W("type2"), &tmp)) && tmp.Type() != tvtVoid)
 			type2 = (tjs_int)(tjs_int64)tmp;
 
-		*handler = new tTVPSpinFadeTransHandler(time, src1w, src1h, type1, type2);
+		pluginSafety::OperationBudget budget;
+		auto *created = new(std::nothrow) tTVPSpinFadeTransHandler(
+			time, src1w, src1h, type1, type2, budget);
+		if(!created || !created->IsValid()) { delete created; return TJS_E_FAIL; }
+		*handler = created;
 		return TJS_S_OK;
 	}
 

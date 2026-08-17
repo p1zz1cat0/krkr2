@@ -7,7 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "shrinkCopy.cpp"
+#include "shrinkCopy/shrinkCopy.cpp"
 
 TEST_CASE("shrinkCopy ShrinkLine averages pixels") {
     // 4 个 BGRA 像素：黑 / 白 / (10,20,30) / (90,80,70)，alpha 分别为 0/255/255/255

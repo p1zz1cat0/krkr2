@@ -58,7 +58,8 @@ protected:
 
 public:
 	tTVPFlutterTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-		tjs_uint32 back, tjs_int alpha, tjs_int slip)
+		tjs_uint32 back, tjs_int alpha, tjs_int slip,
+		pluginSafety::OperationBudget &budget)
 		: StartTick(0), Time(time), CurElapsed(0), Width(width), Height(height),
 		  Phase(0), CurSlip(0), Slip(slip), Alpha(alpha & 0xff),
 		  BackColor(back | 0xff000000), BackAlpha((back >> 24) & 0xff),
@@ -66,9 +67,14 @@ public:
 	{
 		RefCount = 1;
 		BackBuf = nullptr;
-		if(extNagano::CheckImageSize(width, height))
-			BackBuf = new tjs_uint32[(size_t)width * (size_t)height];
+		if(extNagano::CheckImageSize(width, height)) {
+			const auto pixels = pluginSafety::checkedMultiply(
+				static_cast<size_t>(width), static_cast<size_t>(height));
+			if(pixels)
+				BackBuf = extNagano::AllocateArray<tjs_uint32>(pixels.value, budget);
+		}
 	}
+	bool IsValid() const { return BackBuf != nullptr; }
 	virtual ~tTVPFlutterTransHandler()
 	{
 		delete [] BackBuf;
@@ -387,10 +393,9 @@ public:
 
 		// time (必須)
 		tTJSVariant tmp;
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		// back (既定 0), slip (既定 8), alpha (既定 0xff)
 		tjs_uint32 back = 0;
@@ -408,7 +413,11 @@ public:
 		if(slip < 0) slip = 0;
 		if(slip > maxslip) slip = maxslip;
 
-		*handler = new tTVPFlutterTransHandler(time, src1w, src1h, back, alpha, slip);
+		pluginSafety::OperationBudget budget;
+		auto *created = new(std::nothrow) tTVPFlutterTransHandler(
+			time, src1w, src1h, back, alpha, slip, budget);
+		if(!created || !created->IsValid()) { delete created; return TJS_E_FAIL; }
+		*handler = created;
 		return TJS_S_OK;
 	}
 

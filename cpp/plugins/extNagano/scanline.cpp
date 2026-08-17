@@ -149,10 +149,9 @@ public:
 		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
 
 		tTJSVariant tmp;
-		if(TJS_FAILED(options->GetValue(TJS_W("time"), &tmp))) return TJS_E_FAIL;
-		if(tmp.Type() == tvtVoid) return TJS_E_FAIL;
-		tjs_uint64 time = (tjs_int64)tmp;
-		if(time < 2) time = 2;
+		bool timeOk = false;
+		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
+		if(!timeOk) return TJS_E_FAIL;
 
 		*handler = new tTVPScanLineTransHandler(time, src1w, src1h);
 		return TJS_S_OK;
