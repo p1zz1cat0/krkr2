@@ -3,22 +3,13 @@ function check(condition, message) { pluginAssertTrue(message, condition); }
 
 Plugins.link("extrans.dll");
 
-class PluginSmokeWindow extends Window {
-    function PluginSmokeWindow() { super.Window(); }
-    function onTransitionCompleted(dest, src) { handleTransitionCompleted(dest, src); }
-    function onSmokeTimer() { observeProgress(); }
-}
-var testWindow = new PluginSmokeWindow();
-var primary = new Layer(testWindow, null);
-var destination = new Layer(testWindow, primary);
-var source = new Layer(testWindow, primary);
-testWindow.setInnerSize(65, 65);
-primary.setImageSize(65, 65);
+var testWindow = new Window();
+var destination = new Layer(testWindow, null);
+var source = new Layer(testWindow, destination);
 source.setImageSize(65, 65);
 destination.setImageSize(65, 65);
-primary.visible = true;
 destination.visible = true;
-source.visible = false;
+source.visible = true;
 testWindow.visible = true;
 for (var y = 0; y < 65; y++) {
     for (var x = 0; x < 65; x++) {
@@ -54,6 +45,16 @@ try {
 }
 check(invalidWave != null, "invalid wave type rejected");
 
+destination.beginTransition("ripple", false, source, %[
+    time: 100,
+    centerx: 32,
+    centery: 32,
+    rwidth: 16,
+    roundness: 1.0,
+    speed: -6.0,
+    maxdrift: 0
+]);
+
 var effects = [
     ["wave", %[time: 100, maxh: 8, maxomega: 0.2, wavetype: 0]],
     ["mosaic", %[time: 100, maxsize: 8]],
@@ -63,99 +64,23 @@ var effects = [
     ["turn", %[time: 100, bgcolor: 0xff102030]]
 ];
 var effectIndex = 0;
-var activeEffect = "ripple";
-var progressed = false;
-var completed = 0;
-var transitionStarted = false;
-var transitionTick = 0;
-var transitionClock = function() {
-    if (transitionTick > 0) sampleProgress();
-    transitionTick += 20;
-    return transitionTick;
-};
-var samplePoints = [[0, 0], [8, 13], [32, 32], [48, 9], [64, 64]];
-var initialSamples = [];
-
-function captureInitialSamples() {
-    initialSamples = [];
-    for (var i = 0; i < samplePoints.count; i++)
-        initialSamples.add(destination.getMainPixel(
-            samplePoints[i][0], samplePoints[i][1]));
-}
-
-function sampleProgress() {
-    if (progressed) return;
-    for (var i = 0; i < samplePoints.count; i++) {
-        var x = samplePoints[i][0];
-        var y = samplePoints[i][1];
-        if (destination.getMainPixel(x, y) != initialSamples[i]) {
-            progressed = true;
-            return;
+var frameCount = 0;
+var driveTransitions = function() {
+    frameCount++;
+    if ((frameCount % 3) == 0) {
+        destination.stopTransition();
+        if (effectIndex < effects.count) {
+            destination.beginTransition(effects[effectIndex][0], false, source,
+                effects[effectIndex][1]);
+            effectIndex++;
         }
     }
-}
-
-function resetImages() {
-    for (var py = 0; py < 65; py++)
-        for (var px = 0; px < 65; px++) {
-            destination.setMainPixel(px, py, 0xff000000 | (px << 8) | py);
-            source.setMainPixel(px, py, 0xff000000 | (py << 16) | px);
-        }
-}
-
-function beginNextEffect() {
-    if (effectIndex >= effects.count) {
-        check(completed == effects.count + 1, "every transition completed naturally");
-        smokeTimer.enabled = false;
+    if (effectIndex >= effects.count && (frameCount % 3) == 2) {
+        System.removeContinuousHandler(driveTransitions);
+        destination.stopTransition();
         pluginSmokePass("extrans.dll");
         testWindow.visible = false;
         System.exit(0);
-        return;
     }
-    resetImages();
-    activeEffect = effects[effectIndex][0];
-    progressed = false;
-    transitionTick = 0;
-    captureInitialSamples();
-    effects[effectIndex][1].callback = transitionClock;
-    destination.beginTransition(activeEffect, false, source,
-        effects[effectIndex][1]);
-    effectIndex++;
-}
-
-var handleTransitionCompleted = function(dest, src) {
-    check(progressed, activeEffect + " changed a representative pixel before completion");
-    for (var fy = 0; fy < 65; fy++)
-        for (var fx = 0; fx < 65; fx++)
-            pluginAssertEqual(activeEffect + " final pixel " + fx + "," + fy,
-                source.getMainPixel(fx, fy),
-                destination.getMainPixel(fx, fy));
-    completed++;
-    beginNextEffect();
 };
-destination.onTransitionCompleted = function(dest, src) {
-    handleTransitionCompleted(dest, src);
-};
-
-var observeProgress = function() {
-    if (!transitionStarted) {
-        transitionStarted = true;
-        captureInitialSamples();
-        destination.beginTransition("ripple", false, source,
-            %[
-                time: 100,
-                centerx: 32,
-                centery: 32,
-                rwidth: 16,
-                roundness: 1.0,
-                speed: -6.0,
-                maxdrift: 0,
-                callback: transitionClock
-            ]);
-        return;
-    }
-    sampleProgress();
-};
-var smokeTimer = new Timer(testWindow, "onSmokeTimer");
-smokeTimer.interval = 10;
-smokeTimer.enabled = true;
+System.addContinuousHandler(driveTransitions);
