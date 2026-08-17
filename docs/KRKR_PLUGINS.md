@@ -1,3 +1,35 @@
+## Plugin quality gate
+
+Executable safety policy lives in this repository. Plugin code uses
+`cpp/plugins/common/PluginSafety.h` for bounded TJS values, checked arithmetic,
+operation-scoped allocation budgets, and validated Layer views. The lexical
+scanner intentionally recognizes only local high-confidence mistakes and
+repository-approved helper chains; it does not attempt whole-program C++ data
+flow analysis.
+
+Use the narrow gate while developing and the complete gate before publishing:
+
+```sh
+scripts/run-plugin-quality-gate.sh --plugin extNagano
+scripts/run-plugin-quality-gate.sh --all
+```
+
+`tests/plugin-quality-gates.json` is the versioned inventory for source roots,
+targets, CTest labels, fixtures, exact success markers, timeouts, and static
+registration anchors. Linux CI runs scanner self-tests, the full-tree scan,
+and plugin-labelled CTest. The macOS release path additionally requires Debug
+and Release smoke, `nm` anchors in the unstripped Release link product, real
+registration smoke against the staged executable, signing/dependency checks,
+and the renderer self-test. A smoke succeeds only after its named functional
+assertions emit exactly one configured marker; READY or process survival is
+not success.
+
+The Yoghourt bootstrap's `--unsafe-skip-quality-gate` mode is development-only:
+it retains staging output in a temporary build directory and must never replace
+`Vendor/Engines/KrKr2`.
+
+## Known plugin origins
+
 | DLL name               | Source or binary location                                                                               |
 |:-----------------------|:--------------------------------------------------------------------------------------------------------|
 | AlphaMovie.dll         | http://kaede-software.com/krlm/plugin/alphamovie.zip                                                    |
@@ -8,7 +40,7 @@
 | KAGParserExb.dll       | https://github.com/sakano/krkr_archives/tree/master/kagex_plugin/KAGParserExb                           |
 | KaichoTrans.dll        | http://keepcreating.g2.xrea.com/krkrplugins/KaichoTrans/KaichoTrans.zip                                 |
 | LayerExDraw.dll        | https://github.com/wtnbgo/layerExDraw                                                                   |
-| LayerExImage.dll       | https://github.com/wtnbgo/layerExImage                                                                  |
+| LayerExImage.dll       | https://github.com/krkrz/krkr2/tree/master/kirikiri2/trunk/kirikiri2/src/plugins/win32/layerExImage    |
 | LayerExSave.dll        | https://github.com/wtnbgo/layerExSave                                                                   |
 | PSBFile.dll            | M2 Inc. PSB Library                                                                                     |
 | PackinOne.dll          | nan                                                                                                     |
@@ -31,7 +63,7 @@
 | layerExAlpha.dll       | nan                                                                                                     |
 | layerExAreaAverage.dll | https://github.com/wtnbgo/layerExAreaAverage                                                            |
 | layerExBTOA.dll        | https://github.com/wtnbgo/layerExBTOA                                                                   |
-| layerExImage.dll       | https://github.com/wtnbgo/layerExImage                                                                  |
+| layerExImage.dll       | https://github.com/krkrz/krkr2/tree/master/kirikiri2/trunk/kirikiri2/src/plugins/win32/layerExImage    |
 | layerExMovie.dll       | https://github.com/krkrz/krkrz/tree/last_hodgepodge_repository/src/plugins/win32/layerExMovie           |
 | layerExRaster.dll      | https://github.com/wtnbgo/layerExRaster                                                                 |
 | layerExShimmer.dll     | http://keepcreating.g2.xrea.com/krkrplugins/ShimmerPlugin/layerExShimmer.zip                            |

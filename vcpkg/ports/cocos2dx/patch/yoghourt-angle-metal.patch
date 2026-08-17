@@ -385,9 +385,78 @@ index 74e2ca7..e0b2671 100644
      updateFrameSize();
 +#endif
  }
- 
+-
++
  void GLViewImpl::setViewPortInPoints(float x , float y , float w , float h)
-@@ -888,6 +1132,12 @@ void GLViewImpl::onGLFWWindowPosCallback(GLFWwindow* /*window*/, int /*x*/, int
+@@ -727,7 +971,39 @@ void GLViewImpl::onGLFWError(int errorID, const char* errorDesc)
+     CCLOGERROR("%s", _glfwError.c_str());
+ }
+-
++
+-void GLViewImpl::onGLFWMouseCallBack(GLFWwindow* /*window*/, int button, int action, int /*modify*/)
++void GLViewImpl::updateMousePosition(double x, double y)
++{
++#if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
++    int windowWidth = 0;
++    int windowHeight = 0;
++    int framebufferWidth = 0;
++    int framebufferHeight = 0;
++    glfwGetWindowSize(_mainWindow, &windowWidth, &windowHeight);
++    glfwGetFramebufferSize(_mainWindow, &framebufferWidth, &framebufferHeight);
++    const float scaleX = windowWidth > 0
++        ? framebufferWidth / static_cast<float>(windowWidth)
++        : 1.0f;
++    const float scaleY = windowHeight > 0
++        ? framebufferHeight / static_cast<float>(windowHeight)
++        : 1.0f;
++    _mouseX = static_cast<float>(x) * scaleX;
++    _mouseY = static_cast<float>(y) * scaleY;
++#else
++    _mouseX = static_cast<float>(x) / getFrameZoomFactor();
++    _mouseY = static_cast<float>(y) / getFrameZoomFactor();
++    if (_isInRetinaMonitor && _retinaFactor == 1)
++    {
++        _mouseX *= 2;
++        _mouseY *= 2;
++    }
++#endif
++}
++
++void GLViewImpl::onGLFWMouseCallBack(GLFWwindow* window, int button, int action, int /*modify*/)
+ {
++    double x = 0;
++    double y = 0;
++    glfwGetCursorPos(window, &x, &y);
++    updateMousePosition(x, y);
+     if(GLFW_MOUSE_BUTTON_LEFT == button)
+     {
+@@ -769,22 +1045,9 @@ void GLViewImpl::onGLFWMouseCallBack(GLFWwindow* /*window*/, int button, int act
+     }
+ }
+-
++
+ void GLViewImpl::onGLFWMouseMoveCallBack(GLFWwindow* window, double x, double y)
+ {
+-    _mouseX = (float)x;
+-    _mouseY = (float)y;
+-
+-    _mouseX /= this->getFrameZoomFactor();
+-    _mouseY /= this->getFrameZoomFactor();
+-
+-    if (_isInRetinaMonitor)
+-    {
+-        if (_retinaFactor == 1)
+-        {
+-            _mouseX *= 2;
+-            _mouseY *= 2;
+-        }
+-    }
++    updateMousePosition(x, y);
+-
++
+     if (_captured)
+     {
+@@ -888,6 +1164,12 @@ void GLViewImpl::onGLFWWindowPosCallback(GLFWwindow* /*window*/, int /*x*/, int
  
  void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
  {
@@ -400,7 +469,7 @@ index 74e2ca7..e0b2671 100644
      float frameSizeW = _screenSize.width;
      float frameSizeH = _screenSize.height;
      float factorX = frameSizeW / w * _retinaFactor * _frameZoomFactor;
-@@ -913,6 +1163,7 @@ void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
+@@ -913,6 +1195,7 @@ void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
          _retinaFactor = 1;
          glfwSetWindowSize(window, static_cast<int>(frameSizeW * _retinaFactor * _frameZoomFactor), static_cast<int>(frameSizeH * _retinaFactor * _frameZoomFactor));
      }
@@ -408,7 +477,7 @@ index 74e2ca7..e0b2671 100644
  }
  
  void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width, int height)
-@@ -922,9 +1173,13 @@ void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width,
+@@ -922,9 +1205,13 @@ void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width,
          Size baseDesignSize = _designResolutionSize;
          ResolutionPolicy baseResolutionPolicy = _resolutionPolicy;
  
@@ -458,7 +527,7 @@ index 4e3394d..e0cb9cd 100644
  #endif // #if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
  
  protected:
-@@ -149,6 +150,12 @@ protected:
+@@ -149,6 +150,14 @@ protected:
      bool initWithFullScreen(const std::string& viewName);
      bool initWithFullscreen(const std::string& viewname, const GLFWvidmode &videoMode, GLFWmonitor *monitor);
  
@@ -468,10 +537,12 @@ index 4e3394d..e0cb9cd 100644
 +    void destroyANGLEMetal();
 +#endif
 +
++    void updateMousePosition(double x, double y);
++
      bool initGlew();
  
      void updateFrameSize();
-@@ -184,6 +191,14 @@ protected:
+@@ -184,6 +193,14 @@ protected:
  
      GLFWcursor* _cursor;
  

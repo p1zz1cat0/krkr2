@@ -16,6 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Scanner self-test and full plugin audit
+        run: scripts/run-plugin-quality-gate.sh --scanner-only
+
       - name: Delete huge unnecessary tools folder
         if: ${{ !env.ACT }}
         run: |
@@ -81,8 +84,9 @@ jobs:
 
       - name: Build Linux
         run: |
-          cmake --preset="Linux Release Config" -DENABLE_TESTS=OFF -DBUILD_TOOLS=OFF
-          cmake --build --preset="Linux Release Build"
+          cmake --preset="Linux Release Config" -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
+          cmake --build --preset="Linux Release Build" --target krkr2 plugin-tests
+          ctest --test-dir out/linux/release -L plugin --output-on-failure
           
           cp $(find out/linux/release/ -name libfmod.so) out/linux/release/bin/krkr2
           cp $(find out/linux/release/ -name libfmodL.so) out/linux/release/bin/krkr2

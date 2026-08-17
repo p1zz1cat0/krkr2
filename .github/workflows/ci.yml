@@ -5,25 +5,41 @@ on:
     branches: [main]
     paths:
       - 'cmake/**'
+      - 'cpp/plugins/**'
+      - 'cpp/plugins/common/**'
       - 'cpp/**'
       - 'platforms/**'
       - 'vcpkg/**'
       - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
       - 'CMakePresets.json'
       - 'vcpkg.json'
       - 'vcpkg-configuration.json'
+      - 'tests/**'
+      - 'tests/plugin-quality-gates.json'
+      - 'scripts/audit-plugin-safety.py'
+      - 'scripts/run-plugin-quality-gate.sh'
+      - 'scripts/run-plugin-smoke.sh'
       - '.github/workflows/**'
   push:
     branches: [main]
     paths:
       - 'cmake/**'
+      - 'cpp/plugins/**'
+      - 'cpp/plugins/common/**'
       - 'cpp/**'
       - 'platforms/**'
       - 'vcpkg/**'
       - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
       - 'CMakePresets.json'
       - 'vcpkg.json'
       - 'vcpkg-configuration.json'
+      - 'tests/**'
+      - 'tests/plugin-quality-gates.json'
+      - 'scripts/audit-plugin-safety.py'
+      - 'scripts/run-plugin-quality-gate.sh'
+      - 'scripts/run-plugin-smoke.sh'
       - '.github/workflows/**'
   workflow_dispatch:
 
@@ -35,7 +51,7 @@ jobs:
   format-check:
     uses: ./.github/workflows/code-format-check.yml
 
-  build-linux:
+  plugin-safety:
     needs: format-check
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit

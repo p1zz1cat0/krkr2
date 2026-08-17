@@ -591,4 +591,4 @@ TVPRegisterArchiveCreator(tTVPXP3Archive::Create);
 | `cpp/core/base/StorageIntf.h` | 存储/VFS 抽象接口（实现已编入 `core_storage`） |
 | `cpp/core/base/impl/StorageImpl.cpp` | 存储实现（含 cocos 耦合） |
 | `cpp/core/CMakeLists.txt` | krkr2core 聚合目标 |
-| `cpp/plugins/xp3filter.cpp` | XP3 解密/过滤插件 |
+| `cpp/plugins/xp3filter/xp3filter.cpp` | XP3 解密/过滤插件 |
