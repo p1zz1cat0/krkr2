@@ -1,0 +1,82 @@
+// PackinOne layerExImage smoke test.  It checks instance members and
+// observable invariants; random noise has no fixed-pixel expected output.
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("PackinOne.dll");
+
+// TJS native-class methods are exposed as callable members on an instance;
+// check their presence after the image is ready, then exercise each ABI.
+
+var testWindow = new Window();
+var layer = new Layer(testWindow, null);
+layer.setImageSize(7, 5);
+check(layer.light != void, "light exists on Layer instance");
+check(layer.colorize != void, "colorize exists on Layer instance");
+check(layer.modulate != void, "modulate exists on Layer instance");
+check(layer.noise != void, "noise exists on Layer instance");
+check(layer.generateWhiteNoise != void,
+      "generateWhiteNoise exists on Layer instance");
+check(layer.gaussianBlur != void, "gaussianBlur exists on Layer instance");
+check(layer.hasImage, "layer has image");
+for (var y = 0; y < 5; y++) {
+    for (var x = 0; x < 7; x++) {
+        layer.setMainPixel(x, y, 0x20000000 | ((x * 17) << 16) |
+                           ((y * 23) << 8) | (x + y));
+    }
+}
+
+var alphaBefore = [];
+for (var ay = 0; ay < 5; ay++) {
+    alphaBefore[ay] = [];
+    for (var ax = 0; ax < 7; ax++)
+        alphaBefore[ay][ax] = (layer.getMainPixel(ax, ay) >>> 24) & 255;
+}
+
+layer.generateWhiteNoise();
+for (var gy = 0; gy < 5; gy++) {
+    for (var gx = 0; gx < 7; gx++) {
+        var white = layer.getMainPixel(gx, gy);
+        check(((white >>> 16) & 255) == ((white >>> 8) & 255),
+              "white noise red/green invariant");
+        check(((white >>> 8) & 255) == (white & 255),
+              "white noise green/blue invariant");
+        check(((white >>> 24) & 255) == alphaBefore[gy][gx],
+              "white noise preserves alpha");
+    }
+}
+
+layer.light(0, 0);
+layer.colorize(0, 0, 0.0);
+layer.modulate(0, 0, 0);
+layer.noise(0);
+layer.gaussianBlur(0.0);
+layer.gaussianBlur(-0.5);
+check(layer.imageWidth == 7 && layer.imageHeight == 5,
+      "finite operations preserve dimensions");
+
+var preserved = [];
+for (var py = 0; py < 5; py++) {
+    preserved[py] = [];
+    for (var px = 0; px < 7; px++)
+        preserved[py][px] = layer.getMainPixel(px, py);
+}
+var invalid = [0.0 / 0.0, 1.0 / 0.0, -1.0 / 0.0, 64.0001, -64.0001];
+for (var i = 0; i < invalid.length; i++) {
+    var error = null;
+    try {
+        layer.gaussianBlur(invalid[i]);
+    } catch (e) {
+        error = e;
+    }
+    check(error != null, "invalid gaussian radius rejected");
+    for (var vy = 0; vy < 5; vy++)
+        for (var vx = 0; vx < 7; vx++)
+            check(layer.getMainPixel(vx, vy) == preserved[vy][vx],
+                  "invalid gaussian radius leaves pixels unchanged");
+}
+
+pluginSmokePass("PackinOne.dll");
+System.exit(0);

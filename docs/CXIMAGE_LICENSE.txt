@@ -1,0 +1,17 @@
+CxImage 7.0.2 notice (07/Feb/2011)
+
+CxImage: Copyright (C) 2001–2011, Davide Pizzolato.
+The original CImage and CImageIterator implementations are Copyright (C)
+1995, Alejandro Aguilar Sierra.
+
+Permission is granted to use, copy, modify, and distribute this source code,
+or portions of it, including in commercial applications, without fee,
+provided that:
+
+1. The origin of the software is not misrepresented.
+2. Altered source versions are plainly marked and are not misrepresented as
+   the original software.
+3. This notice is not removed or altered from source distributions.
+
+The covered code is provided "as is", without warranty of any kind. The
+complete upstream notice is included in the CxImage 7.0.2 distribution.

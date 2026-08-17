@@ -3,6 +3,8 @@
 // 注册同名模块满足 Plugins.link("PackinOne.dll") 特征门，并提供
 // PackinOne 的 TJS 接口子集（macOS 可实现的）：
 //   - Layer.clipAlphaRect（wtnbgo/layerExBTOA 移植）
+//   - Layer.light/colorize/modulate/noise/generateWhiteNoise/gaussianBlur
+//     （PackinOne layerExImage 兼容面）
 //   - Plugins.CanLoadPlugin
 //   - System.urlencode/urldecode/readEnvValue/writeEnvValue/
 //     expandEnvString/getOSVersion/getKnownFolderPath/confirm/
@@ -13,6 +15,7 @@
 // StoragesFstat/TemporaryFiles/ScriptsAdd/LZ4 见同目录其他文件。
 
 #include "packinone.h"
+#include "common/PluginSafety.h"
 
 #include <cerrno>
 #include <cctype>
@@ -34,6 +37,7 @@
 extern "C" void TVPPackinOneStorageFstatAnchor();
 extern "C" void TVPPackinOneTemporaryFilesAnchor();
 extern "C" void TVPPackinOneScriptsAnchor();
+extern "C" void TVPPackinOneLayerExImageAnchor();
 
 // packinone is a static library. Keep every ncbind registration translation
 // unit reachable from one core-owned anchor so the linker cannot dead-strip
@@ -43,6 +47,7 @@ extern "C" void TVPPackinOnePluginAnchor() {
     TVPPackinOneStorageFstatAnchor();
     TVPPackinOneTemporaryFilesAnchor();
     TVPPackinOneScriptsAnchor();
+    TVPPackinOneLayerExImageAnchor();
 }
 
 class PackinOneDummy {
@@ -126,7 +131,7 @@ static bool GetLayerSize(iTJSDispatch2 *layer, tjs_int32 &width,
 
 static bool GetClipSize(iTJSDispatch2 *layer, tjs_int32 &left,
                         tjs_int32 &top, tjs_int32 &width,
-                        tjs_int32 &height, tjs_int32 &pitch) {
+						tjs_int32 &height) {
     iTJSDispatch2 *layerClass = GetLayerClass();
     if(!layer ||
        TJS_FAILED(layer->IsInstanceOf(0, nullptr, nullptr, TJS_W("Layer"),
@@ -154,12 +159,7 @@ static bool GetClipSize(iTJSDispatch2 *layer, tjs_int32 &left,
                                       &value, layer)))
         return false;
     height = static_cast<tjs_int32>(value.AsInteger());
-    if(TJS_FAILED(layerClass->PropGet(0, TJS_W("mainImageBufferPitch"),
-                                      &mainImageBufferPitchHint, &value,
-                                      layer)))
-        return false;
-    pitch = static_cast<tjs_int32>(value.AsInteger());
-    return width > 0 && height > 0 && pitch != 0;
+	return width > 0 && height > 0;
 }
 
 static ClipPixel ClipAddAlpha(ClipPixel pixel, ClipPixel alpha) {
@@ -248,29 +248,30 @@ static tjs_error clipAlphaRect(tTJSVariant *, tjs_int numparams,
         clearValue = static_cast<ClipByte>(value & 255);
     }
 
-    tjs_int32 srcWidth, srcHeight, srcPitch;
-    tjs_int32 clipLeft, clipTop, dstWidth, dstHeight, dstPitch;
-    if(!GetLayerSize(source, srcWidth, srcHeight, srcPitch))
-        TVPThrowExceptionMessage(TJS_W("src must be Layer."));
-    if(!GetClipSize(destination, clipLeft, clipTop, dstWidth, dstHeight,
-                    dstPitch))
-        TVPThrowExceptionMessage(TJS_W("dest must be Layer."));
+	tjs_int32 srcWidth, srcHeight, srcPitch;
+	tjs_int32 clipLeft, clipTop, dstWidth, dstHeight, dstPitch;
+	const auto sourceView = pluginSafety::LayerReadView::create(source);
+	if(!sourceView)
+		TVPThrowExceptionMessage(TJS_W("src must be Layer."));
+	const auto destinationView = pluginSafety::LayerWriteView::create(destination);
+	if(!destinationView ||
+	   !GetClipSize(destination, clipLeft, clipTop, dstWidth, dstHeight))
+		TVPThrowExceptionMessage(TJS_W("dest must be Layer."));
+	srcWidth = sourceView.value.width();
+	srcHeight = sourceView.value.height();
+	srcPitch = sourceView.value.pitchBytes();
+	dstPitch = destinationView.value.pitchBytes();
+	if(clipLeft < 0 || clipTop < 0 ||
+	   static_cast<tjs_int64>(clipLeft) + dstWidth > destinationView.value.width() ||
+	   static_cast<tjs_int64>(clipTop) + dstHeight > destinationView.value.height())
+		TVPThrowExceptionMessage(TJS_W("Layer clip rectangle is outside the image."));
 
-    iTJSDispatch2 *layerClass = GetLayerClass();
-    tTJSVariant value;
-    if(TJS_FAILED(layerClass->PropGet(0, TJS_W("mainImageBuffer"),
-                                      &mainImageBufferHint, &value, source)))
-        TVPThrowExceptionMessage(TJS_W("Layer has no images."));
-    const ClipByte *sourceBuffer =
-        reinterpret_cast<const ClipByte *>(value.AsInteger());
-    if(TJS_FAILED(layerClass->PropGet(0, TJS_W("mainImageBufferForWrite"),
-                                      &mainImageBufferForWriteHint, &value,
-                                      destination)))
-        TVPThrowExceptionMessage(TJS_W("Layer has no images."));
-    ClipByte *destinationBuffer =
-        reinterpret_cast<ClipByte *>(value.AsInteger());
-    if(!sourceBuffer || !destinationBuffer)
-        TVPThrowExceptionMessage(TJS_W("Layer has no images."));
+	iTJSDispatch2 *layerClass = GetLayerClass();
+	tTJSVariant value;
+	const ClipByte *sourceBuffer =
+		reinterpret_cast<const ClipByte *>(sourceView.value.pixels());
+	ClipByte *destinationBuffer =
+		reinterpret_cast<ClipByte *>(destinationView.value.pixels());
 
     if(TJS_FAILED(layerClass->PropGet(0, TJS_W("type"), &typeHint, &value,
                                       destination)))
@@ -549,9 +550,19 @@ static tjs_error SystemUrlEncode(tTJSVariant *result, tjs_int numparams,
                                  tTJSVariant **param, iTJSDispatch2 *) {
     if(numparams < 1)
         return TJS_E_BADPARAMCOUNT;
-    const std::string in = ttstr(*param[0]).AsNarrowStdString();
-    std::string out;
-    out.reserve(in.size() * 3);
+	const std::string in = ttstr(*param[0]).AsNarrowStdString();
+	std::string out;
+	pluginSafety::OperationBudget budget;
+	const auto capacity = pluginSafety::checkedMultiply(in.size(), static_cast<size_t>(3));
+	if(!capacity)
+		return TJS_E_INVALIDPARAM;
+	const auto bytes = pluginSafety::checkedElementBytes(capacity.value, sizeof(char));
+	if(!bytes)
+		return TJS_E_INVALIDPARAM;
+	const auto allocation = pluginSafety::validateAllocationBudget(bytes.value, budget);
+	if(!allocation)
+		return TJS_E_INVALIDPARAM;
+	out.reserve(allocation.value.elementCount());
     const char hex[] = "0123456789ABCDEF";
     for(unsigned char c : in) {
         if(isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
@@ -571,9 +582,16 @@ static tjs_error SystemUrlDecode(tTJSVariant *result, tjs_int numparams,
                                  tTJSVariant **param, iTJSDispatch2 *) {
     if(numparams < 1)
         return TJS_E_BADPARAMCOUNT;
-    const std::string in = ttstr(*param[0]).AsNarrowStdString();
-    std::string out;
-    out.reserve(in.size());
+	const std::string in = ttstr(*param[0]).AsNarrowStdString();
+	std::string out;
+	pluginSafety::OperationBudget budget;
+	const auto bytes = pluginSafety::checkedElementBytes(in.size(), sizeof(char));
+	if(!bytes)
+		return TJS_E_INVALIDPARAM;
+	const auto allocation = pluginSafety::validateAllocationBudget(bytes.value, budget);
+	if(!allocation)
+		return TJS_E_INVALIDPARAM;
+	out.reserve(allocation.value.elementCount());
     for(size_t i = 0; i < in.size(); ++i) {
         if(in[i] == '%' && i + 2 < in.size()) {
             auto hexval = [](char c) -> int {

@@ -9,6 +9,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     temporary_files.cpp
     lz4_stream.cpp
     scripts_add.cpp
+    layerExImage.cpp
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE krkr2plugin)

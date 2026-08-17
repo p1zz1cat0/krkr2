@@ -113,6 +113,24 @@
       "anchor": "TVPShrinkCopyPluginAnchor"
     },
     {
+      "name": "packinone",
+      "dll": "PackinOne.dll",
+      "sourceRoots": [
+        "cpp/plugins/packinone",
+        "cpp/plugins/common"
+      ],
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "buildTarget": "layerExImage-dll",
+      "ctestLabel": "plugin",
+      "fixture": "tests/test_files/packinone-layerExImage",
+      "marker": "PLUGIN_SMOKE_PASS plugin=PackinOne.dll",
+      "timeoutSeconds": 30,
+      "anchor": "TVPPackinOnePluginAnchor"
+    },
+    {
       "name": "wuvorbis",
       "dll": "wuvorbis.dll",
       "sourceRoots": [
