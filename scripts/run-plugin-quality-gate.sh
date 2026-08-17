@@ -76,7 +76,8 @@ for configuration in debug release; do
   if [[ "$configuration" == debug ]]; then preset="MacOS Debug Config"; else preset="MacOS Release Config"; fi
   build_dir="$repo_root/out/macos/$configuration"
   run_logged "$configuration-configure" cmake --preset "$preset" \
-    -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
+    -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF \
+    ${VCPKG_TARGET_TRIPLET:+-DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET"}
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
   run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 "${targets[@]}"
   run_logged "$configuration-ctest" ctest --test-dir "$build_dir" -L plugin --output-on-failure
