@@ -2613,11 +2613,6 @@ static int cvFlags[4] = {
     cv::INTER_CUBIC, // stCubic
 };
 
-static double tTVPPointD_distQ(const tTVPPointD &p0, const tTVPPointD &p1) {
-    double dx = p0.x - p1.x, dy = p0.y - p1.y;
-    return dx * dx + dy * dy;
-}
-
 static bool isDoubleEqual(double a, double b) {
     a -= b;
     if(a < 0)
@@ -2626,11 +2621,13 @@ static bool isDoubleEqual(double a, double b) {
 }
 
 static bool checkQuadSquared(const tTVPPointD *p) {
-    double d01 = tTVPPointD_distQ(p[0], p[1]);
-    double d23 = tTVPPointD_distQ(p[2], p[3]);
-    double d12 = tTVPPointD_distQ(p[1], p[2]);
-    double d03 = tTVPPointD_distQ(p[0], p[3]);
-    return isDoubleEqual(d01, d23) && isDoubleEqual(d12, d03);
+    // OperateTriangles receives two triangles as
+    // [LT, RT, LB, RT, LB, RB]. The old code compared LT->RT with LB->RT,
+    // so even the exact parallelogram produced by AffineBlt missed the
+    // warpAffine fast path and fell through to warpPerspective every frame.
+    // The fourth corner of an affine quad is RT - LT + LB.
+    return isDoubleEqual(p[5].x, p[1].x - p[0].x + p[2].x) &&
+        isDoubleEqual(p[5].y, p[1].y - p[0].y + p[2].y);
 }
 
 static iTVPTexture2D *(*_createStaticTexture2D)(tTVPBitmap *bmp,
@@ -2741,6 +2738,10 @@ public:
         {
             static tTVPRenderMethod_DirectCopy method;
             RegisterRenderMethod("Copy", &method);
+        }
+        {
+            static tTVPRenderMethod_DirectCopy method;
+            RegisterRenderMethod("PerspectiveCopy", &method);
         }
         {
             static tTVPRenderMethod_Copy<tjs_uint32, const tjs_uint32, 66,

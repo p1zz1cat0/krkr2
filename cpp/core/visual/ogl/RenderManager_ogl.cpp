@@ -3482,6 +3482,17 @@ public:
         TEST_SHADER_BLTO(PsAlphaBlend);
 
         CompileAndRegScript<tTVPOGLRenderMethod_Perspective>(
+            "PerspectiveCopy",
+            "uniform mat3 M;\n"
+            "uniform vec2 sourceTextureSize;\n"
+            "void main() {\n"
+            "    vec3 S = vec3(gl_FragCoord.xy, 1) * M;\n"
+            "    vec2 pixel = floor((S.xy / S.z) * sourceTextureSize);\n"
+            "    gl_FragColor = texture2D(tex0, (pixel + vec2(0.5)) / sourceTextureSize);\n"
+            "}",
+            1);
+
+        CompileAndRegScript<tTVPOGLRenderMethod_Perspective>(
             "PerspectiveAlphaBlend_a",
             opacityPrefix +
                 "uniform mat3 M;\n"

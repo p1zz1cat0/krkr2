@@ -33,7 +33,11 @@ extern "C" void YoghourtRefreshWindowLayout(int width, int height) {
     if(!glview)
         return;
 
-    glview->setFrameSize(static_cast<float>(width), static_cast<float>(height));
+    // AppKit reports the content view in logical points while the ANGLE view
+    // owns a drawable measured in backing pixels. The GLFW resize callback
+    // has already reconciled those two sizes. Calling setFrameSize() here
+    // treats points as pixels and resizes the native window a second time,
+    // which makes the rendered viewport and pointer transform diverge.
     glview->setDesignResolutionSize(
         designResolutionSize.width,
         designResolutionSize.height,
