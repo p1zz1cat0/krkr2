@@ -1,0 +1,33 @@
+function fail(message) {
+    Debug.message("PLUGIN_ASSERT_FAIL name=internal-api actual=" + message);
+    throw new Exception(message);
+}
+
+Plugins.link("getSample.dll");
+try {
+    WaveSoundBuffer.setDefaultAheads(3);
+    WaveSoundBuffer.setDefaultCounts(16);
+} catch (e) {
+    fail("WaveSoundBuffer static methods are not registered");
+}
+
+Plugins.link("addFont.dll");
+try {
+    System.addFont("definitely-missing-font.ttf");
+} catch (e) {
+    fail("System.addFont is not registered");
+}
+
+Plugins.link("ScriptsEx.dll");
+try {
+    var sample = new Dictionary();
+    sample.answer = 42;
+    var keys = Scripts.getObjectKeys(sample);
+    if (keys.count != 1)
+        fail("Scripts.getObjectKeys returned an unexpected count");
+} catch (e) {
+    fail("Scripts.getObjectKeys is not registered");
+}
+
+Debug.message("PLUGIN_SMOKE_PASS plugin=internal-api");
+System.exit(0);

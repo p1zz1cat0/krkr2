@@ -1,0 +1,16 @@
+// Shared functional-smoke assertions. PASS is emitted only after all checks.
+function pluginAssertEqual(name, expected, actual) {
+    if (expected != actual) {
+        Debug.message("PLUGIN_ASSERT_FAIL name=" + name +
+            " expected=" + expected + " actual=" + actual);
+        throw new Exception("plugin assertion failed: " + name);
+    }
+}
+
+function pluginAssertTrue(name, actual) {
+    pluginAssertEqual(name, true, !!actual);
+}
+
+function pluginSmokePass(dll) {
+    Debug.message("PLUGIN_SMOKE_PASS plugin=" + dll);
+}

@@ -7,6 +7,7 @@ set(SOURCES
         shrinkCopy-dll.cpp
         alphamovie-dll.cpp
         extNagano-dll.cpp
+        plugin-safety-dll.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")
@@ -32,6 +33,12 @@ foreach(name ${ALL_TARGETS})
         PUBLIC
             krkr2plugin krkr2core
     )
-    target_include_directories(${name} PRIVATE "${TEST_CONFIG_DIR}")
-    catch_discover_tests(${name})
+    target_include_directories(${name}
+        PRIVATE
+            "${TEST_CONFIG_DIR}"
+            "${KRKR2PLUGIN_PATH}"
+    )
+    catch_discover_tests(${name} PROPERTIES LABELS plugin)
 endforeach()
+
+add_custom_target(plugin-tests DEPENDS ${ALL_TARGETS})
