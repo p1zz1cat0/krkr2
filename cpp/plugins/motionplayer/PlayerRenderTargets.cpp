@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -1038,6 +1039,44 @@ namespace motion {
                     renderedItems, changedItems, canvasWidth, canvasHeight,
                     skippedGate, skippedClip, skippedLayer, skippedSource,
                     skippedSize, skippedCopy);
+                // One-shot per-item dump for part-visibility diagnosis.
+                // logoChainTraceLogf is path-gated to logo files, so real
+                // character scenes had no way to show which prepared items
+                // were gate-skipped versus rendered. Iterates the same list
+                // as the draw loop above so the counts reconcile with
+                // items=/rendered=/skip=[gate=...] in sla.accurate.first.
+                static const bool dumpItems = [] {
+                    const char *env = std::getenv("KRKR_EMOTE_ITEM_DUMP");
+                    return env && env[0] != '\0' && env[0] != '0';
+                }();
+                if(dumpItems) {
+                    for(const auto *itemPtr :
+                        _runtime->preparedRenderItemsTopLevel) {
+                        if(!itemPtr) {
+                            continue;
+                        }
+                        const auto &item = *itemPtr;
+                        std::string label;
+                        if(item.nodeIndex >= 0 &&
+                           static_cast<size_t>(item.nodeIndex) <
+                               _runtime->nodes.size()) {
+                            label = _runtime->nodes[static_cast<size_t>(
+                                                        item.nodeIndex)]
+                                        .layerName;
+                        }
+                        logger->info(
+                            "sla.accurate.item.dump path={} node={} "
+                            "label='{}' layerId={} source='{}' opacity={} "
+                            "skip0={} flag16={} paintBox=[{:.1f},{:.1f},"
+                            "{:.1f},{:.1f}]",
+                            motionPath, item.nodeIndex,
+                            label.empty() ? "<none>" : label, item.layerId,
+                            item.sourceKey, item.opacity,
+                            item.skipFlag0 ? 1 : 0, item.rawFlag16 ? 1 : 0,
+                            item.paintBox[0], item.paintBox[1],
+                            item.paintBox[2], item.paintBox[3]);
+                    }
+                }
             }
         }
         if(frameMs > 100.0) {
