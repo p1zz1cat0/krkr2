@@ -349,6 +349,22 @@ namespace motion {
             if(binding.varLr.empty() || binding.varUd.empty()) {
                 continue;
             }
+            // Diff-owned pairs skip the disc projection: a scenario pose at
+            // the range edge plus a ±10 sway sits outside [-30,30], and the
+            // projection scaled BOTH components every frame, suppressing the
+            // breathing bob whenever the left-right sway ran concurrently.
+            bool diffOwned = false;
+            for(const auto *var : { &binding.varLr, &binding.varUd }) {
+                if(const auto it = _evalResultListIndex.find(*var);
+                   it != _evalResultListIndex.end() &&
+                   it->second->pendingDiff != 0.0) {
+                    diffOwned = true;
+                    break;
+                }
+            }
+            if(diffOwned) {
+                continue;
+            }
 
             const double range = binding.maxValue - binding.minValue;
             if(std::abs(range) <= 0.0000001) {
