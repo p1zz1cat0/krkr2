@@ -866,6 +866,19 @@ namespace motion {
                          dt);
             dt = 0.0;
         }
+        // TEMP diagnosis: real-game dt distribution (env-gated).
+        static const bool dtLog = [] {
+            const char *env = std::getenv("KRKR_EMOTE_DT_LOG");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        if(dtLog) {
+            static int logged = 0;
+            if(logged < 400) {
+                ++logged;
+                LOGGER->info("emote.dt.diag dt={} ms accumulated={}", dt,
+                             _progress);
+            }
+        }
         _progress += dt;
         _player.progressMsLike_0x6D2A54(dt);
         _modified = true;

@@ -388,14 +388,25 @@ namespace motion {
     }
 
     void Player::applyEvalResultPostProcessLike_0x67CC9C() {
+        // Diff-timeline contributions are REPLACED each frame, not added to
+        // the previous output: subtract the pending offset, re-accumulate
+        // from the recovered base, then publish. Downstream writers (clamp
+        // controls) overwrite entry.value with the final value; pendingDiff
+        // keeps that from integrating into a runaway (body_UD hit ±90).
         for(auto &entry : _evalResultList) {
-            accumulateTimelineContributionLike_0x67C560(entry.label,
-                                                        entry.value);
+            entry.value -= entry.pendingDiff;
             double outputValue = entry.value;
+            accumulateTimelineContributionLike_0x67C560(entry.label,
+                                                        outputValue);
+            const double preMirror = outputValue;
+            entry.pendingDiff = preMirror - entry.value;
             if(shouldMirrorEvalLabelLike_0x67C6B0(entry.label)) {
                 outputValue = -outputValue;
             }
             writeEvalResultValueLike_0x6C4668(entry.label, outputValue);
+            // writeEvalResultValue stored the mirrored final; keep the
+            // unmirrored base+diff so next frame's subtraction matches.
+            entry.value = preMirror;
         }
 
         applyClampControlsLike_0x67C8A8();
@@ -484,12 +495,21 @@ namespace motion {
                         return;
                     }
 
-                    double steppedBlend = state.blendRatio;
-                    const bool blendAnimating = stepQueuedAnimatorLike_0x67D01C(
-                        state.blendAnimator, routeDt, steppedBlend);
-                    state.blendRatio = steppedBlend;
-                    if(blendAnimating) {
-                        _emoteDirty = true;
+                    // An idle blend animator must not publish: its
+                    // currentValue is a stale default (0) that would
+                    // clobber an externally authored blendRatio every frame
+                    // (playTimeline sets 1.0; scripts set explicit ratios).
+                    const bool blendIdle = !state.blendAnimator.active &&
+                        state.blendAnimator.queue.empty();
+                    if(!blendIdle) {
+                        double steppedBlend = state.blendRatio;
+                        const bool blendAnimating =
+                            stepQueuedAnimatorLike_0x67D01C(
+                                state.blendAnimator, routeDt, steppedBlend);
+                        state.blendRatio = steppedBlend;
+                        if(blendAnimating) {
+                            _emoteDirty = true;
+                        }
                     }
 
                     if(state.controlTrackValues.size() <
@@ -597,6 +617,59 @@ namespace motion {
                         state.currentTime = lastTime;
                         state.playing = false;
                         keepPlaying = false;
+                    }
+                }
+
+                // TEMP diagnosis: diff-timeline internal track values vs
+                // published variables (env-gated).
+                static const bool tlStepDiag = [] {
+                    const char *env = std::getenv("KRKR_EMOTE_TL_DIAG");
+                    return env && env[0] != '\0' && env[0] != '0';
+                }();
+                if(tlStepDiag) {
+                    static int stepDiagCount = 0;
+                    if(stepDiagCount++ % 15 == 0) {
+                        std::string trackVals;
+                        for(size_t ti = 0;
+                            ti < binding->tracks.size() &&
+                            ti < state.controlTrackValues.size();
+                            ++ti) {
+                            trackVals += fmt::format(
+                                "{}={:.2f}(q{}) ",
+                                binding->tracks[ti].label,
+                                state.controlTrackValues[ti],
+                                state.controlTrackAnimators[ti].queue.size());
+                        }
+                        double published = 0.0;
+                        bool hasPublished = false;
+                        if(const auto it =
+                               _variableValues.find(binding->tracks.empty()
+                                                        ? std::string{}
+                                                        : binding->tracks
+                                                              .front()
+                                                              .label);
+                           it != _variableValues.end()) {
+                            published = it->second;
+                            hasPublished = true;
+                        }
+                        std::string allBlends;
+                        for(const auto &[tl, ts] : _runtime->timelines) {
+                            allBlends += fmt::format("{}=b{:.2f}:p{}:f{} ",
+                                                     tl, ts.blendRatio,
+                                                     ts.playing ? 1 : 0,
+                                                     ts.flags);
+                        }
+                        if(auto logger = spdlog::get("plugin")) {
+                            logger->info(
+                                "emote.tlstep.diag cur={} t={:.1f} "
+                                "init={} blend={:.2f} flags={} evalEntry={} "
+                                "published={} tracks=[{}] ALL=[{}]",
+                                label, state.currentTime,
+                                state.controlInitialized ? 1 : 0,
+                                state.blendRatio, state.flags,
+                                hasPublished ? 1 : 0, published, trackVals,
+                                allBlends);
+                        }
                     }
                 }
             }
@@ -766,14 +839,14 @@ namespace motion {
                                                        std::max(prevTime, 0.0));
             }
 
-            if((state.flags & 2) != 0 && (state.flags & 4) == 0) {
-                // Aligned to sub_67CD20 + sub_6735AC:
-                // crossed-frame entry into the internal route triggers a
-                // timeline-level fade to 0 over 20 frames before the runtime
-                // is marked as initialized.
-                setTimelineBlendLike_0x6735AC(label, true, 0.0, 20.0, 0.0);
-                state.flags |= 4;
-            }
+            // NOTE: an earlier revision faded diff-timeline blendRatio to 0
+            // over 20 frames here on first frame crossing ("sub_67CD20 +
+            // sub_6735AC"). No recovered evidence supports that behavior:
+            // the Android libkrkr2.so sample has no recovered timeline
+            // internals, and NEKOPARA explicitly sets blendRatio=1 right
+            // after playTimeline then relies on the contribution at idle.
+            // The self-zero made every difference timeline contribute ×0,
+            // freezing body_UD/head_slant idle sway (breathing) in-game.
 
             for(size_t trackIndex = 0; trackIndex < binding.tracks.size();
                 ++trackIndex) {

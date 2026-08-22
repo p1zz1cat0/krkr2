@@ -741,6 +741,11 @@ namespace motion {
         struct EvalResultEntry {
             std::string label;
             double value = 0.0;
+            // Diff-timeline offset currently folded into value. Subtracted
+            // before each frame's accumulation so downstream writers (clamp
+            // controls, mirror) that overwrite value with the final output
+            // cannot turn the contribution into a runaway integral.
+            double pendingDiff = 0.0;
         };
         std::list<EvalResultEntry> _evalResultList;
         std::unordered_map<std::string, std::list<EvalResultEntry>::iterator>
