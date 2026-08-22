@@ -309,6 +309,14 @@ namespace motion {
         if(!activeMotion) {
             return;
         }
+        // TEMP experiment: clamp disable switch for twitch diagnosis.
+        static const bool clampDisabled = [] {
+            const char *env = std::getenv("KRKR_EMOTE_NO_CLAMP");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        if(clampDisabled) {
+            return;
+        }
 
         for(const auto &binding : activeMotion->clampControls) {
             if(binding.varLr.empty() || binding.varUd.empty()) {
@@ -627,49 +635,40 @@ namespace motion {
                     return env && env[0] != '\0' && env[0] != '0';
                 }();
                 if(tlStepDiag) {
-                    static int stepDiagCount = 0;
-                    if(stepDiagCount++ % 15 == 0) {
-                        std::string trackVals;
-                        for(size_t ti = 0;
-                            ti < binding->tracks.size() &&
-                            ti < state.controlTrackValues.size();
-                            ++ti) {
-                            trackVals += fmt::format(
-                                "{}={:.2f}(q{}) ",
-                                binding->tracks[ti].label,
-                                state.controlTrackValues[ti],
-                                state.controlTrackAnimators[ti].queue.size());
-                        }
-                        double published = 0.0;
-                        bool hasPublished = false;
-                        if(const auto it =
-                               _variableValues.find(binding->tracks.empty()
-                                                        ? std::string{}
-                                                        : binding->tracks
-                                                              .front()
-                                                              .label);
-                           it != _variableValues.end()) {
-                            published = it->second;
-                            hasPublished = true;
-                        }
-                        std::string allBlends;
-                        for(const auto &[tl, ts] : _runtime->timelines) {
-                            allBlends += fmt::format("{}=b{:.2f}:p{}:f{} ",
-                                                     tl, ts.blendRatio,
-                                                     ts.playing ? 1 : 0,
-                                                     ts.flags);
-                        }
-                        if(auto logger = spdlog::get("plugin")) {
-                            logger->info(
-                                "emote.tlstep.diag cur={} t={:.1f} "
-                                "init={} blend={:.2f} flags={} evalEntry={} "
-                                "published={} tracks=[{}] ALL=[{}]",
-                                label, state.currentTime,
-                                state.controlInitialized ? 1 : 0,
-                                state.blendRatio, state.flags,
-                                hasPublished ? 1 : 0, published, trackVals,
-                                allBlends);
-                        }
+                    std::string trackVals;
+                    for(size_t ti = 0;
+                        ti < binding->tracks.size() &&
+                        ti < state.controlTrackValues.size();
+                        ++ti) {
+                        trackVals += fmt::format(
+                            "{}={:.2f}(q{}) ",
+                            binding->tracks[ti].label,
+                            state.controlTrackValues[ti],
+                            state.controlTrackAnimators[ti].queue.size());
+                    }
+                    double published = 0.0;
+                    bool hasPublished = false;
+                    if(const auto it =
+                           _variableValues.find(binding->tracks.empty()
+                                                    ? std::string{}
+                                                    : binding->tracks
+                                                          .front()
+                                                          .label);
+                       it != _variableValues.end()) {
+                        published = it->second;
+                        hasPublished = true;
+                    }
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->info(
+                            "emote.tlstep.diag path={} tl={} t={:.2f} "
+                            "blend={:.2f} published={} tracks=[{}]",
+                            _runtime->activeMotion
+                                ? _runtime->activeMotion->path
+                                : std::string{},
+                            label, state.currentTime, state.blendRatio,
+                            hasPublished ? fmt::format("{:.3f}", published)
+                                         : std::string("none"),
+                            trackVals);
                     }
                 }
             }
