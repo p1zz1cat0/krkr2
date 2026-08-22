@@ -850,8 +850,43 @@ namespace motion {
                         timelineDirtyArg ? 1 : 0);
                 }
             }
-            const bool timelineUpdated = evaluateTimelineLike_0x699AE4(
-                node, timelineDirtyArg, nodeEvalTime, emoteLike);
+            const bool timelineUpdated = [&]() {
+                const bool __updated = evaluateTimelineLike_0x699AE4(
+                    node, timelineDirtyArg, nodeEvalTime, emoteLike);
+                if(evalProbe && node.parameterEntry &&
+                   node.parameterEntry->id == "body_UD") {
+                    if(auto L = spdlog::get("plugin")) {
+                        L->info(
+                            "emote.snap idx={} cf={} oDone={} aIdx={} "
+                            "oIdx={} aTime={:.2f} oTime={:.2f} selT={:.2f} "
+                            "updated={} meshA={:.3f}",
+                            node.index,
+                            node.activeSlot().crossfading ? 1 : 0,
+                            node.otherSlot().done ? 1 : 0,
+                            node.activeSlot().frameIndex,
+                            node.otherSlot().frameIndex,
+                            node.activeSlot().clipStartTime,
+                            node.otherSlot().clipStartTime,
+                            nodeEvalTime, __updated ? 1 : 0,
+                            node.interpolatedCache.meshBezierPoints.empty()
+                                ? -1.0
+                                : node.interpolatedCache.meshBezierPoints[0]);
+                    }
+                }
+                return __updated;
+            }();
+            if(evalProbe && node.parameterEntry &&
+               node.parameterEntry->id == "body_UD") {
+                if(auto L = spdlog::get("plugin")) {
+                    L->info(
+                        "emote.eval3 idx={} x={:.2f} y={:.2f} "
+                        "meshPts={} interpRatio={:.3f}",
+                        node.index, node.interpolatedCache.x,
+                        node.interpolatedCache.y,
+                        node.interpolatedCache.meshBezierPoints.size(),
+                        node.timelineEvalRatio);
+                }
+            }
             if(!timelineUpdated) {
                 continue;
             }
