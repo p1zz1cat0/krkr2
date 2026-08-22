@@ -99,6 +99,8 @@ namespace {
 
 namespace motion {
 
+    thread_local const char *g_emoteWriteSite = "unknown";
+
     void Player::scheduleTimelineControlAnimatorLike_0x671A50(
         detail::TimelineState &state, size_t trackIndex, float value,
         double transition, double easeWeight) {
@@ -238,6 +240,15 @@ namespace motion {
             if(binding.label.empty()) {
                 continue;
             }
+            // A diff-timeline track driving this label owns its value while
+            // its contribution is live; republishing the controller
+            // animator's stale snapshot here would overwrite the accumulated
+            // output every substep (idle sway froze at its base value).
+            if(const auto ownerIt = _evalResultListIndex.find(binding.label);
+               ownerIt != _evalResultListIndex.end() &&
+               ownerIt->second->pendingDiff != 0.0) {
+                continue;
+            }
 
             double value = 0.0;
             const auto *bucket =
@@ -263,6 +274,7 @@ namespace motion {
                 value = getVariable(detail::widen(binding.label));
             }
 
+            g_emoteWriteSite = "refreshFixed";
             writeEvalResultValueLike_0x6C4668(binding.label, value);
         }
     }
@@ -390,6 +402,7 @@ namespace motion {
             if(shouldMirrorEvalLabelLike_0x67C6B0(binding.varLr)) {
                 lrFinal = -lrFinal;
             }
+            g_emoteWriteSite = "clamp";
             writeEvalResultValueLike_0x6C4668(binding.varLr, lrFinal);
             writeEvalResultValueLike_0x6C4668(binding.varUd, udFinal);
         }
@@ -411,6 +424,7 @@ namespace motion {
             if(shouldMirrorEvalLabelLike_0x67C6B0(entry.label)) {
                 outputValue = -outputValue;
             }
+            g_emoteWriteSite = "postProcess";
             writeEvalResultValueLike_0x6C4668(entry.label, outputValue);
             // writeEvalResultValue stored the mirrored final; keep the
             // unmirrored base+diff so next frame's subtraction matches.
@@ -926,6 +940,7 @@ namespace motion {
                 double steppedValue = state.currentValue;
                 const bool stillAnimating = stepQueuedAnimatorLike_0x67D01C(
                     state, controllerDt, steppedValue);
+                g_emoteWriteSite = "bucket";
                 writeEvalResultValueLike_0x6C4668(label, steppedValue);
                 if(wasAnimating && !stillAnimating && controllerDt > 0.0) {
                     LOGGER->info("emote.anim.done key={} value={:.2f}", label,

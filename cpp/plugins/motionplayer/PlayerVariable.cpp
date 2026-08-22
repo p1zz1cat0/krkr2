@@ -367,10 +367,29 @@ namespace motion {
         writeEvalResultValueLike_0x6C4668(label, 0, value);
     }
 
+    // TEMP: current writer site for the env-gated write audit.
+    thread_local extern const char *g_emoteWriteSite;
+
     void Player::writeEvalResultValueLike_0x6C4668(const std::string &label,
                                                    int mode, double value) {
         if(label.empty()) {
             return;
+        }
+        // TEMP audit: every write to diff-timeline target labels.
+        static const bool audit = [] {
+            const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        if(audit && label == "body_UD") {
+            if(auto logger = spdlog::get("plugin")) {
+                logger->info(
+                    "emote.write.audit site={} path={} v={:.3f}",
+                    g_emoteWriteSite, 
+                    _runtime && _runtime->activeMotion
+                        ? _runtime->activeMotion->path
+                        : std::string{},
+                    value);
+            }
         }
         ensureEvalResultSlotLike_0x686944(label) = value;
         _variableValues[label] = value;
