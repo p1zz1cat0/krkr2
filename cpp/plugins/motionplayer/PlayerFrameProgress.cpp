@@ -97,9 +97,12 @@ namespace {
 
 } // anonymous namespace
 
-namespace motion {
+namespace motion::internal {
 
     thread_local const char *g_emoteWriteSite = "unknown";
+}
+
+namespace motion {
 
     void Player::scheduleTimelineControlAnimatorLike_0x671A50(
         detail::TimelineState &state, size_t trackIndex, float value,
@@ -312,6 +315,18 @@ namespace motion {
                 value +=
                     static_cast<double>(state.controlTrackValues[trackIndex]) *
                     state.blendRatio;
+                if(const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT")) {
+                    if(env[0] != '0' && env[0] != '\0' && label == "body_UD") {
+                        if(auto L = spdlog::get("plugin")) {
+                            L->info(
+                                "emote.acc2 tl={} +={:.3f} -> {:.3f} t={:.2f}",
+                                timelineLabel,
+                                state.controlTrackValues[trackIndex] *
+                                    state.blendRatio,
+                                value, state.currentTime);
+                        }
+                    }
+                }
             }
         }
     }
@@ -425,6 +440,18 @@ namespace motion {
                 outputValue = -outputValue;
             }
             g_emoteWriteSite = "postProcess";
+            if(const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT")) {
+                if(env[0] != '0' && env[0] != '\0' &&
+                   entry.label == "body_UD") {
+                    if(auto L = spdlog::get("plugin")) {
+                        L->info(
+                            "emote.pp2 base={:.3f} pd_old={:.3f} out={:.3f} "
+                            "pd_new={:.3f}",
+                            entry.value + entry.pendingDiff,
+                            entry.pendingDiff, preMirror, entry.pendingDiff);
+                    }
+                }
+            }
             writeEvalResultValueLike_0x6C4668(entry.label, outputValue);
             // writeEvalResultValue stored the mirrored final; keep the
             // unmirrored base+diff so next frame's subtraction matches.

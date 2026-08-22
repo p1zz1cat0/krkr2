@@ -171,6 +171,12 @@ namespace motion {
     void Player::removeEvalResultSlotLike_Reset(const std::string &label) {
         if(const auto it = _evalResultListIndex.find(label);
            it != _evalResultListIndex.end()) {
+            if(label == "body_UD" && spdlog::get("plugin")) {
+                spdlog::get("plugin")->info(
+                    "emote.slot.remove site={} pd={:.3f} v={:.3f}",
+                    g_emoteWriteSite, it->second->pendingDiff,
+                    it->second->value);
+            }
             _evalResultList.erase(it->second);
             _evalResultListIndex.erase(it);
         }
@@ -366,9 +372,6 @@ namespace motion {
                                                    double value) {
         writeEvalResultValueLike_0x6C4668(label, 0, value);
     }
-
-    // TEMP: current writer site for the env-gated write audit.
-    thread_local extern const char *g_emoteWriteSite;
 
     void Player::writeEvalResultValueLike_0x6C4668(const std::string &label,
                                                    int mode, double value) {

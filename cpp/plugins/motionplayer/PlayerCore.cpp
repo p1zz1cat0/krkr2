@@ -129,6 +129,7 @@ namespace motion {
             return;
         }
         _selectorEnabled = v;
+        g_emoteWriteSite = "selSync:setSelectorEnabled";
         syncSelectorControlsLike_0x670D1C();
     }
 
@@ -1084,7 +1085,12 @@ namespace motion {
 
         _variableKeys = detail::makeArray(
             detail::stringsToVariants(_runtime->activeMotion->variableLabels));
-        syncSelectorControlsLike_0x670D1C();
+        // NOTE: no syncSelectorControlsLike_0x670D1C here. This helper runs
+        // after every motion activation including repeated child-player
+        // bootstrap, and the selector sweep wipes + re-applies option
+        // snapshots for every pose variable it registers (body_UD, ...),
+        // which fought live diff-timeline contributions every frame.
+        // Selector state syncs on explicit events instead.
     }
 
     void Player::syncSelectorControlsLike_0x670D1C() {
@@ -1092,6 +1098,13 @@ namespace motion {
         if(!activeMotion) {
             return;
         }
+
+        // A diff-timeline track driving a selector label owns its value
+        // while the contribution is live. NEKOPARA's transitionControl +
+        // selectorControl tables register every pose variable (body_UD,
+        // head_slant, ...), so letting the sweep run freely wiped the
+        // pendingDiff bookkeeping each frame and re-applied the option
+        // snapshot — idle sway froze at the scenario pose and twitched.
 
         const auto removeRuntimeState = [this](const std::string &label) {
             if(label.empty()) {
@@ -1178,6 +1191,7 @@ namespace motion {
         }
 
         if(_selectorEnabled) {
+            g_emoteWriteSite = "selSync:resetController";
             syncSelectorControlsLike_0x670D1C();
         }
         _emoteDirty = true;

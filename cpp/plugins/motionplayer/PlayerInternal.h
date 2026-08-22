@@ -42,6 +42,9 @@
 namespace motion {
     namespace internal {
 
+        // TEMP: current writer site tag for the env-gated write audit.
+        extern thread_local const char *g_emoteWriteSite;
+
 
         // Return true if a source path is a motion cross-reference
         // (e.g. "motion/title_bg/char_move"), not an image source.
