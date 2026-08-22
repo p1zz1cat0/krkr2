@@ -229,6 +229,7 @@ namespace motion {
             ++runtime.motionGeneration;
             runtime.activeMotion = snapshot;
             runtime.timelines.clear();
+            runtime.hasLastPreparedDrawBounds = false;
             // Reset persistent node tree so it gets rebuilt for new motion
             // by the subsequent eager Player_buildNodeTree call (no gate).
             // Mirrors Player_resetAndReleaseNodes (0x6B56F8) shape: keep the

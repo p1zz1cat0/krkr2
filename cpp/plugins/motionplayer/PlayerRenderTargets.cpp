@@ -938,7 +938,19 @@ namespace motion {
                 continue;
             }
 
-            if(itemLayerResult.createdOrChanged) {
+            const auto rejectRaster = [&]() {
+                itemLayer->SetVisible(false);
+                itemLayer->SetHasImage(false);
+            };
+
+            // A prior payload may have failed after reusing an existing
+            // Layer. Without an image, force another load attempt instead of
+            // treating the equal payload as a valid cached raster and making
+            // a stale part visible again.
+            const bool needsRaster = itemLayerResult.createdOrChanged ||
+                !itemLayer->GetHasImage() || !itemLayer->GetMainImage();
+
+            if(needsRaster) {
                 ++changedItems;
                 tTJSVariant sourceObject =
                     _runtime->sourceCacheNative->loadRenderSourceByName(
@@ -948,6 +960,7 @@ namespace motion {
                 if(sourceObject.Type() != tvtObject ||
                    !sourceObject.AsObjectNoAddRef()) {
                     ++skippedSource;
+                    rejectRaster();
                     continue;
                 }
                 auto *sourceLayerObject = sourceObject.AsObjectNoAddRef();
@@ -959,6 +972,7 @@ namespace motion {
                    !setLayerSizeLike_0x6CE19C(itemLayerObject, clipWidth,
                                               clipHeight)) {
                     ++skippedSize;
+                    rejectRaster();
                     continue;
                 }
 
@@ -988,6 +1002,7 @@ namespace motion {
                 }
                 if(!copied) {
                     ++skippedCopy;
+                    rejectRaster();
                     continue;
                 }
             }
@@ -1017,7 +1032,6 @@ namespace motion {
             "targetLayer={} canvas={}x{} renderedItems={}",
             static_cast<const void *>(targetLayerObject), canvasWidth,
             canvasHeight, renderedItems);
-
         // Rate-limited performance signal for real-game sampling. Only the
         // slowest frames produce output, so a healthy scene stays quiet while
         // a frozen entry or an animated dialogue scene reports its cost with
@@ -1026,56 +1040,86 @@ namespace motion {
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - renderStart)
                 .count();
-        if(_runtime && !_runtime->slaFirstRenderLogged) {
+
+        // KRKR_EMOTE_ITEM_DUMP=1 → per-item dump on first render;
+        // =2 → throttled per-item dump every 250ms (interpolation studies).
+        static const int itemDumpMode = [] {
+            const char *env = std::getenv("KRKR_EMOTE_ITEM_DUMP");
+            if(!env || env[0] == '\0' || env[0] == '0') {
+                return 0;
+            }
+            return env[0] == '2' ? 2 : 1;
+        }();
+
+        const bool firstRender =
+            _runtime && !_runtime->slaFirstRenderLogged;
+        if(firstRender) {
             _runtime->slaFirstRenderLogged = true;
-            if(auto logger = spdlog::get("plugin")) {
-                logger->info(
-                    "sla.accurate.first path={} frameMs={:.1f} "
-                    "items={} rendered={} changed={} canvas={}x{} "
-                    "skip=[gate={},clip={},layer={},source={},size={},"
-                    "copy={}]",
-                    motionPath, frameMs,
-                    _runtime->preparedRenderItemsTopLevel.size(),
-                    renderedItems, changedItems, canvasWidth, canvasHeight,
-                    skippedGate, skippedClip, skippedLayer, skippedSource,
-                    skippedSize, skippedCopy);
-                // One-shot per-item dump for part-visibility diagnosis.
-                // logoChainTraceLogf is path-gated to logo files, so real
-                // character scenes had no way to show which prepared items
-                // were gate-skipped versus rendered. Iterates the same list
-                // as the draw loop above so the counts reconcile with
-                // items=/rendered=/skip=[gate=...] in sla.accurate.first.
-                static const bool dumpItems = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_ITEM_DUMP");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(dumpItems) {
-                    for(const auto *itemPtr :
-                        _runtime->preparedRenderItemsTopLevel) {
-                        if(!itemPtr) {
-                            continue;
-                        }
-                        const auto &item = *itemPtr;
-                        std::string label;
-                        if(item.nodeIndex >= 0 &&
-                           static_cast<size_t>(item.nodeIndex) <
-                               _runtime->nodes.size()) {
-                            label = _runtime->nodes[static_cast<size_t>(
-                                                        item.nodeIndex)]
-                                        .layerName;
-                        }
-                        logger->info(
-                            "sla.accurate.item.dump path={} node={} "
-                            "label='{}' layerId={} source='{}' opacity={} "
-                            "skip0={} flag16={} paintBox=[{:.1f},{:.1f},"
-                            "{:.1f},{:.1f}]",
-                            motionPath, item.nodeIndex,
-                            label.empty() ? "<none>" : label, item.layerId,
-                            item.sourceKey, item.opacity,
-                            item.skipFlag0 ? 1 : 0, item.rawFlag16 ? 1 : 0,
-                            item.paintBox[0], item.paintBox[1],
-                            item.paintBox[2], item.paintBox[3]);
+        }
+        bool dumpItemsNow = false;
+        if(itemDumpMode == 2 && _runtime) {
+            static auto lastDump =
+                std::chrono::steady_clock::time_point();
+            const auto now = std::chrono::steady_clock::now();
+            if(std::chrono::duration_cast<std::chrono::milliseconds>(
+                   now - lastDump)
+                   .count() >= 250) {
+                lastDump = now;
+                dumpItemsNow = true;
+            }
+        }
+        if(firstRender || dumpItemsNow) {
+            auto pluginLogger = spdlog::get("plugin");
+            if(pluginLogger) {
+                if(firstRender) {
+                    pluginLogger->info(
+                        "sla.accurate.first path={} frameMs={:.1f} "
+                        "items={} rendered={} changed={} canvas={}x{} "
+                        "skip=[gate={},clip={},layer={},source={},size={},"
+                        "copy={}]",
+                        motionPath, frameMs,
+                        _runtime->preparedRenderItemsTopLevel.size(),
+                        renderedItems, changedItems, canvasWidth, canvasHeight,
+                        skippedGate, skippedClip, skippedLayer, skippedSource,
+                        skippedSize, skippedCopy);
+                }
+                // One-shot/throttled per-item dump for part-visibility and
+                // interpolation diagnosis. logoChainTraceLogf is path-gated
+                // to logo files, so real character scenes had no way to show
+                // which prepared items were gate-skipped versus rendered.
+                // Iterates the same list as the draw loop above so the counts
+                // reconcile with items=/rendered=/skip=[gate=...] in
+                // sla.accurate.first.
+                for(const auto *itemPtr :
+                    _runtime->preparedRenderItemsTopLevel) {
+                    if(!itemPtr) {
+                        continue;
                     }
+                    const auto &item = *itemPtr;
+                    std::string label;
+                    if(item.nodeIndex >= 0 &&
+                       static_cast<size_t>(item.nodeIndex) <
+                           _runtime->nodes.size()) {
+                        label = _runtime->nodes[static_cast<size_t>(
+                                                    item.nodeIndex)]
+                                    .layerName;
+                    }
+                    double bodyUd = 0.0;
+                    if(const auto it = _variableValues.find("body_UD");
+                       it != _variableValues.end()) {
+                        bodyUd = it->second;
+                    }
+                    pluginLogger->info(
+                        "sla.accurate.item.dump body_UD={:.2f} node={} "
+                        "label='{}' layerId={} source='{}' opacity={} "
+                        "skip0={} flag16={} paintBox=[{:.1f},{:.1f},"
+                        "{:.1f},{:.1f}]",
+                        bodyUd, item.nodeIndex,
+                        label.empty() ? "<none>" : label, item.layerId,
+                        item.sourceKey, item.opacity,
+                        item.skipFlag0 ? 1 : 0, item.rawFlag16 ? 1 : 0,
+                        item.paintBox[0], item.paintBox[1],
+                        item.paintBox[2], item.paintBox[3]);
                 }
             }
         }

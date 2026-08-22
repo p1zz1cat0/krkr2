@@ -827,6 +827,29 @@ namespace motion {
             populateDeltaStateFromFrameState(
                 node.delta, frameStateFromNodeSlots(node, selectionTime));
 
+            // TEMP probe: parameterized pose-node evaluation flow.
+            static const bool evalProbe = [] {
+                const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
+                return env && env[0] != '\0' && env[0] != '0';
+            }();
+            if(evalProbe && node.parameterEntry &&
+               node.parameterEntry->id == "body_UD") {
+                const double selT =
+                    frameSelectionTimeLike_0x6B7E44(node, nodeEvalTime,
+                                                    emoteLike);
+                if(auto L = spdlog::get("plugin")) {
+                    L->info(
+                        "emote.eval2 path={} lbl={} idx={} selT={:.2f} "
+                        "active={} cf={} otherDone={} dirty={}",
+                        motionPath,
+                        node.layerName.empty() ? "<none>" : node.layerName,
+                        node.index, selT,
+                        node.activeSlot().frameIndex,
+                        node.activeSlot().crossfading ? 1 : 0,
+                        node.otherSlot().done ? 1 : 0,
+                        timelineDirtyArg ? 1 : 0);
+                }
+            }
             const bool timelineUpdated = evaluateTimelineLike_0x699AE4(
                 node, timelineDirtyArg, nodeEvalTime, emoteLike);
             if(!timelineUpdated) {
