@@ -968,6 +968,16 @@ namespace motion {
                 const bool stillAnimating = stepQueuedAnimatorLike_0x67D01C(
                     state, controllerDt, steppedValue);
                 g_emoteWriteSite = "bucket";
+                // A live diff-timeline contribution owns this label; the
+                // controller animator's stale snapshot must not fight it
+                // (NEKOPARA posed body_UD=-30 vs accumulate ≈0 ping-ponged
+                // the character between two poses every frame).
+                if(const auto ownerIt = _evalResultListIndex.find(label);
+                   ownerIt != _evalResultListIndex.end() &&
+                   ownerIt->second->pendingDiff != 0.0) {
+                    state.currentValue = static_cast<float>(steppedValue);
+                    continue;
+                }
                 writeEvalResultValueLike_0x6C4668(label, steppedValue);
                 if(wasAnimating && !stillAnimating && controllerDt > 0.0) {
                     LOGGER->info("emote.anim.done key={} value={:.2f}", label,
@@ -1099,7 +1109,17 @@ namespace motion {
                     const bool stillAnimating =
                         stepQueuedAnimatorLike_0x67D01C(
                             state, controllerDt, steppedValue);
-                    writeEvalResultValueLike_0x6C4668(label, steppedValue);
+                    // A live diff-timeline contribution owns this label; the
+                // controller animator's stale snapshot must not fight it
+                // (NEKOPARA posed body_UD=-30 vs accumulate ≈0 ping-ponged
+                // the character between two poses every frame).
+                if(const auto ownerIt = _evalResultListIndex.find(label);
+                   ownerIt != _evalResultListIndex.end() &&
+                   ownerIt->second->pendingDiff != 0.0) {
+                    state.currentValue = static_cast<float>(steppedValue);
+                    continue;
+                }
+                writeEvalResultValueLike_0x6C4668(label, steppedValue);
                     if(stillAnimating) {
                         _emoteDirty = true;
                     }
