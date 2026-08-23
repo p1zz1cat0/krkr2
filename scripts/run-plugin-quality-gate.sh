@@ -72,11 +72,13 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 
 spatial_dir="${YOGHOURT_SPATIAL_PRESENTER_DIR:-${repo_root:h:h}/RuntimeSupport/SpatialPresenter}"
+relay_dir="${YOGHOURT_SURFACE_RELAY_DIR:-${repo_root:h:h}/RuntimeSupport/SurfaceRelay}"
 for configuration in debug release; do
   if [[ "$configuration" == debug ]]; then preset="MacOS Debug Config"; else preset="MacOS Release Config"; fi
   build_dir="$repo_root/out/macos/$configuration"
   run_logged "$configuration-configure" cmake --preset "$preset" \
-    -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF \
+    -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" -DYOGHOURT_SURFACE_RELAY_DIR="$relay_dir" \
+    -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF \
     ${VCPKG_TARGET_TRIPLET:+-DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET"}
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
   run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 "${targets[@]}"

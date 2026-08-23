@@ -6,6 +6,7 @@
 #include "RendererSelfTest.h"
 #include "YoghourtSpatialAdapter.h"
 #include "YoghourtSpatialPresenter.h"
+#include "IOSurfaceRingComponentTest.h"
 
 #include <algorithm>
 #include <atomic>
@@ -619,6 +620,17 @@ int YoghourtRunRendererSelfTest() {
                 || !RunPbufferChecks(state)
                 || !RunIOSurfaceMetalChecks(state))
                 break;
+
+            id<MTLDevice> ringTestDevice = QuerySelfTestMetalDevice(state.display);
+            if (!ringTestDevice) {
+                std::fprintf(stderr, "[Yoghourt] ERROR renderer self-test: surface-relay component test metal device unavailable\n");
+                break;
+            }
+            if (!yoghourt_surface_relay::RunIOSurfaceRingComponentTest(
+                    state.display, state.config, (__bridge void *)ringTestDevice)) {
+                LogFailure("surface-relay component test");
+                break;
+            }
 
             state.window = eglCreateWindowSurface(
                 state.display,

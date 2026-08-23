@@ -76,10 +76,19 @@ elseif(MACOS)
     if(NOT YOGHOURT_SPATIAL_PRESENTER_DIR)
         message(FATAL_ERROR "YOGHOURT_SPATIAL_PRESENTER_DIR is required for the macOS KrKr2 build")
     endif()
+    if(NOT YOGHOURT_SURFACE_RELAY_DIR)
+        message(FATAL_ERROR "YOGHOURT_SURFACE_RELAY_DIR is required for the macOS KrKr2 build")
+    endif()
     set(YOGHOURT_SPATIAL_PRESENTER_SOURCE
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.h
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/cunny/cunny_metal.h
+    )
+    set(YOGHOURT_SURFACE_RELAY_SOURCE
+            ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRing.h
+            ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRing.mm
+            ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRingComponentTest.h
+            ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRingComponentTest.mm
     )
     set(APP_UI_RES
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/Icon.icns
@@ -93,6 +102,7 @@ elseif(MACOS)
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtPresentation.mm
             ${YOGHOURT_SPATIAL_PRESENTER_SOURCE}
+            ${YOGHOURT_SURFACE_RELAY_SOURCE}
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/Prefix.pch
             ${APP_UI_RES}
     )
@@ -103,11 +113,14 @@ if(MACOS)
     target_include_directories(${PROJECT_NAME} PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}
+            ${YOGHOURT_SURFACE_RELAY_DIR}
     )
     set_source_files_properties(
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
+            ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRing.mm
+            ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRingComponentTest.mm
             PROPERTIES COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
