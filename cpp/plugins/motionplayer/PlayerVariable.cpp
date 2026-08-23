@@ -63,12 +63,26 @@ namespace {
 
     void bindParameterEntriesLike_0x6C4668(
         std::vector<motion::detail::MotionParameterEntry> &entries,
-        const ParameterLabelParts &parts, int mode, double rawValue) {
+        const ParameterLabelParts &parts, int mode, double rawValue,
+        bool directControllerFrame) {
         for(auto &entry : entries) {
             if(!parameterIdMatchesLabelLike_0x6D0BF4(entry, parts)) {
                 continue;
             }
-            entry.value = normalizeParameterValueLike_0x6B1718(entry, rawValue);
+            if(directControllerFrame) {
+                // eye/eyebrow/mouth controls address authored frame times
+                // directly (same contract as the load-time seed in
+                // syncParameterEntriesFromVariablesLike_sdl3). Normalizing
+                // here shifted every per-frame write by -rangeBegin and the
+                // accumulate republish compounded it, running facial ticks
+                // to their range maximum within a few frames.
+                const double lo = std::min(entry.rangeBegin, entry.rangeEnd);
+                const double hi = std::max(entry.rangeBegin, entry.rangeEnd);
+                entry.value = std::clamp(rawValue, lo, hi);
+            } else {
+                entry.value =
+                    normalizeParameterValueLike_0x6B1718(entry, rawValue);
+            }
             entry.mode = mode;
         }
     }
@@ -297,8 +311,24 @@ namespace motion {
         }
 
         const auto parts = splitParameterLabelLike_0x6D0BF4(label);
+        bool directControllerFrame = false;
+        for(const Player *player = this; player != nullptr;
+            player = player->_parentPlayer) {
+            const auto *motion = player->_runtime
+                ? player->_runtime->activeMotion.get()
+                : nullptr;
+            if(!motion) {
+                continue;
+            }
+            const auto binding = motion->controllerBindings.find(label);
+            if(binding != motion->controllerBindings.end() &&
+               binding->second.type >= 4 && binding->second.type <= 6) {
+                directControllerFrame = true;
+                break;
+            }
+        }
         bindParameterEntriesLike_0x6C4668(_runtime->parameterEntries, parts,
-                                          mode, value);
+                                          mode, value, directControllerFrame);
 
         for(auto &node : _runtime->nodes) {
             if(node.nodeType == 3) {
