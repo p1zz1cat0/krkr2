@@ -737,7 +737,8 @@ namespace motion {
             auto &node = nodes[i];
 
             double nodeEvalTime = currentTime;
-            if(freezeBodyTimeline && node.parameterizeIndex < 0) {
+            if(freezeBodyTimeline && node.parameterizeIndex < 0 &&
+               !_controlDrivenEvalTime) {
                 nodeEvalTime = 0.0;
             }
 

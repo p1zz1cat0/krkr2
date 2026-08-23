@@ -660,8 +660,57 @@ namespace motion {
                 // libkrkr2.so label_18：子 Player 每帧
                 // frameProgress+updateLayers。
                 if(emoteLike) {
-                    child._clampedEvalTime = 0.0;
-                    child.frameProgress(0.0);
+                    child._externalMeshParents.clear();
+                    int meshParentIndex = mn.meshParentIndex;
+                    for(int guard = 0;
+                        meshParentIndex >= 0 &&
+                            meshParentIndex < static_cast<int>(nodes.size()) &&
+                            guard < 256;
+                        ++guard) {
+                        const auto &meshParent = nodes[static_cast<size_t>(
+                            meshParentIndex)];
+                        child._externalMeshParents.push_back(&meshParent);
+                        if(meshParent.meshParentIndex == meshParentIndex) {
+                            break;
+                        }
+                        meshParentIndex = meshParent.meshParentIndex;
+                    }
+                    // Control-driven child motions (目L/眉L style: no
+                    // parameterized nodes, motion.parameter[] defines the
+                    // control variable): their layer timelines are indexed by
+                    // transToTick of the wrapper's live control value, not by
+                    // wall-clock. Freeze-at-0 here left every facial feature
+                    // on its first keyframe.
+                    bool hasParameterizedNode = false;
+                    for(const auto &cn : child._runtime->nodes) {
+                        if(cn.parameterizeIndex >= 0) {
+                            hasParameterizedNode = true;
+                            break;
+                        }
+                    }
+                    child._controlDrivenEvalTime = false;
+                    double childEvalTime = 0.0;
+                    if(!hasParameterizedNode &&
+                       !child._runtime->parameterEntries.empty()) {
+                        const auto &pe =
+                            child._runtime->parameterEntries.front();
+                        if(pe.rangeScale != 0.0 && !pe.id.empty()) {
+                            const double raw =
+                                child.initialParameterRawValueLike_0x6B1ABC(
+                                    pe.id);
+                            childEvalTime =
+                                (raw - pe.rangeBegin) * pe.rangeScale;
+                            child._controlDrivenEvalTime = true;
+                        }
+                    }
+                    child._clampedEvalTime = childEvalTime;
+                    try {
+                        child.frameProgress(0.0);
+                    } catch(...) {
+                        child._externalMeshParents.clear();
+                        throw;
+                    }
+                    child._externalMeshParents.clear();
                 } else if(runChildStep) {
                     child.frameProgress(_frameLastTime);
                 }
