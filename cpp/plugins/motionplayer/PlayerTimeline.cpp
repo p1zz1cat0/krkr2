@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "PlayerInternal.h"
+#include <spdlog/spdlog.h>
 #include "ncbind.hpp"
 
 using namespace motion::internal;
@@ -135,9 +136,9 @@ namespace motion {
         if(const auto controlIt =
                _runtime->activeMotion->timelineControlByLabel.find(key);
            controlIt != _runtime->activeMotion->timelineControlByLabel.end()) {
-            // 参考 sdl3/emoteplayerclass.cpp（不编译）: getLoopTimeline()
-            // returns timelineControl.lastTime < 0.
-            return controlIt->second.lastTime < 0.0;
+            const auto &binding = controlIt->second;
+            return binding.loopBegin >= 0.0 &&
+                binding.loopEnd > binding.loopBegin;
         }
         if(const auto it = _runtime->activeMotion->loopTimelines.find(key);
            it != _runtime->activeMotion->loopTimelines.end()) {
@@ -182,10 +183,14 @@ namespace motion {
                controlIt !=
                _runtime->activeMotion->timelineControlByLabel.end()) {
                 const auto &binding = controlIt->second;
-                if(binding.loopEnd >= binding.loopBegin) {
+                if(binding.loopBegin >= 0.0 &&
+                   binding.loopEnd > binding.loopBegin) {
                     // 参考 sdl3: loopEnd - loopBegin + 1
                     return static_cast<tjs_int>(binding.loopEnd -
                                                 binding.loopBegin + 1.0);
+                }
+                if(binding.lastTime >= 0.0) {
+                    return static_cast<tjs_int>(binding.lastTime);
                 }
             }
         }
@@ -219,9 +224,10 @@ namespace motion {
             return;
         }
 
-        // Aligned to libkrkr2.so Player_playTimeline (0x672F70):
-        // parallel flag first clears the playing-timeline list.
-        if((flags & 1) != 0) {
+        // NEKOPARA's MotionAffineSourceLayer.tjs passes 1 for main timelines
+        // ("always parallel") and 3 for parallel + difference. Only a
+        // non-parallel request replaces the current timeline set.
+        if((flags & TimelinePlayFlagParallel) == 0) {
             stopTimeline(TJS_W(""));
         }
 

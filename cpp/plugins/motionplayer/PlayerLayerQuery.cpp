@@ -205,15 +205,22 @@ namespace motion {
     }
 
 
+    bool Player::screenPointToLocal(double x, double y, double &localX,
+                                    double &localY) const {
+        if(!_runtime) {
+            return false;
+        }
+        // applyPreparedRenderItemTranslateOffsets adds cameraOffset *after*
+        // the affine, so peel it off in the same order.
+        return detail::inverseAffinePoint(_runtime->drawAffineMatrix,
+                                          x - _cameraOffsetX,
+                                          y - _cameraOffsetY, localX, localY);
+    }
+
     bool Player::hitTestLayer(ttstr name, double x, double y) {
         ensureMotionLoaded();
         if(!_runtime || !_runtime->activeMotion) {
             return false;
-        }
-
-        if(!_runtime->nodes.empty()) {
-            updateLayers();
-            calcBounds();
         }
 
         const auto key = detail::narrow(name);
@@ -259,6 +266,13 @@ namespace motion {
         };
 
         if(const auto *node = findNodeRecursive(findNodeRecursive, this)) {
+            // node.bounds/vertices stay local; calcBounds never applies
+            // drawAffineMatrix, but the incoming point is in draw space.
+            double localX = 0.0;
+            double localY = 0.0;
+            if(!screenPointToLocal(x, y, localX, localY)) {
+                return false;
+            }
             motion::detail::HitData hit{};
             hit.type = node->shapeGeomType;
             for(size_t i = 0;
@@ -267,11 +281,11 @@ namespace motion {
                 hit.values[i] = node->shapeVertices[i];
             }
             if(!motion::detail::hitDataIsDegenerate(hit) &&
-               motion::detail::hitTestHitData(hit, x, y)) {
+               motion::detail::hitTestHitData(hit, localX, localY)) {
                 return true;
             }
             if(motion::detail::pointInAabb(
-                   x, y, static_cast<double>(node->bounds[0]),
+                   localX, localY, static_cast<double>(node->bounds[0]),
                    static_cast<double>(node->bounds[1]),
                    static_cast<double>(node->bounds[2]),
                    static_cast<double>(node->bounds[3]))) {
@@ -291,7 +305,8 @@ namespace motion {
                 maxY = std::max(
                     maxY, static_cast<double>(node->vertices[vi * 2 + 1]));
             }
-            return motion::detail::pointInAabb(x, y, minX, minY, maxX, maxY);
+            return motion::detail::pointInAabb(localX, localY, minX, minY,
+                                               maxX, maxY);
         }
         return false;
     }
@@ -323,6 +338,11 @@ namespace motion {
         if(!_runtime || !_runtime->activeMotion) {
             return false;
         }
+        if(_runtime->hasLastPreparedDrawBounds) {
+            const auto &bounds = _runtime->lastPreparedDrawBounds;
+            return detail::pointInAabb(x, y, bounds[0], bounds[1], bounds[2],
+                                       bounds[3]);
+        }
         if(!_runtime->nodes.empty()) {
             updateLayers();
             calcBounds();
@@ -334,7 +354,13 @@ namespace motion {
         if(!getValidBounds(minX, minY, maxX, maxY)) {
             return false;
         }
-        return detail::pointInAabb(x, y, minX, minY, maxX, maxY);
+        // getValidBounds reports calcBounds output, which is local space.
+        double localX = 0.0;
+        double localY = 0.0;
+        if(!screenPointToLocal(x, y, localX, localY)) {
+            return false;
+        }
+        return detail::pointInAabb(localX, localY, minX, minY, maxX, maxY);
     }
 
 

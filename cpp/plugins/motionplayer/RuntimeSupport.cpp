@@ -673,7 +673,6 @@ namespace motion::detail {
                     ++index;
                     continue;
                 }
-
                 // Aligned to sub_66D8FC + sub_66E248:
                 // disabled selector entries are removed from the selector label
                 // container instead of participating in controller binding.
@@ -1670,6 +1669,20 @@ namespace motion::detail {
                     snapshot.timelineTotalFrames.end()
                 ? snapshot.timelineTotalFrames.at(label)
                 : 0.0;
+            if(const auto control =
+                   snapshot.timelineControlByLabel.find(label);
+               control != snapshot.timelineControlByLabel.end()) {
+                const auto &binding = control->second;
+                if(binding.lastTime >= 0.0) {
+                    state.totalFrames =
+                        std::max(state.totalFrames, binding.lastTime);
+                }
+                if(binding.loopBegin >= 0.0 &&
+                   binding.loopEnd > binding.loopBegin) {
+                    state.loop = true;
+                    state.loopTime = binding.loopBegin;
+                }
+            }
         };
 
         for(const auto &label : snapshot.mainTimelineLabels) {

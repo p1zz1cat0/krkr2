@@ -104,7 +104,7 @@ D3DEmotePlayer（可选 Windows D3D 路径）
 - `setVariable("face_mouth", …)` ≈ Live2D 口型参数
 - `playTimeline` + `setTimelineBlendRatio` ≈ Expression 混合
 - `setCoord` / `setScale` / `setRotate` ≈ 模型矩阵（但由插件内 Animator 插值）
-- `contains("hit_bust", x, y)` ≈ Hit Area（需脚本逆仿射）
+- `contains("hit_bust", x, y)` ≈ Hit Area（传入最终绘制坐标；插件内部只逆仿射一次）
 
 ---
 
@@ -189,9 +189,10 @@ var mgr = new MotionResourceManager(kag);  // 包装 Motion.ResourceManager
 | 常量 | 值 |
 |------|-----|
 | `TimelinePlayFlagParallel` | 1 |
-| `TimelinePlayFlagSequential` | 2 |
+| `TimelinePlayFlagDifference` | 2 |
+| `TimelinePlayFlagSequential` | 2（兼容别名） |
 
-> ⚠️ **歧义：** `manual.tjs` 写的是 `TimelinePlayFlagDifference`（差分），与 C++ 注册的 `TimelinePlayFlagSequential` **名称不一致**；脚本实际用 **数值 flag**（main=1，diff=3），见 §3.4。
+> `manual.tjs` 的权威名称为 `TimelinePlayFlagDifference`；现已注册该名称，旧 `TimelinePlayFlagSequential` 仅作兼容别名。脚本实际用 **数值 flag**（main=1，diff=3），见 §3.4。
 
 ### 3.3 Motion.EmotePlayer — 属性
 
@@ -554,7 +555,7 @@ Player::draw → renderToLayer / renderToSeparateLayerAdaptor / renderToD3DAdapt
 
 | 项 | 说明 |
 |----|------|
-| `TimelinePlayFlagDifference` vs `TimelinePlayFlagSequential` | manual 与 C++ 命名不同；脚本用 **整数 1/3** |
+| `TimelinePlayFlagDifference` / `TimelinePlayFlagSequential` | `Difference=2` 为权威名称；`Sequential` 仅作兼容别名；脚本用 **整数 1/3** |
 | `startWind` 五参含义 | manual / C++ 头 / AffineSourceMotion 三套描述；**以游戏 wind 字典为准** |
 | `setTimelineBlendRatio` 参数个数 | 脚本 5 参；NCB 2 参；time/easing **可能未完全移植** |
 | `Player.speed` | C++ 为 **bool**（`_speed`）；MTN 脚本写 `+elm.speed` 数值 → 非零即 true |

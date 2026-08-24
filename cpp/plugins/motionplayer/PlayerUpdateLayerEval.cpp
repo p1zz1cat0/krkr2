@@ -1101,6 +1101,33 @@ namespace motion {
                 }
             }
 
+            if(evalProbe &&
+               ((node.parameterEntry &&
+                 (node.parameterEntry->id == "body_UD" ||
+                  node.parameterEntry->id == "move_UD")) ||
+                (parent.parameterEntry &&
+                 parent.parameterEntry->id == "body_UD"))) {
+                if(auto L = spdlog::get("plugin")) {
+                    L->info(
+                        "emote.eval4 idx={} lbl={} param={} "
+                        "local=({:.2f},{:.2f}) interp=({:.2f},{:.2f}) "
+                        "accum=({:.2f},{:.2f}) "
+                        "m=({:.4f},{:.4f},{:.4f},{:.4f}) "
+                        "meshPts={} parentIdx={}",
+                        node.index,
+                        node.layerName.empty() ? "<none>" : node.layerName,
+                        node.parameterEntry ? node.parameterEntry->id
+                                            : "<none>",
+                        node.localState.posX, node.localState.posY,
+                        node.interpolatedCache.x, node.interpolatedCache.y,
+                        node.accumulated.posX, node.accumulated.posY,
+                        node.accumulated.m11, node.accumulated.m12,
+                        node.accumulated.m21, node.accumulated.m22,
+                        node.interpolatedCache.meshBezierPoints.size(),
+                        parentIdx);
+                }
+            }
+
             if(detail::logoChainTraceEnabled(_runtime->activeMotion)) {
                 detail::logoChainTraceLogf(
                     motionPath, "updateLayers.phase2.accum_final", "0x6BBB6C",

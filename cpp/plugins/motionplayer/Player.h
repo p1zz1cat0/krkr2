@@ -74,6 +74,13 @@ namespace motion {
         PlayFlagStealth = 16
     };
 
+    enum TimelinePlayFlag {
+        TimelinePlayFlagParallel = 1,
+        TimelinePlayFlagDifference = 2,
+        // Compatibility alias retained for the port's former public name.
+        TimelinePlayFlagSequential = TimelinePlayFlagDifference
+    };
+
     // Aligned to libkrkr2.so Motion_namespace_ncb_register (0x6D9B08)
     enum TransformOrder {
         TransformOrderFlip = 0,
@@ -454,6 +461,12 @@ namespace motion {
         double getActiveMotionHeight() const;
         bool hitTestLayer(ttstr name, double x, double y);
         bool hitTestBounds(double x, double y);
+        // Draw space -> local space. Rendered geometry is
+        // drawAffineMatrix(local) + cameraOffset, while node bounds/vertices
+        // and the emote coord/scale box all stay local, so every hit test
+        // against them must invert both steps first.
+        bool screenPointToLocal(double x, double y, double &localX,
+                                double &localY) const;
         bool getValidBounds(double &minX, double &minY, double &maxX,
                             double &maxY) const;
 
@@ -528,6 +541,8 @@ namespace motion {
                                            bool autoStop, double value,
                                            double transition, double ease);
         void refreshFixedControllerEvalOutputsLike_0x67D01C();
+        bool hasActiveDifferenceTimelineOwner(
+            const std::string &label) const;
         void
         accumulateTimelineContributionLike_0x67C560(const std::string &label,
                                                     double &value);
@@ -612,6 +627,10 @@ namespace motion {
         std::shared_ptr<detail::PlayerRuntime> _runtime;
         ResourceManager _resourceManagerNative;
         Player *_parentPlayer = nullptr; // non-owning, for 0x6B1ABC lookup
+        // Valid only during the parent's synchronous child frameProgress().
+        // Maps native cross-Player meshCombine without storing a local index
+        // from a foreign node deque.
+        std::vector<const detail::MotionNode *> _externalMeshParents;
         int _completionType = 0;
         tTJSVariant _metadata;
         ttstr _chara;

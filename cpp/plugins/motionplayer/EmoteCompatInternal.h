@@ -5,6 +5,7 @@
 #include <cmath>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace motion {
     namespace detail {
@@ -13,6 +14,14 @@ namespace motion {
         // 双线性，否则旋转和缩放后立绘边缘会呈锯齿。数值对齐
         // tTVPBBStretchType::stFastLinear。
         constexpr int kEmoteRasterStretchType = 1;
+
+        inline bool differenceTrackOwnsLabel(
+            bool playing, int flags, double blendRatio,
+            const std::string &label, const std::string &trackLabel,
+            bool instantVariable) {
+            return playing && (flags & 2) != 0 && blendRatio != 0.0 &&
+                !label.empty() && !instantVariable && trackLabel == label;
+        }
 
         inline bool shouldMergeEmoteBoundedChild(int nodeType,
                                                  const std::string &source,
@@ -110,6 +119,71 @@ namespace motion {
                 plan.divY = 2;
             }
             return plan;
+        }
+
+        // Unit-space 4×4 Bezier rest pose. sdl3 emoteframe default bp and
+        // authored "bp": null rest keys (NEKOPARA 胴体同期UD time=30) both
+        // mean identity, not "no mesh channel".
+        inline constexpr std::array<double, 32> kUnitMeshBezierPoints = {
+            0.0,       0.0,       1.0 / 3.0, 0.0,       2.0 / 3.0, 0.0,
+            1.0,       0.0,       0.0,       1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0,
+            2.0 / 3.0, 1.0 / 3.0, 1.0,       1.0 / 3.0, 0.0,       2.0 / 3.0,
+            1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0, 1.0,       2.0 / 3.0,
+            0.0,       1.0,       1.0 / 3.0, 1.0,       2.0 / 3.0, 1.0,
+            1.0,       1.0
+        };
+
+        inline void
+        fillUnitMeshBezierIfEmpty(std::vector<double> &points) {
+            if(points.empty()) {
+                points.assign(kUnitMeshBezierPoints.begin(),
+                              kUnitMeshBezierPoints.end());
+            }
+        }
+
+        inline bool
+        isExactUnitMeshBezier(const std::vector<double> &points) {
+            if(points.size() != 32) {
+                return true;
+            }
+            for(size_t index = 0; index < 32; ++index) {
+                if(std::fabs(points[index] - kUnitMeshBezierPoints[index]) >
+                   1.0e-6) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        inline void
+        lerpMeshBezierPoints(std::vector<double> &dst,
+                             const std::vector<double> &other, double t) {
+            const bool dstOk = dst.size() == 32;
+            const bool otherOk = other.size() == 32;
+            if(!dstOk && !otherOk) {
+                return;
+            }
+            std::array<double, 32> aPts = kUnitMeshBezierPoints;
+            std::array<double, 32> bPts = kUnitMeshBezierPoints;
+            if(dstOk) {
+                std::copy(dst.begin(), dst.end(), aPts.begin());
+            }
+            if(otherOk) {
+                std::copy(other.begin(), other.end(), bPts.begin());
+            }
+            dst.resize(32);
+            const double u = 1.0 - t;
+            for(size_t index = 0; index < 32; ++index) {
+                dst[index] = aPts[index] * u + bPts[index] * t;
+            }
+        }
+
+        inline std::array<float, 8> quadCornersToMeshPoints(
+            const std::array<float, 8> &corners) {
+            // MeshCopy 2x2 is row-major: TL, TR, BL, BR. MotionNode corners
+            // are TL, TR, BR, BL.
+            return { corners[0], corners[1], corners[2], corners[3],
+                     corners[6], corners[7], corners[4], corners[5] };
         }
 
         inline bool boundsAreUsable(double minX, double minY, double maxX,

@@ -198,6 +198,8 @@ namespace motion::detail {
             // 0x6B41B8)
             if(auto v = nodeTreePsbNumber(psbNode, "meshSyncChildMask"))
                 node.meshFlags = static_cast<int>(*v);
+            if(auto v = nodeTreePsbNumber(psbNode, "meshCombine"))
+                node.meshCombineAuthored = (*v != 0.0);
             // "meshDivision" → meshDivision (node+2008, sub_6B3C78 at 0x6B41D8)
             if(auto v = nodeTreePsbNumber(psbNode, "meshDivision"))
                 node.meshDivision = static_cast<int>(*v);

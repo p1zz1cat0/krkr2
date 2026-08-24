@@ -3,6 +3,8 @@
 //
 #include "PlayerUpdateLayersInternal.h"
 
+#include <cstdlib>
+
 namespace motion {
     void Player::updateLayersPhase3_CameraConstraint() {
         auto &nodes = _runtime->nodes;
@@ -158,6 +160,7 @@ namespace motion {
         // Aligned to 0x6BC4F0. Full implementation matching decompilation.
         for(size_t vi = 1; vi < nodes.size(); ++vi) {
             auto &vn = nodes[vi];
+            vn.meshWarpedQuad = false;
             const int parentIdx = vn.parentIndex >= 0 ? vn.parentIndex : 0;
             auto &parentNode = nodes[parentIdx];
             const int slotIdx = 0; // current slot index
@@ -187,15 +190,26 @@ namespace motion {
 
             // Parent clip chain: node+1962/1963 flags (0x6BC6E4..0x6BC818)
             // node+1962 = has mesh data, node+1963 = mesh combine enabled
-            // parentClipIndex propagated by sub_6BDCC0 carries the ancestor
-            // chain Set mesh flags: hasMeshData when meshType!=0 and control
-            // points exist; meshCombineEnabled when mesh is active for child
-            // deformation. These flags gate the visibleAncestor conditional in
-            // sub_6BE0C0 (label_18).
-            vn.hasMeshData =
-                (vn.meshType != 0 && !vn.meshControlPoints.empty());
+            // emoteplayer.dll 2016, 0x1002F925..0x1002F958:
+            // meshTransform + active mesh payload + meshSyncChildMask bit 0x8
+            // produce node+0x636 (hasMeshData). PSB "meshCombine" is parsed
+            // independently into node+0x638; bit 0x1 belongs to the separate
+            // surface-position helper at 0x1002E390.
+            const bool hasMeshPayload = !vn.meshControlPoints.empty() ||
+                vn.interpolatedCache.meshBezierPoints.size() == 32;
+            vn.hasMeshData = vn.meshType != 0 && vn.accumulated.active &&
+                hasMeshPayload && (vn.meshFlags & 0x8) != 0;
             vn.meshCombineEnabled =
-                (vn.hasMeshData && vn.meshType == 1 && (vn.meshFlags & 1) != 0);
+                vn.meshCombineAuthored && vn.hasMeshData;
+            if(parentIdx > 0 &&
+               parentIdx < static_cast<int>(nodes.size())) {
+                const auto &meshParent = nodes[parentIdx];
+                vn.meshParentIndex = meshParent.hasMeshData
+                    ? parentIdx
+                    : meshParent.meshParentIndex;
+            } else {
+                vn.meshParentIndex = -1;
+            }
 
             // Check visible (0x6BC700..0x6BC74C)
             if(!vn.accumulated.visible) {
@@ -286,6 +300,95 @@ namespace motion {
                     const double cw = vn.clipW;
                     const double ch = vn.clipH;
 
+                    auto evalUnitBp = [](const float *mesh, float u, float v,
+                                         float &outX, float &outY) {
+                        const float su = 1.f - u, sv = 1.f - v;
+                        const float bu[4] = { su * su * su, 3.f * su * su * u,
+                                              3.f * su * u * u, u * u * u };
+                        const float bv[4] = { sv * sv * sv, 3.f * sv * sv * v,
+                                              3.f * sv * v * v, v * v * v };
+                        outX = 0;
+                        outY = 0;
+                        for(int i = 0; i < 16; ++i) {
+                            const float w = bv[i >> 2] * bu[i & 3];
+                            outX += mesh[i * 2] * w;
+                            outY += mesh[i * 2 + 1] * w;
+                        }
+                    };
+
+                    auto cascadeThroughParent =
+                        [&](const detail::MotionNode &cn, float &wx,
+                            float &wy) -> bool {
+                            if(cn.meshType != 1) {
+                                return false;
+                            }
+                            if(detail::isExactUnitMeshBezier(
+                                   cn.interpolatedCache.meshBezierPoints)) {
+                                return false;
+                            }
+                            float tx = wx + cn.meshInvOffX;
+                            float ty = wy + cn.meshInvOffY;
+                            float u = static_cast<float>(cn.meshInvM11 * tx +
+                                                         cn.meshInvM12 * ty);
+                            float v = static_cast<float>(cn.meshInvM21 * tx +
+                                                         cn.meshInvM22 * ty);
+                            if(cn.interpolatedCache.meshBezierPoints.size() ==
+                               32) {
+                                std::array<float, 32> parentUnit{};
+                                for(size_t bi = 0; bi < 32; ++bi) {
+                                    parentUnit[bi] = static_cast<float>(
+                                        cn.interpolatedCache
+                                            .meshBezierPoints[bi]);
+                                }
+                                evalUnitBp(parentUnit.data(), u, v, u, v);
+                            }
+                            const double invDet = cn.meshInvM11 * cn.meshInvM22 -
+                                cn.meshInvM12 * cn.meshInvM21;
+                            if(std::fabs(invDet) <= 1e-10) {
+                                return false;
+                            }
+                            const double f11 = cn.meshInvM22 / invDet;
+                            const double f12 = -cn.meshInvM12 / invDet;
+                            const double f21 = -cn.meshInvM21 / invDet;
+                            const double f22 = cn.meshInvM11 / invDet;
+                            const double pOrgX =
+                                -static_cast<double>(cn.meshInvOffX);
+                            const double pOrgY =
+                                -static_cast<double>(cn.meshInvOffY);
+                            wx = static_cast<float>(pOrgX + f11 * u + f12 * v);
+                            wy = static_cast<float>(pOrgY + f21 * u + f22 * v);
+                            return true;
+                        };
+
+                    auto warpThroughMeshAncestors = [&](float &wx, float &wy) {
+                        bool warped = false;
+                        for(const auto *externalMeshParent :
+                            _externalMeshParents) {
+                            if(!externalMeshParent ||
+                               externalMeshParent->meshType != 1) {
+                                continue;
+                            }
+                            warped =
+                                cascadeThroughParent(*externalMeshParent, wx,
+                                                     wy) ||
+                                warped;
+                        }
+                        int clipWalk = vn.meshParentIndex;
+                        while(clipWalk >= 0 &&
+                              clipWalk < static_cast<int>(nodes.size())) {
+                            auto &cn = nodes[clipWalk];
+                            if(cn.meshType == 1 &&
+                               (cn.meshInvM11 != 0.0 || cn.meshInvM22 != 0.0 ||
+                                cn.meshInvM12 != 0.0 ||
+                                cn.meshInvM21 != 0.0)) {
+                                warped = cascadeThroughParent(cn, wx, wy) ||
+                                    warped;
+                            }
+                            clipWalk = cn.meshParentIndex;
+                        }
+                        return warped;
+                    };
+
                     // Mesh vertex construction (0x6BCBBC..0x6BD060)
                     //
                     // Split two representations:
@@ -318,25 +421,6 @@ namespace motion {
                                     static_cast<float>(unitBp[bi]);
                             }
                         }
-
-                        auto evalUnitBp = [](const float *mesh, float u,
-                                             float v, float &outX,
-                                             float &outY) {
-                            const float su = 1.f - u, sv = 1.f - v;
-                            const float bu[4] = { su * su * su,
-                                                  3.f * su * su * u,
-                                                  3.f * su * u * u, u * u * u };
-                            const float bv[4] = { sv * sv * sv,
-                                                  3.f * sv * sv * v,
-                                                  3.f * sv * v * v, v * v * v };
-                            outX = 0;
-                            outY = 0;
-                            for(int i = 0; i < 16; ++i) {
-                                const float w = bv[i >> 2] * bu[i & 3];
-                                outX += mesh[i * 2] * w;
-                                outY += mesh[i * 2 + 1] * w;
-                            }
-                        };
 
                         auto unitBpNearIdentity =
                             [](const std::array<float, 32> &bp) {
@@ -425,94 +509,29 @@ namespace motion {
                             }
                         }
 
-                        // Cascade through parentClipIndex using each ancestor's
+                        // Cascade through mesh ancestors using each ancestor's
                         // unit mesh.bp + inverse/forward clip matrix. Never
                         // treat dense meshControlPoints as a 4×4 Bezier.
-                        auto cascadeThroughParent =
-                            [&](const detail::MotionNode &cn, float &wx,
-                                float &wy) {
-                                if(cn.meshType != 1) {
-                                    return;
-                                }
-                                float tx = wx + cn.meshInvOffX;
-                                float ty = wy + cn.meshInvOffY;
-                                float u = static_cast<float>(
-                                    cn.meshInvM11 * tx + cn.meshInvM12 * ty);
-                                float v = static_cast<float>(
-                                    cn.meshInvM21 * tx + cn.meshInvM22 * ty);
-                                if(cn.interpolatedCache.meshBezierPoints
-                                       .size() == 32) {
-                                    std::array<float, 32> parentUnit{};
-                                    for(size_t bi = 0; bi < 32; ++bi) {
-                                        parentUnit[bi] = static_cast<float>(
-                                            cn.interpolatedCache
-                                                .meshBezierPoints[bi]);
-                                    }
-                                    evalUnitBp(parentUnit.data(), u, v, u, v);
-                                }
-                                const double invDet = cn.meshInvM11 *
-                                        cn.meshInvM22 -
-                                    cn.meshInvM12 * cn.meshInvM21;
-                                if(std::fabs(invDet) <= 1e-10) {
-                                    return;
-                                }
-                                const double f11 = cn.meshInvM22 / invDet;
-                                const double f12 = -cn.meshInvM12 / invDet;
-                                const double f21 = -cn.meshInvM21 / invDet;
-                                const double f22 = cn.meshInvM11 / invDet;
-                                const double pOrgX =
-                                    -static_cast<double>(cn.meshInvOffX);
-                                const double pOrgY =
-                                    -static_cast<double>(cn.meshInvOffY);
-                                wx = static_cast<float>(
-                                    pOrgX + f11 * u + f12 * v);
-                                wy = static_cast<float>(
-                                    pOrgY + f21 * u + f22 * v);
-                            };
-
-                        int clipWalk = vn.parentClipIndex;
                         double cascadeOrgX = orgX, cascadeOrgY = orgY;
-                        while(clipWalk >= 0 &&
-                              clipWalk < static_cast<int>(nodes.size())) {
-                            auto &cn = nodes[clipWalk];
-                            if(cn.meshType == 1 &&
-                               (cn.meshInvM11 != 0.0 || cn.meshInvM22 != 0.0 ||
-                                cn.meshInvM12 != 0.0 ||
-                                cn.meshInvM21 != 0.0)) {
-                                for(size_t mi = 0;
-                                    mi < vn.meshControlPoints.size() / 2;
-                                    ++mi) {
-                                    float mpx = vn.meshControlPoints[mi * 2];
-                                    float mpy =
-                                        vn.meshControlPoints[mi * 2 + 1];
-                                    cascadeThroughParent(cn, mpx, mpy);
-                                    vn.meshControlPoints[mi * 2] = mpx;
-                                    vn.meshControlPoints[mi * 2 + 1] = mpy;
-                                }
-                                float ox = static_cast<float>(cascadeOrgX);
-                                float oy = static_cast<float>(cascadeOrgY);
-                                cascadeThroughParent(cn, ox, oy);
-                                cascadeOrgX = ox;
-                                cascadeOrgY = oy;
-                                _processedMeshVerticesNum +=
-                                    static_cast<int>(
-                                        vn.meshControlPoints.size() / 2) +
-                                    1;
-                            }
-                            clipWalk = cn.parentClipIndex;
+                        for(size_t mi = 0;
+                            mi < vn.meshControlPoints.size() / 2; ++mi) {
+                            float mpx = vn.meshControlPoints[mi * 2];
+                            float mpy = vn.meshControlPoints[mi * 2 + 1];
+                            warpThroughMeshAncestors(mpx, mpy);
+                            vn.meshControlPoints[mi * 2] = mpx;
+                            vn.meshControlPoints[mi * 2 + 1] = mpy;
                         }
+                        float ox = static_cast<float>(cascadeOrgX);
+                        float oy = static_cast<float>(cascadeOrgY);
+                        warpThroughMeshAncestors(ox, oy);
+                        cascadeOrgX = ox;
+                        cascadeOrgY = oy;
+                        _processedMeshVerticesNum +=
+                            static_cast<int>(vn.meshControlPoints.size() / 2) +
+                            1;
                         if(cascadeOrgX != orgX || cascadeOrgY != orgY) {
                             vn.vertexPosX = cascadeOrgX;
                             vn.vertexPosY = cascadeOrgY;
-                            const float fdx =
-                                static_cast<float>(cascadeOrgX - orgX);
-                            const float fdy =
-                                static_cast<float>(cascadeOrgY - orgY);
-                            for(size_t mi = 0;
-                                mi < vn.meshControlPoints.size() / 2; ++mi) {
-                                vn.meshControlPoints[mi * 2] += fdx;
-                                vn.meshControlPoints[mi * 2 + 1] += fdy;
-                            }
                         }
                     }
 
@@ -579,6 +598,76 @@ namespace motion {
                                 ok,
                                 "sub_6BC4F0 vertex output diverged from "
                                 "expected corners");
+                        }
+                    }
+
+                    // Leaf icons (meshTransform=0) still AffineCopy from
+                    // vertices[]. Parent bit-0x8 mesh.bp only warped
+                    // meshType==1 children, so 胴体同期UD breathing never
+                    // reached drawn parts. Warp the quad through the same
+                    // ancestor chain; meshType==1 already cascaded origin
+                    // and dense points above.
+                    const bool builtOwnMesh = vn.meshType == 1 && cw > 0.0 &&
+                        ch > 0.0;
+                    if(!builtOwnMesh) {
+                        bool warpedQuad = false;
+                        for(int ci = 0; ci < 4; ++ci) {
+                            warpedQuad = warpThroughMeshAncestors(
+                                             vn.vertices[ci * 2],
+                                             vn.vertices[ci * 2 + 1]) ||
+                                warpedQuad;
+                        }
+                        vn.meshWarpedQuad = warpedQuad;
+                        float vx = static_cast<float>(vn.vertexPosX);
+                        float vy = static_cast<float>(vn.vertexPosY);
+                        warpThroughMeshAncestors(vx, vy);
+                        vn.vertexPosX = vx;
+                        vn.vertexPosY = vy;
+                    }
+
+                    static const bool geomProbe = [] {
+                        const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
+                        return env && env[0] != '\0' && env[0] != '0';
+                    }();
+                    if(geomProbe) {
+                        const bool selfBodyUd = vn.parameterEntry &&
+                            vn.parameterEntry->id == "body_UD";
+                        bool parentBodyUd = false;
+                        if(vn.meshParentIndex >= 0 &&
+                           vn.meshParentIndex <
+                               static_cast<int>(nodes.size())) {
+                            const auto *pe =
+                                nodes[vn.meshParentIndex].parameterEntry;
+                            parentBodyUd = pe && pe->id == "body_UD";
+                        }
+                        if(selfBodyUd || parentBodyUd) {
+                            if(auto L = spdlog::get("plugin")) {
+                                L->info(
+                                    "emote.geom idx={} lbl={} selfUD={} "
+                                    "parentUD={} meshType={} hasMesh={} "
+                                    "meshPts={} meshParent={} "
+                                    "local=({:.2f},{:.2f}) "
+                                    "accum=({:.2f},{:.2f}) "
+                                    "vtx=({:.2f},{:.2f}) "
+                                    "v0=({:.2f},{:.2f}) "
+                                    "bp0={:.4f}",
+                                    vn.index,
+                                    vn.layerName.empty() ? "<none>"
+                                                         : vn.layerName,
+                                    selfBodyUd ? 1 : 0, parentBodyUd ? 1 : 0,
+                                    vn.meshType, vn.hasMeshData ? 1 : 0,
+                                    vn.meshControlPoints.size(),
+                                    vn.meshParentIndex, vn.localState.posX,
+                                    vn.localState.posY, vn.accumulated.posX,
+                                    vn.accumulated.posY, vn.vertexPosX,
+                                    vn.vertexPosY, vn.vertices[0],
+                                    vn.vertices[1],
+                                    vn.interpolatedCache.meshBezierPoints
+                                            .empty()
+                                        ? -1.0
+                                        : vn.interpolatedCache
+                                              .meshBezierPoints[1]);
+                            }
                         }
                     }
 

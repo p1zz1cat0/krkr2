@@ -299,6 +299,7 @@ namespace motion {
     Player::loadFromSnapshot(std::shared_ptr<detail::MotionSnapshot> snapshot) {
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _runtime->hasLastPreparedDrawBounds = false;
         _hasLastGoodBounds = false;
         _boundsMinX = 0.0;
         _boundsMinY = 0.0;
@@ -411,6 +412,7 @@ namespace motion {
         _motionKey = v;
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _runtime->hasLastPreparedDrawBounds = false;
         _runtime->timelines.clear();
         _runtime->playingTimelineLabels.clear();
         _runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
@@ -482,6 +484,7 @@ namespace motion {
         self->_motionKey = motionValue;
         ++self->_runtime->motionGeneration;
         self->_runtime->activeMotion.reset();
+        self->_runtime->hasLastPreparedDrawBounds = false;
         self->_runtime->timelines.clear();
         self->_runtime->playingTimelineLabels.clear();
         self->_runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
@@ -1107,7 +1110,7 @@ namespace motion {
         // snapshot — idle sway froze at the scenario pose and twitched.
 
         const auto removeRuntimeState = [this](const std::string &label) {
-            if(label.empty()) {
+            if(label.empty() || hasActiveDifferenceTimelineOwner(label)) {
                 return;
             }
             _variableAnimators.erase(label);
@@ -1119,6 +1122,9 @@ namespace motion {
 
         for(const auto &[selectorLabel, binding] :
             activeMotion->selectorControls) {
+            if(hasActiveDifferenceTimelineOwner(selectorLabel)) {
+                continue;
+            }
             removeRuntimeState(selectorLabel);
             for(const auto &option : binding.options) {
                 removeRuntimeState(option.label);

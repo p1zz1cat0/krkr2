@@ -470,6 +470,15 @@ NCB_REGISTER_CLASS(Motion) {
     Variant(TJS_W("PlayFlagJoin"), (tjs_int)PlayFlagJoin);
     Variant(TJS_W("PlayFlagStealth"), (tjs_int)PlayFlagStealth);
 
+    // Public manual.tjs names live on the Motion namespace. Keep the former
+    // Sequential spelling as a compatibility alias for existing port users.
+    Variant(TJS_W("TimelinePlayFlagParallel"),
+            (tjs_int)TimelinePlayFlagParallel);
+    Variant(TJS_W("TimelinePlayFlagDifference"),
+            (tjs_int)TimelinePlayFlagDifference);
+    Variant(TJS_W("TimelinePlayFlagSequential"),
+            (tjs_int)TimelinePlayFlagSequential);
+
     // Transform orders
     Variant(TJS_W("TransformOrderFlip"), (tjs_int)TransformOrderFlip);
     Variant(TJS_W("TransformOrderSlant"), (tjs_int)TransformOrderSlant);
@@ -576,6 +585,8 @@ NCB_REGISTER_CLASS(D3DEmoteModule) {
 
     Variant(TJS_W("TimelinePlayFlagParallel"),
             (tjs_int)TimelinePlayFlagParallel);
+    Variant(TJS_W("TimelinePlayFlagDifference"),
+            (tjs_int)TimelinePlayFlagDifference);
     Variant(TJS_W("TimelinePlayFlagSequential"),
             (tjs_int)TimelinePlayFlagSequential);
 

@@ -1156,6 +1156,10 @@ namespace motion {
                         }
                     }
                 }
+                // "bp": null with the mesh mask still means identity rest,
+                // not "drop the mesh channel". Without this, interpolateSlots
+                // cannot lerp toward the rest pose and hasMeshData flickers.
+                detail::fillUnitMeshBezierIfEmpty(state.meshBezierPoints);
             }
 
             // mask & 0x80000: motion sub-object (sub_692AB0 at 0x6938CC)
@@ -1431,16 +1435,8 @@ namespace motion {
             if(state.height != slotB.height)
                 state.height = lerp(state.height, slotB.height, t);
 
-            if(state.meshBezierPoints.size() ==
-                   slotB.meshBezierPoints.size() &&
-               !state.meshBezierPoints.empty()) {
-                for(size_t index = 0;
-                    index < state.meshBezierPoints.size(); ++index) {
-                    state.meshBezierPoints[index] =
-                        lerp(state.meshBezierPoints[index],
-                             slotB.meshBezierPoints[index], t);
-                }
-            }
+            detail::lerpMeshBezierPoints(state.meshBezierPoints,
+                                         slotB.meshBezierPoints, t);
 
             // FlipX/FlipY: not interpolated, use slot A value
             // (sub_699AE4 copies directly from clip slot, no lerp)

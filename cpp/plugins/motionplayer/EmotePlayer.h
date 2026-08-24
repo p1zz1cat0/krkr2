@@ -17,11 +17,6 @@ namespace motion {
 
     enum MaskMode { MaskModeStencil = 0, MaskModeAlpha = 1 };
 
-    enum TimelinePlayFlag {
-        TimelinePlayFlagParallel = 1,
-        TimelinePlayFlagSequential = 2
-    };
-
     class EmotePlayer {
     public:
         explicit EmotePlayer(ResourceManager rm);

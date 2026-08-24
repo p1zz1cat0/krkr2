@@ -21,6 +21,7 @@ namespace motion {
                 if(_runtime->activeMotion == it->second) {
                     ++_runtime->motionGeneration;
                     _runtime->activeMotion.reset();
+                    _runtime->hasLastPreparedDrawBounds = false;
                     _controllerState.reset();
                     _progressTransactionOpen = false;
                     _progressTransactionDt = 0.0;
@@ -45,6 +46,7 @@ namespace motion {
         }
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _runtime->hasLastPreparedDrawBounds = false;
         _controllerState.reset();
         _progressTransactionOpen = false;
         _progressTransactionDt = 0.0;

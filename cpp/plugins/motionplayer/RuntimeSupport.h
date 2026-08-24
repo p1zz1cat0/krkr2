@@ -3,6 +3,7 @@
 //
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <deque>
@@ -16,6 +17,7 @@
 
 #include <spdlog/fmt/fmt.h>
 
+#include "EmoteCompatInternal.h"
 #include "tjs.h"
 #include "psbfile/PSBFile.h"
 #include "MotionNode.h"
@@ -154,6 +156,18 @@ namespace motion::detail {
         TimelineControlAnimatorState blendAnimator;
         bool blendAutoStop = false;
     };
+
+    inline bool differenceTimelineOwnsLabel(
+        const TimelineState &state, const TimelineControlBinding &binding,
+        const std::string &label) {
+        return std::any_of(
+            binding.tracks.begin(), binding.tracks.end(),
+            [&state, &label](const TimelineControlTrack &track) {
+                return differenceTrackOwnsLabel(
+                    state.playing, state.flags, state.blendRatio, label,
+                    track.label, track.instantVariable);
+            });
+    }
 
     // Aligned to libkrkr2.so Player_dispatchEvents (0x6C4490):
     // type=0: onAction(param1, param2), type=1: onSync()
@@ -402,6 +416,10 @@ namespace motion::detail {
             bool executedDirect = false;
         };
         std::vector<PreparedRenderItem> preparedRenderItems; // player+936/944
+        // Draw-space AABB captured by the normal render preparation path.
+        // Hit testing reads this snapshot instead of rebuilding render items.
+        std::array<double, 4> lastPreparedDrawBounds{};
+        bool hasLastPreparedDrawBounds = false;
         // Native-shaped a2/a3 split passed through sub_6C2334 -> sub_6C4E28
         // -> sub_6C7440. Both lists point directly into preparedRenderItems.
         std::vector<PreparedRenderItem *> preparedRenderItemsTopLevel;

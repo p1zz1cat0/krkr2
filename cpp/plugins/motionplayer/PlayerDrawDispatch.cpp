@@ -59,6 +59,7 @@ namespace motion {
         }
 
         nativeInstance->_runtime->drawAffineMatrix = matrix;
+        nativeInstance->_runtime->hasLastPreparedDrawBounds = false;
         const auto motionPath =
             nativeInstance->_runtime && nativeInstance->_runtime->activeMotion
             ? nativeInstance->_runtime->activeMotion->path

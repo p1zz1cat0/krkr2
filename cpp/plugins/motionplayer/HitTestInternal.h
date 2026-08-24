@@ -6,6 +6,24 @@
 
 namespace motion::detail {
 
+    inline bool inverseAffinePoint(const std::array<double, 6> &matrix,
+                                   double x, double y, double &localX,
+                                   double &localY) {
+        const double determinant = matrix[0] * matrix[3] -
+            matrix[2] * matrix[1];
+        if(!std::isfinite(determinant) || std::fabs(determinant) <= 1.0e-12) {
+            return false;
+        }
+
+        const double translatedX = x - matrix[4];
+        const double translatedY = y - matrix[5];
+        localX = (matrix[3] * translatedX - matrix[2] * translatedY) /
+            determinant;
+        localY = (-matrix[1] * translatedX + matrix[0] * translatedY) /
+            determinant;
+        return std::isfinite(localX) && std::isfinite(localY);
+    }
+
     // Aligned to libkrkr2.so Player_hitTest (0x690DF0):
     //   int32 type @ +0
     //   int32 pad  @ +4

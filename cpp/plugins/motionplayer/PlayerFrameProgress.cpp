@@ -247,9 +247,7 @@ namespace motion {
             // its contribution is live; republishing the controller
             // animator's stale snapshot here would overwrite the accumulated
             // output every substep (idle sway froze at its base value).
-            if(const auto ownerIt = _evalResultListIndex.find(binding.label);
-               ownerIt != _evalResultListIndex.end() &&
-               ownerIt->second->pendingDiff != 0.0) {
+            if(hasActiveDifferenceTimelineOwner(binding.label)) {
                 continue;
             }
 
@@ -280,6 +278,27 @@ namespace motion {
             g_emoteWriteSite = "refreshFixed";
             writeEvalResultValueLike_0x6C4668(binding.label, value);
         }
+    }
+
+    bool Player::hasActiveDifferenceTimelineOwner(
+        const std::string &label) const {
+        const auto *activeMotion = _runtime ? _runtime->activeMotion.get()
+                                            : nullptr;
+        if(!activeMotion || label.empty()) {
+            return false;
+        }
+        for(const auto &timelineLabel : _runtime->playingTimelineLabels) {
+            const auto stateIt = _runtime->timelines.find(timelineLabel);
+            const auto bindingIt =
+                activeMotion->timelineControlByLabel.find(timelineLabel);
+            if(stateIt != _runtime->timelines.end() &&
+               bindingIt != activeMotion->timelineControlByLabel.end() &&
+               detail::differenceTimelineOwnsLabel(
+                   stateIt->second, bindingIt->second, label)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     void Player::accumulateTimelineContributionLike_0x67C560(
@@ -353,15 +372,9 @@ namespace motion {
             // the range edge plus a ±10 sway sits outside [-30,30], and the
             // projection scaled BOTH components every frame, suppressing the
             // breathing bob whenever the left-right sway ran concurrently.
-            bool diffOwned = false;
-            for(const auto *var : { &binding.varLr, &binding.varUd }) {
-                if(const auto it = _evalResultListIndex.find(*var);
-                   it != _evalResultListIndex.end() &&
-                   it->second->pendingDiff != 0.0) {
-                    diffOwned = true;
-                    break;
-                }
-            }
+            const bool diffOwned =
+                hasActiveDifferenceTimelineOwner(binding.varLr) ||
+                hasActiveDifferenceTimelineOwner(binding.varUd);
             if(diffOwned) {
                 continue;
             }
@@ -988,9 +1001,7 @@ namespace motion {
                 // controller animator's stale snapshot must not fight it
                 // (NEKOPARA posed body_UD=-30 vs accumulate ≈0 ping-ponged
                 // the character between two poses every frame).
-                if(const auto ownerIt = _evalResultListIndex.find(label);
-                   ownerIt != _evalResultListIndex.end() &&
-                   ownerIt->second->pendingDiff != 0.0) {
+                if(hasActiveDifferenceTimelineOwner(label)) {
                     state.currentValue = static_cast<float>(steppedValue);
                     continue;
                 }
@@ -1129,9 +1140,7 @@ namespace motion {
                 // controller animator's stale snapshot must not fight it
                 // (NEKOPARA posed body_UD=-30 vs accumulate ≈0 ping-ponged
                 // the character between two poses every frame).
-                if(const auto ownerIt = _evalResultListIndex.find(label);
-                   ownerIt != _evalResultListIndex.end() &&
-                   ownerIt->second->pendingDiff != 0.0) {
+                if(hasActiveDifferenceTimelineOwner(label)) {
                     state.currentValue = static_cast<float>(steppedValue);
                     continue;
                 }

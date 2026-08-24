@@ -55,7 +55,7 @@
 
 | API / 契约 | M2 2020 公开样例 | NEKOPARA 2016 DLL | 当前 KrKr2 | 状态与主要风险 | 需要的验收证据 |
 |---|---|---|---|---|---|
-| `playTimeline(name,flags=0)` / `stopTimeline(name="")` | 默认值与主/差分 flags 明确 | 名称与 flag 线索 | 已注册并维护活动 Timeline | **实现/待验证**：空 label、重复播放与 flags 合并语义待核 | 主/差分/并行组合、重复播放、空 label 停止和自然结束 |
+| `playTimeline(name,flags=0)` / `stopTimeline(name="")` | 默认值与主/差分 flags 明确 | NEKOPARA 脚本 main=1（parallel）、diff=3（parallel+difference） | 已注册并维护活动 Timeline | **已验证主+差分并行**：Parallel 保留现有 timeline，未带 Parallel 才替换；空 label 停全部 | TJS fixture 验证动作变量推进、两条 timeline 同时活动、长度和 loop 查询 |
 | `getTimelinePlaying(name="")` / `getLoopTimeline(name)` | 签名与返回类型明确 | 名称线索 | 已注册 | **待验证** | 播放前、中、结束后及未知 label 返回值 |
 | `getTimelineTotalFrameCount(name)` | 返回总帧数 | 名称线索 | 已注册 | **待验证** | 与 PSB timeline 数据逐项核对；未知 label 失败语义 |
 | main/diff label list | `getMainTimelineLabelList()` / `getDiffTimelineLabelList()` | 名称线索 | 已注册 | **待验证** | 顺序、重复项、空列表和 PSB 数据一致性 |

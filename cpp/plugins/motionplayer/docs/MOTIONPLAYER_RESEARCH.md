@@ -42,6 +42,7 @@ NEKOPARA 是当前最重要的重度样本：用户观察到眨眼、物理、�
 | PSB/MTN 加载、节点树与基本渲染 | 已有实现 | `PlayerMotionLoad.cpp`、`NodeTree.cpp`、`PlayerFrameProgress.cpp`、绘制相关文件 | 尚无当前功能质量门证明完整格式与真实游戏兼容 |
 | `transformOrder` | **已实现** | `NodeTree.cpp` 解析；`PlayerUpdateLayersInternal.h` 和 `PlayerUpdateLayerEval.cpp` 应用 | 不能再列为“未实现”；具体姿态问题仍需逐样本 trace |
 | Timeline blend ratio | **已实现全参契约** | `PlayerTimeline.cpp` `setTimelineBlendRatioEx` → `setTimelineBlendLike_0x6735AC` 动画器；注册 raw callback 接受 2–5 参 | 游戏实际以 `(name, ratio, time*60/1000, easing)` 调用（time 为帧）；此前 2 参注册静默丢弃 time/easing 导致 diff 时间线瞬时弹出，2026-08-16 修复，待游戏内验证 |
+| Timeline parallel / difference | **已修正 flag 方向与长度/loop 查询** | `PlayerTimeline.cpp`、`RuntimeSupport.cpp`、`main.cpp` | NEKOPARA 脚本明确使用 main=`1`（always parallel）、diff=`3`（parallel+difference）。旧实现在 `flags&1` 时反而停掉全部 timeline，动作开始会清除脸部差分。现在只有未带 Parallel 时才替换；公开 `TimelinePlayFlagDifference=2` 并保留 Sequential 别名。fixture 验证 `挨拶` + `差分用_waiting_loop2` 同时活动，长度 86、loop 为 true |
 | Timeline 启动语义 | **已修复 play() 全量误启动** | `PlayerMotionLoad.cpp` / `PlayerTimeline.cpp`（`playMotionLike_0x6B2284`、`playCompat`） | `play(metadata.base.motion, Force)` 的 label 是 clip 名（如“全体構造”）而非 timeline label；此前当 label 不在 timeline 表中时兜底启动**全部** main timeline，所有控制轨道（`sample_全自動_test`、`sample_00..05`、`変な動き`、`ピョン`…）同时驱动同一批姿势变量，正是“每次切换固定做一套诡异动作（身体晃→头晃→抽搐）”的根因。2026-08-16 改为只启动与 label 同名的 timeline，否则不启动；探针验证 play 后 0 次控制帧跨越、`animating` 空闲为 false、pose timeline 播完回 false（原版 sync 边沿流程）。另修复 `resetTimelineControlStateLike_0x671A50` seek 时把首个未来关键帧值当作当前值应用的 off-by-one（break 前更新 `lastNonTypeZero`） |
 | Timeline fade | **参数语义不对齐** | `EmotePlayer.cpp` 当前第三参作为整数 flags | 公开 KiriKiri 样例第三参是 easing；需要兼容回调和行为测试 |
 | `eyeControl` / 自动眨眼 | **已实现确认的自动主循环** | `MotionPhysics.cpp`、`PlayerPhysics.cpp` | pre-Core 同调用写表；状态 1–9 的完整 edge/manual 语义仍未恢复，手动非初值会抑制自动输出 |
@@ -51,8 +52,10 @@ NEKOPARA 是当前最重要的重度样本：用户观察到眨眼、物理、�
 | `setOuterForce` | **已实现三路插值与消费** | `MotionPhysics.cpp`、`PlayerPhysics.cpp` | canonical `hair`，保留 `h` 别名；公开 API 不变 |
 | accurate-SLA 零件层身份 | **已改用 `layerId` 作复用键** | `PlayerRenderTargets.cpp` `renderAccurateSlaLike_0x6C9CA8` | 合并子 motion/particle 项携带子 Player 的 nodeIndex，与父 nodeIndex 冲突会互相驱逐层节点（NEKOPARA 头部/面部子树即此路径）；`layerId1` 由整树共享的 ResourceManager 分配，全局唯一且按素材稳定。真实游戏像素验证仍待进行 |
 | accurate-SLA 层序写入 | **已改为变化时写入** | `SeparateLayerAdaptor.cpp` `resolveLayerNodeLike_0x6C6B48` | 每帧无条件重写 `absolute` 会在顺序未变时反复触发父层 exposed-region 失效；现在只在新建层、序位变化或 `_absolute` 基址变化时重插。多角色/复杂场景的帧开销仍需真实采样 |
-| 触摸包围盒 | **已改为渲染 AABB + last-good** | `PlayerRenderItems.cpp` `calcBounds`；`EmotePlayer::contains`；`Player::hitTestBounds` | emote 不再跳过 head/face/body 子树；空帧保留上一份有效盒。游戏脚本若另做逆仿射，仍需逐样本确认 |
+| accurate-SLA 与外部 emotion 层序 | **隔离像素回归通过** | `tests/test_files/motionplayer/startup.tjs` | 真实 E-mote ltBinder 子树上新建 higher-absolute opaque sibling，`piledCopy` 最终像素为 emotion 层，证明 MotionPlayer 内部 part 不会越过宿主 sibling。NEKOPARA 实际 emoji 仍在后时，需采集 world `link/order/zpos/absolute` 的实场 trace，不应通过改乱内部 part z-order 猜测修复 |
+| 触摸包围盒 | **已改为渲染 AABB + last-good + 坐标空间对齐** | `PlayerRenderItems.cpp` `calcBounds`；`EmotePlayer::contains`；`Player::hitTestBounds` / `hitTestLayer` / `screenPointToLocal` | emote 不再跳过 head/face/body 子树；空帧保留上一份有效盒。**现代实现契约**：`contains` 接收最终 draw 空间坐标；渲染位置 = `drawAffineMatrix(local) + cameraOffset`。正常 draw 在 `applyPreparedRenderItemTranslateOffsets` 后保存 draw-space AABB，命中检测只读该快照，不得重建/排序 render items。尚未有渲染快照时，`calcBounds` / `node.bounds` / `node.vertices` 与 emote fallback 盒均是 local 空间，比较前先 `screenPointToLocal`（先减 cameraOffset 再逆仿射）。这是为修复 macOS 宿主左上角偏移而选择的确定性兼容契约，不冒充未取得 Windows oracle 的原版精确行为；TJS fixture 验证平移只生效一次 |
 | 立绘栅格质量 | **已改为双线性 + authored 网格** | `PlayerUpdateGeometry.cpp`、`PlayerRenderTargets.cpp`、`SourceCache.cpp` | `stFastLinear` / `GL_LINEAR`；网格帽 20；五官/parameterize 层不再压成 2×2。动作帧成本会上升，需再采 `sla.accurate.stats` |
+| 父 mesh.bp → 叶子几何 | **已把 cascade 扩到 meshType=0 四角，并把 null bp 当 identity 插值** | `PlayerUpdateGeometry.cpp`、`PlayerInternal.h`、`EmoteCompatInternal.h` | bit `0x8` 祖先链仍只变形绘制顶点，不走 bit `0x1` 的 `sub_69AE74` 位置 helper。`body_UD` fixture 断言 accurate-SLA 子层几何变化；游戏内呼吸仍待探针复验 |
 | 同 PSB 五官 clip 短名 | **已实现 `鼻`→`鼻(...)`** | `PlayerMotionLoad.cpp`、`Player::selectActiveClip` | 只接受括号变体，不把 `口` 绑到 `口パク`。跨 PSB 且未 attach 的引用仍会失败 |
 | API 注册兼容 | **需逐项审计** | `main.cpp` / NCB 注册与各 Player 方法 | 尤其检查 Timeline fade/blend、wind、physics 的参数个数、单位与失败语义 |
 
@@ -150,6 +153,12 @@ ded611b9018cfca425e97d5f8aaaa5dff809c4bacefb66ba77806372ddb52b38
   - 修复前：`play(base.motion, Force)` 启动全部 16 条 main timeline，同一毫秒内 150+ 次控制帧写入把 `head_UD/body_UD/face_*` 拖入 `sample_全自動_test` 等模板轨道的编舞序列（身体晃→头晃→抽搐），与用户「每次切换固定做一套诡异动作、win 原版没有」完全吻合。
   - 修复后：play 后控制帧跨越 0 次；`animating` 空闲为 0；`playTimeline` 后为 1；pose timeline 播完（挨拶 86 帧）回 0 —— 与原版 onSync 边沿触发流程一致。reset seek 应用当前关键帧值（to=0 transition=24/28）而非首个未来帧（to=30 transition=54）。
   - 游戏脚本语义复核：`MotionAffineSourceLayer.tjs` 只经 `playTimeline/stopTimeline/_playTimeline` 驱动姿势 timeline（`emoteMainTimeline` 表由 `getMainTimelineLabelList()` 构建）；`play(base.motion, Force)` 仅装载 clip。M2 公开 manual 的样例流程同为 `play(base.motion)` + 裸 progress/draw。
+- 2026-08-21 真实 NEKOPARA PSB controller/mesh 输出探针：
+  - child Player 的本地零值 controller/eval 表会逐层遮蔽 wrapper 的 `body_UD` / `head_UD` / `face_*`。只跳过当前 child 能修复一层身体，但二、三层眼口鼻仍会命中中间 child 的 0。现在 E-mote 任意深度直接解析最外层 wrapper controller owner。
+  - 2016 DLL 静态证据确认：`0x1002E390` 用 mask bit `0x1` 门控同树 surface helper；`0x1002F925..0x1002F958` 用 bit `0x8` 生成 active mesh-data 标志；`meshCombine` 是单独 PSB 字段。先前把 `0x8` 直接当 surface 门的改动已因真实游戏部件抖动/错乱撤销。
+  - 端口现独立维护 mesh ancestor chain，不再复用 shape clip index；跨 Player 父 mesh 链只在同步 child progress 调用期有效。cascade 不再对已变形 mesh points 重复追加 origin 平移。
+  - 真实运行日志曾显示单角色 273 个候选仅绘制 35 个，176 个 `blank/` / `motion/` source 失败，且稳态 `avgChanged≈200`。pseudo source 现不再进入叶子 SLA；任何真实源失败都会隐藏并清空复用 Layer，防止下一帧复活旧眼口鼻 raster。
+  - 回归直接观察 accurate-SLA 最终真实 raster/Layer：body/head 与 face controller 均必须改变输出；相同状态重绘的 child count、几何、opacity 与 8×8 sampled raster hash 必须完全稳定。
 
 当前仍缺少：
 

@@ -958,12 +958,22 @@ namespace motion {
             return false;
         }
 
+        // setCoord/setScale are baked into the root node's local transform,
+        // so this box is local space just like node bounds are. Compare it
+        // against the inverted point, otherwise a non-identity draw affine
+        // drags the box toward the origin (the touch area then collapses into
+        // the top-left corner).
+        double localX = 0.0;
+        double localY = 0.0;
+        if(!_player.screenPointToLocal(x, y, localX, localY)) {
+            return false;
+        }
         const auto scaledWidth = width * scale;
         const auto scaledHeight = height * scale;
         const double minX = _coordX - scaledWidth * 0.5;
         const double minY = _coordY - scaledHeight * 0.5;
-        return x >= minX && x <= (minX + scaledWidth) && y >= minY &&
-            y <= (minY + scaledHeight);
+        return localX >= minX && localX <= (minX + scaledWidth) &&
+            localY >= minY && localY <= (minY + scaledHeight);
     }
 
     bool EmotePlayer::contains(ttstr label, double x, double y) {

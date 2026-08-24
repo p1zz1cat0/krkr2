@@ -185,12 +185,6 @@ namespace motion {
     void Player::removeEvalResultSlotLike_Reset(const std::string &label) {
         if(const auto it = _evalResultListIndex.find(label);
            it != _evalResultListIndex.end()) {
-            if(label == "body_UD" && spdlog::get("plugin")) {
-                spdlog::get("plugin")->info(
-                    "emote.slot.remove site={} pd={:.3f} v={:.3f}",
-                    g_emoteWriteSite, it->second->pendingDiff,
-                    it->second->value);
-            }
             _evalResultList.erase(it->second);
             _evalResultListIndex.erase(it);
         }
@@ -291,6 +285,24 @@ namespace motion {
             }
             return false;
         };
+
+        // Nested Players model sub-motions from one E-mote tree. Every depth
+        // resolves against the outer wrapper/controller owner; intermediate
+        // child maps contain seeded zero scratch values and must not shadow
+        // that table.
+        const Player *controllerOwner = this;
+        while(controllerOwner->_parentPlayer) {
+            controllerOwner = controllerOwner->_parentPlayer;
+        }
+        if(controllerOwner->_runtime &&
+           detail::isEmoteLikeMotion(*controllerOwner->_runtime)) {
+            double value = 0.0;
+            if(findValue(controllerOwner->_variableValues, value) ||
+               findValue(controllerOwner->_evalResultValues, value)) {
+                return value;
+            }
+            return 0.0;
+        }
 
         for(const Player *player = this; player != nullptr;
             player = player->_parentPlayer) {
@@ -531,6 +543,11 @@ namespace motion {
                             for(const auto &option :
                                 selectorIt->second.options) {
                                 if(option.label.empty()) {
+                                    ++optionIndex;
+                                    continue;
+                                }
+                                if(hasActiveDifferenceTimelineOwner(
+                                       option.label)) {
                                     ++optionIndex;
                                     continue;
                                 }

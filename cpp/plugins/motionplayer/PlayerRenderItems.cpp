@@ -313,6 +313,19 @@ namespace motion {
         // 11（icon/口型）。
         const int bitmask = emoteLikePrepare ? 6153 : 6145;
         const auto &dam = _runtime->drawAffineMatrix;
+        const auto hasRenderableSource = [emoteLikePrepare](
+                                             const detail::MotionNode &node) {
+            if(!node.hasSource || node.interpolatedCache.src.empty()) {
+                return false;
+            }
+            if(!emoteLikePrepare) {
+                return true;
+            }
+            const auto &source = node.interpolatedCache.src;
+            return source != "layout" && source != "clip" &&
+                source.rfind("blank/", 0) != 0 &&
+                source.rfind("motion/", 0) != 0;
+        };
         std::unordered_set<int> requiredGroupNodeIndices;
         // 参考 sdl3（不编译）：子 motion 节点在子 Player 的 nodeList
         // merged child preparedRenderItems keep foreign nodeIndex values and
@@ -473,7 +486,7 @@ namespace motion {
                 }
                 continue;
             }
-            if(!node.hasSource || node.interpolatedCache.src.empty())
+            if(!hasRenderableSource(node))
                 continue;
 
             if(detail::logoSnapshotMarkEnabledForPath(motionPath) &&
@@ -553,8 +566,7 @@ namespace motion {
                     }
                 }
             }
-            const bool hasOwnSource =
-                node.hasSource && !node.interpolatedCache.src.empty();
+            const bool hasOwnSource = hasRenderableSource(node);
             const bool needsGroupEntry =
                 requiredGroupNodeIndices.find(static_cast<int>(i)) !=
                 requiredGroupNodeIndices.end();
@@ -648,9 +660,9 @@ namespace motion {
                 entry.coordinateMode = node.coordinateMode;
                 entry.objTriPriority = node.objTriPriority;
                 entry.visibleAncestorIndex = node.visibleAncestorIndex;
-                entry.meshType = node.meshType;
-                entry.meshDivX = node.meshDivX;
-                entry.meshDivY = node.meshDivY;
+                entry.meshType = node.meshWarpedQuad ? 2 : node.meshType;
+                entry.meshDivX = node.meshWarpedQuad ? 2 : node.meshDivX;
+                entry.meshDivY = node.meshWarpedQuad ? 2 : node.meshDivY;
             }
 
             bool havePaintBox = false;
@@ -672,6 +684,24 @@ namespace motion {
                     const auto pt =
                         transformPoint(node.meshControlPoints[pi],
                                        node.meshControlPoints[pi + 1]);
+                    entry.meshPoints[pi] = static_cast<float>(pt.x);
+                    entry.meshPoints[pi + 1] = static_cast<float>(pt.y);
+                    updatePaintBox(entry, pt.x, pt.y, !havePaintBox);
+                    havePaintBox = true;
+                }
+            }
+
+            if(hasOwnSource && node.meshWarpedQuad) {
+                const std::array<float, 8> corners = {
+                    node.vertices[0], node.vertices[1], node.vertices[2],
+                    node.vertices[3], node.vertices[4], node.vertices[5],
+                    node.vertices[6], node.vertices[7]
+                };
+                const auto points = detail::quadCornersToMeshPoints(corners);
+                entry.meshPoints.assign(points.begin(), points.end());
+                for(size_t pi = 0; pi + 1 < entry.meshPoints.size(); pi += 2) {
+                    const auto pt = transformPoint(entry.meshPoints[pi],
+                                                   entry.meshPoints[pi + 1]);
                     entry.meshPoints[pi] = static_cast<float>(pt.x);
                     entry.meshPoints[pi + 1] = static_cast<float>(pt.y);
                     updatePaintBox(entry, pt.x, pt.y, !havePaintBox);
@@ -1225,6 +1255,8 @@ namespace motion {
         const auto motionPath = _runtime->activeMotion
             ? _runtime->activeMotion->path
             : std::string{};
+        bool haveDrawBounds = false;
+        std::array<double, 4> drawBounds{};
         for(auto &entry : _runtime->preparedRenderItems) {
             const auto beforeCorners = entry.corners;
             const auto beforePaintBox = entry.paintBox;
@@ -1244,6 +1276,23 @@ namespace motion {
                 static_cast<double>(entry.paintBox[2]) + ofsX);
             entry.paintBox[3] = static_cast<float>(
                 static_cast<double>(entry.paintBox[3]) + ofsY);
+            if(detail::boundsAreUsable(entry.paintBox[0], entry.paintBox[1],
+                                       entry.paintBox[2], entry.paintBox[3])) {
+                if(!haveDrawBounds) {
+                    drawBounds = { entry.paintBox[0], entry.paintBox[1],
+                                   entry.paintBox[2], entry.paintBox[3] };
+                    haveDrawBounds = true;
+                } else {
+                    drawBounds[0] = std::min(
+                        drawBounds[0], static_cast<double>(entry.paintBox[0]));
+                    drawBounds[1] = std::min(
+                        drawBounds[1], static_cast<double>(entry.paintBox[1]));
+                    drawBounds[2] = std::max(
+                        drawBounds[2], static_cast<double>(entry.paintBox[2]));
+                    drawBounds[3] = std::max(
+                        drawBounds[3], static_cast<double>(entry.paintBox[3]));
+                }
+            }
             if(entry.hasViewport) {
                 entry.viewport[0] = static_cast<float>(
                     static_cast<double>(entry.viewport[0]) + ofsX);
@@ -1317,6 +1366,10 @@ namespace motion {
                     ok,
                     "Player_applyTranslateOffset added more than cameraOffset");
             }
+        }
+        if(haveDrawBounds) {
+            _runtime->lastPreparedDrawBounds = drawBounds;
+            _runtime->hasLastPreparedDrawBounds = true;
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)
         detail::motionTraceRenderApplyTranslateLeave(this);
