@@ -1244,13 +1244,49 @@ namespace motion {
             entry.parentItem = it->second;
         }
 
-        // Rebuild the ancestor chain for flattened child entries without
-        // dereferencing their indices through this Player's node deque. This
-        // is the missing half of sourceMotion ownership: preserving the
-        // source snapshot alone is not enough if nested command composition is
-        // discarded while flattening.
+        const auto foreignNodeType =
+            [](const detail::PlayerRuntime::PreparedRenderItem &entry) {
+                const auto *owner = entry.nativeLifetimeOwner;
+                if(!owner || entry.nativeLifetimeKey < 0 ||
+                   static_cast<size_t>(entry.nativeLifetimeKey) >=
+                       owner->nodes.size()) {
+                    return -1;
+                }
+                return owner->nodes[static_cast<size_t>(entry.nativeLifetimeKey)]
+                    .nodeType;
+            };
+
+        // Rebuild only the command-tree edges for flattened child entries.
+        // A visibleAncestor is also used by ordinary leaf layers as a pure
+        // transform/visibility chain; attaching those leaves to parentItem
+        // makes executeLayerRenderCommands skip them at the top level. The
+        // native parent pointer is populated for type-3 sub-player wrappers
+        // and for the type-12 synthetic stencil group only.
+        for(auto &parentItem : _runtime->preparedRenderItems) {
+            if(!parentItem.selfSeedChildList ||
+               isLocalPreparedItem(parentItem) ||
+               !parentItem.nativeLifetimeOwner) {
+                continue;
+            }
+            const auto parentOwner = parentItem.nativeLifetimeOwner;
+            const auto parentNodeIndex = parentItem.nodeIndex;
+            for(auto &candidate : _runtime->preparedRenderItems) {
+                if(candidate.nativeLifetimeOwner != parentOwner ||
+                   candidate.nodeIndex == parentNodeIndex ||
+                   candidate.visibleAncestorIndex != parentNodeIndex) {
+                    continue;
+                }
+                const int candidateType = foreignNodeType(candidate);
+                if(candidateType == 0 || candidateType == 3) {
+                    candidate.parentItem = &parentItem;
+                    parentItem.childItems.push_back(&candidate);
+                }
+            }
+        }
+
         for(auto &entry : _runtime->preparedRenderItems) {
             if(isLocalPreparedItem(entry) || entry.parentItem != nullptr ||
+               foreignNodeType(entry) != 3 ||
                entry.visibleAncestorIndex < 0) {
                 continue;
             }
@@ -1259,8 +1295,12 @@ namespace motion {
                 continue;
             }
             entry.parentItem = it->second;
-            it->second->childItems.push_back(&entry);
         }
+
+        // Preserving sourceMotion alone is not enough if nested command
+        // composition is discarded while flattening. The type-aware passes
+        // above restore that composition without changing the direct render
+        // status of ordinary facial leaves.
 
         // KRKR_TRACE_EMOTE_NESTED=1 exposes the post-flattening ownership
         // contract without dumping game paths or pixels. This is the probe
