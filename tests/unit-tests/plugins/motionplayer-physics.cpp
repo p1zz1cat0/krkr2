@@ -102,6 +102,32 @@ TEST_CASE("Motion physics matches frozen 2016 DLL helper output") {
     }
 }
 
+TEST_CASE("Multi-cache selection binds exact latest motion snapshot") {
+    using motion::detail::MultiCacheCandidate;
+    const std::vector<MultiCacheCandidate> candidates = {
+        { "chocola", "waiting", 1, false, true },
+        { "vanilla", "waiting", 3, true, true },
+        { "chocola", "waiting", 2, false, true },
+        { "chocola", "action", 4, false, true },
+    };
+
+    CHECK(motion::detail::selectMultiCacheCandidate(
+              candidates, "chocola", "waiting") == 2);
+    CHECK(motion::detail::selectMultiCacheCandidate(
+              candidates, "vanilla", "waiting") == 1);
+    CHECK(motion::detail::selectMultiCacheCandidate(
+              candidates, "chocola", "missing") ==
+          std::numeric_limits<std::size_t>::max());
+}
+
+TEST_CASE("Private Motion GLL skips only unusable source textures") {
+    CHECK_FALSE(motion::detail::shouldAppendPrivateMotionGLLItem(false, 0,
+                                                                 0));
+    CHECK_FALSE(motion::detail::shouldAppendPrivateMotionGLLItem(true, 0,
+                                                                 64));
+    CHECK(motion::detail::shouldAppendPrivateMotionGLLItem(true, 64, 64));
+}
+
 TEST_CASE("Top-level zero dt does not initialize post-Core physics") {
     motion::physics::BustControl bust(bustConfig());
     const auto zeroOutput =

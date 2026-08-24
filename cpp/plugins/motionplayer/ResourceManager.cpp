@@ -168,6 +168,10 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
     for(const auto &key : buildPathCacheKeys(path)) {
         _state->loadedModules[key] = loaded;
     }
+    if(auto *object = loaded.AsObjectNoAddRef()) {
+        _state->moduleLoadGenerations[object] =
+            ++_state->nextLoadGeneration;
+    }
     _state->lastLoadedPath = rawPath;
     _state->lastLoadedModule = loaded;
     return loaded;
@@ -194,11 +198,13 @@ void motion::ResourceManager::unload(ttstr path) const {
     }
 
     if(module.Type() == tvtObject) {
+        auto *moduleObject = module.AsObjectNoAddRef();
         const auto keys = collectModuleCacheKeys(_state->loadedModules,
-                                                 module.AsObjectNoAddRef());
+                                                 moduleObject);
         for(const auto &key : keys) {
             _state->loadedModules.erase(key);
         }
+        _state->moduleLoadGenerations.erase(moduleObject);
         detail::unregisterModuleSnapshot(module);
     } else {
         for(const auto &key : buildPathCacheKeys(path)) {
@@ -219,6 +225,8 @@ void motion::ResourceManager::clearCache() const {
     }
 
     _state->loadedModules.clear();
+    _state->moduleLoadGenerations.clear();
+    _state->nextLoadGeneration = 0;
     _state->lastLoadedPath.clear();
     _state->lastLoadedModule.Clear();
     _state->layerIdsByName.clear();
@@ -292,7 +300,14 @@ motion::ResourceManager::uniqueCachedModules() const {
         if(!obj || !seen.insert(obj).second) {
             continue;
         }
-        result.push_back({ key, module });
+        const auto generation = _state->moduleLoadGenerations.find(obj);
+        result.push_back({
+            key,
+            module,
+            generation != _state->moduleLoadGenerations.end()
+                ? generation->second
+                : 0,
+        });
     }
     return result;
 }

@@ -2,6 +2,7 @@
 // Split from PlayerRender.cpp for maintainability.
 //
 #include "PlayerRenderInternal.h"
+#include "EmoteCompatInternal.h"
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
 #include "RenderManager.h"
@@ -715,6 +716,7 @@ namespace motion {
         // Player_ResolveSLATarget @ 0x6D5948 owns PrivateMotionGLL sizing;
         // Player_RenderMotionFrame @ 0x6DE738 only emits render commands.
         buildRenderCommands(canvasWidth, canvasHeight);
+        std::size_t missingTextures = 0;
         if(_runtime && _runtime->sourceCacheNative) {
             for(const auto &item : _runtime->preparedRenderItems) {
                 if(!shouldQueuePrivateMotionGLLRenderItemLike_0x6DE738(
@@ -725,6 +727,13 @@ namespace motion {
                     _runtime->sourceCacheNative->loadRenderSourceTextureByName(
                         detail::widen(item.sourceKey), item.srcRef,
                         item.blendMode, item.packedColors);
+                if(!detail::shouldAppendPrivateMotionGLLItem(
+                       sourceTexture != nullptr,
+                       sourceTexture ? sourceTexture->GetWidth() : 0,
+                       sourceTexture ? sourceTexture->GetHeight() : 0)) {
+                    ++missingTextures;
+                    continue;
+                }
                 PrivateMotionGLLRenderItemInputLike_0x6DE738 queueItem;
                 queueItem.opacity =
                     privateMotionGLLOpacityLike_0x6DE738(item, _preview);
@@ -735,24 +744,23 @@ namespace motion {
                 queueItem.meshDivX = item.meshDivX;
                 queueItem.meshDivY = item.meshDivY;
                 queueItem.packedColors = item.packedColors;
-                if(sourceTexture) {
-                    queueItem.sourceRect = {
-                        0,
-                        0,
-                        static_cast<std::int32_t>(sourceTexture->GetWidth()),
-                        static_cast<std::int32_t>(sourceTexture->GetHeight()),
-                    };
-                    queueItem.sourceTexture = sourceTexture;
-                }
+                queueItem.sourceRect = {
+                    0,
+                    0,
+                    static_cast<std::int32_t>(sourceTexture->GetWidth()),
+                    static_cast<std::int32_t>(sourceTexture->GetHeight()),
+                };
+                queueItem.sourceTexture = sourceTexture;
                 populatePrivateMotionGLLPointsLike_0x6DE738(item, queueItem);
                 appendPrivateMotionGLLRenderItemLike_0x6DE738(
                     renderTargetObject, queueItem);
             }
             detail::logoChainTraceLogf(
                 motionPath, "sla.renderMotionFrame.queue", "0x6DE738",
-                _clampedEvalTime, "queuedItems={}",
+                _clampedEvalTime, "queuedItems={} missingTextures={}",
                 privateMotionGLLRenderQueueSizeLike_0x6DE738(
-                    renderTargetObject));
+                    renderTargetObject),
+                missingTextures);
         }
         // Player_DrawSLA @ 0x6D5658 calls Player_RenderMotionFrame @ 0x6DE738
         // only to populate the private +824 queue; Layer_UpdateRect @ 0x800F4C

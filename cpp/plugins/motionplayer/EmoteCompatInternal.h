@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -54,6 +56,51 @@ namespace motion {
             return !requested.empty() && label.size() > requested.size() &&
                 label.compare(0, requested.size(), requested) == 0 &&
                 label[requested.size()] == '(';
+        }
+
+        struct MultiCacheCandidate {
+            std::string chara;
+            std::string motion;
+            std::uint64_t loadGeneration = 0;
+            bool mostRecentlyLoaded = false;
+            bool hasSnapshot = false;
+        };
+
+        inline std::size_t selectMultiCacheCandidate(
+            const std::vector<MultiCacheCandidate> &candidates,
+            const std::string &requestedChara,
+            const std::string &requestedMotion) {
+            std::size_t selected = std::numeric_limits<std::size_t>::max();
+            bool bestIsMostRecentlyLoaded = false;
+            std::uint64_t bestGeneration = 0;
+            for(std::size_t index = 0; index < candidates.size(); ++index) {
+                const auto &candidate = candidates[index];
+                if(!candidate.hasSnapshot || candidate.chara.empty() ||
+                   candidate.motion.empty() ||
+                   (!requestedChara.empty() &&
+                    candidate.chara != requestedChara) ||
+                   (!requestedMotion.empty() &&
+                    candidate.motion != requestedMotion)) {
+                    continue;
+                }
+
+                if(selected == std::numeric_limits<std::size_t>::max() ||
+                   (candidate.mostRecentlyLoaded &&
+                    !bestIsMostRecentlyLoaded) ||
+                   (candidate.mostRecentlyLoaded ==
+                        bestIsMostRecentlyLoaded &&
+                    candidate.loadGeneration > bestGeneration)) {
+                    selected = index;
+                    bestIsMostRecentlyLoaded = candidate.mostRecentlyLoaded;
+                    bestGeneration = candidate.loadGeneration;
+                }
+            }
+            return selected;
+        }
+
+        inline bool shouldAppendPrivateMotionGLLItem(bool hasTexture,
+                                                     int width, int height) {
+            return hasTexture && width > 0 && height > 0;
         }
 
         inline bool sourceKeepsEmoteDeformation(const std::string &source,

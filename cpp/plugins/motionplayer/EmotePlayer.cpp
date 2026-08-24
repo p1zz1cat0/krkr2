@@ -697,8 +697,13 @@ namespace motion {
             if(_player.hasActiveMotion()) {
                 mode = EmotePlayMode::MotionKey;
                 selfClear = true;
+                const ttstr metaChara =
+                    readMetadataBaseField(module, TJS_W("chara"));
                 const ttstr metaMotion =
                     readMetadataBaseField(module, TJS_W("motion"));
+                if(!metaChara.IsEmpty()) {
+                    _player.setChara(metaChara);
+                }
                 clipLookupLabel = !metaMotion.IsEmpty() ? metaMotion : label;
                 LOGGER->debug("EmotePlayer::play mode=MotionKey storageKey={} "
                               "clipLookup={} playLabel={}",
@@ -719,7 +724,14 @@ namespace motion {
                     _storageKey = ttstr(entry.key.c_str());
                     _module = entry.module;
                 }
-                clipLookupLabel = label;
+                const ttstr metaChara =
+                    readMetadataBaseField(entry.module, TJS_W("chara"));
+                const ttstr metaMotion =
+                    readMetadataBaseField(entry.module, TJS_W("motion"));
+                if(!metaChara.IsEmpty()) {
+                    _player.setChara(metaChara);
+                }
+                clipLookupLabel = !metaMotion.IsEmpty() ? metaMotion : label;
                 LOGGER->debug(
                     "EmotePlayer::play mode=SingleCache key={} chara={} "
                     "clipLookup={}",
@@ -729,42 +741,71 @@ namespace motion {
                 // 参考 sdl3：multi-cache 分支 — 选主 PSB 后交叉链接其余缓存项
                 mode = EmotePlayMode::MultiCache;
                 selfClear = false;
-                std::shared_ptr<detail::MotionSnapshot> primarySnapshot;
+                const auto requestedChara = _player.getChara().AsStdString();
+                const auto requestedMotion = label.AsStdString();
+                const tTJSVariant lastLoaded = rm.getLastLoadedModule();
+                auto *lastLoadedObject = lastLoaded.Type() == tvtObject
+                    ? lastLoaded.AsObjectNoAddRef()
+                    : nullptr;
+                std::vector<detail::MultiCacheCandidate> candidates;
+                candidates.reserve(cached.size());
                 for(const auto &entry : cached) {
                     const ttstr metaChara =
                         readMetadataBaseField(entry.module, TJS_W("chara"));
                     const ttstr metaMotion =
                         readMetadataBaseField(entry.module, TJS_W("motion"));
-                    if(metaChara.IsEmpty() || metaMotion.IsEmpty()) {
-                        continue;
-                    }
                     const auto snapshot =
                         detail::lookupModuleSnapshot(entry.module);
-                    if(!snapshot) {
-                        continue;
-                    }
-                    if(!primarySnapshot) {
-                        primarySnapshot = snapshot;
-                        _player.bindMotionModuleKey(ttstr(entry.key.c_str()));
-                        _storageKey = ttstr(entry.key.c_str());
-                        _module = entry.module;
-                        clipLookupLabel = metaMotion;
-                        LOGGER->debug(
-                            "EmotePlayer::play mode=MultiCache primary key={} "
-                            "chara={} motion={}",
-                            entry.key, metaChara.AsStdString(),
-                            metaMotion.AsStdString());
-                    }
+                    candidates.push_back({
+                        metaChara.AsStdString(),
+                        metaMotion.AsStdString(),
+                        entry.loadGeneration,
+                        entry.module.AsObjectNoAddRef() == lastLoadedObject,
+                        snapshot != nullptr,
+                    });
                 }
-                if(primarySnapshot) {
+                const auto selectedIndex = detail::selectMultiCacheCandidate(
+                    candidates, requestedChara, requestedMotion);
+                if(selectedIndex !=
+                   std::numeric_limits<std::size_t>::max()) {
+                    const auto &selected = cached[selectedIndex];
+                    const auto &selectedCandidate = candidates[selectedIndex];
+                    const auto primarySnapshot =
+                        detail::lookupModuleSnapshot(selected.module);
+                    _player.bindMotionModuleKey(
+                        ttstr(selected.key.c_str()));
+                    _storageKey = ttstr(selected.key.c_str());
+                    _module = selected.module;
+                    _player.setChara(
+                        ttstr(selectedCandidate.chara.c_str()));
+                    clipLookupLabel =
+                        ttstr(selectedCandidate.motion.c_str());
+
+                    std::vector<const ResourceManager::CachedModuleEntry *>
+                        ordered;
+                    ordered.reserve(cached.size());
                     for(const auto &entry : cached) {
+                        ordered.push_back(&entry);
+                    }
+                    std::sort(ordered.begin(), ordered.end(),
+                              [](const auto *left, const auto *right) {
+                                  return left->loadGeneration <
+                                      right->loadGeneration;
+                              });
+                    for(const auto *entry : ordered) {
                         const auto snapshot =
-                            detail::lookupModuleSnapshot(entry.module);
+                            detail::lookupModuleSnapshot(entry->module);
                         if(snapshot &&
                            snapshot.get() != primarySnapshot.get()) {
                             _player.addEmoteFile(snapshot);
                         }
                     }
+                    LOGGER->debug(
+                        "EmotePlayer::play mode=MultiCache primary key={} "
+                        "chara={} motion={} generation={}",
+                        selected.key, selectedCandidate.chara,
+                        selectedCandidate.motion,
+                        selected.loadGeneration);
                     LOGGER->debug(
                         "EmotePlayer::play mode=MultiCache: linked {} attached "
                         "snapshot(s)",
