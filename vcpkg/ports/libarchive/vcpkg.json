@@ -11,6 +11,7 @@
       "name": "vcpkg-cmake",
       "host": true
     },
-    "libxml2"
+    "libxml2",
+    "libb2"
   ]
 }

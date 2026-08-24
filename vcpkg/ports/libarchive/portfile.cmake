@@ -10,6 +10,7 @@ vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         -DENABLE_OPENSSL=OFF
+        -DENABLE_LIBB2=ON
         -DENABLE_TEST=OFF
 )
 
