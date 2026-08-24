@@ -4,6 +4,7 @@
 
 #include <cocos2d.h>
 #include <cocos-ext.h>
+#include "platform/desktop/CCGLViewImpl-desktop.h"
 
 #include "tjsCommHead.h"
 #include "StorageIntf.h"
@@ -486,6 +487,63 @@ void TVPMainScene::initialize() {
                                                              this);
     cocos2d::Controller::startDiscoveryController(); // for win32 &
                                                      // iOS
+
+    // initialize() derives the design width from the screen aspect ratio so
+    // the viewport always covers the whole window, leaving RecalcPaintBox's
+    // game-aspect letterbox as the only one. It runs once, so after a resize
+    // GameNode kept the launch-time aspect and the viewport picked up a
+    // centering offset that the MetalFX presenter does not have -- the
+    // pointer then lands left of what is drawn. Redo that math on resize.
+    _eventDispatcher->addCustomEventListener(
+        cocos2d::GLViewImpl::EVENT_WINDOW_RESIZED,
+        [this](cocos2d::EventCustom *) { relayoutForWindowSize(); });
+}
+
+void TVPMainScene::relayoutForWindowSize() {
+    auto *glview = cocos2d::Director::getInstance()->getOpenGLView();
+    if(!glview)
+        return;
+    const cocos2d::Size screenSize = glview->getFrameSize();
+    if(screenSize.width <= 0 || screenSize.height <= 0)
+        return;
+
+    cocos2d::Size designSize = glview->getDesignResolutionSize();
+    if(designSize.height <= 0)
+        return;
+    designSize.width =
+        designSize.height * screenSize.width / screenSize.height;
+    if(designSize.width <= 0)
+        return;
+
+    glview->setDesignResolutionSize(designSize.width, designSize.height,
+                                    glview->getResolutionPolicy());
+    cocos2d::Director::getInstance()->setViewport();
+
+    ScreenRatio = screenSize.height / designSize.height;
+    setContentSize(designSize);
+    SceneSize = designSize;
+    if(GameNode)
+        GameNode->setContentSize(designSize);
+    if(UINode && UINode->getRotation() < 1) {
+        UINode->setContentSize(designSize);
+        UISize = designSize;
+        // Same follow-up rotateUI() does after changing UINode's size:
+        // forms lay themselves out against it and must be told to redo it.
+        for(auto *ui : UINode->getChildren()) {
+            static_cast<iTVPBaseForm *>(ui)->rearrangeLayout();
+        }
+    }
+
+    if(!GameNode)
+        return;
+    // Window layers keep their own contentSize (the game's resolution); only
+    // the view they are letterboxed into follows the window.
+    for(auto *child : GameNode->getChildren()) {
+        if(auto *layer = dynamic_cast<TVPWindowLayer *>(child)) {
+            layer->setViewSize(designSize);
+            layer->RecalcPaintBox();
+        }
+    }
 }
 
 TVPMainScene *TVPMainScene::create() {

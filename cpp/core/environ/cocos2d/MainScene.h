@@ -41,6 +41,9 @@ public:
     void popAllUIForm();
 
     void addLayer(TVPWindowLayer *lay);
+
+    // Re-runs initialize()'s design-size math after the window is resized.
+    void relayoutForWindowSize();
     cocos2d::Size getUINodeSize();
     cocos2d::Size getGameNodeSize() const { return GameNode->getContentSize(); }
     void rotateUI();

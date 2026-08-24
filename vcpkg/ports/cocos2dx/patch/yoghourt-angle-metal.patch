@@ -111,7 +111,7 @@ index 74e2ca7..e0b2671 100644
  
  //    // GLFW v3.2 no longer emits "onGLFWWindowSizeFunCallback" at creation time. Force default viewport:
  //    setViewPortInPoints(0, 0, neededWidth, neededHeight);
-@@ -375,6 +403,196 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+@@ -375,6 +403,212 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
      return true;
  }
  
@@ -264,6 +264,22 @@ index 74e2ca7..e0b2671 100644
 +    if (!_eglDrawable)
 +        return true;
 +
++
++    // ANGLE's EGL surface does not follow live window resizes on macOS: it
++    // keeps reporting the size it was created with, while the CAMetalLayer
++    // drawable does resize. updateMousePosition() converts the cursor into
++    // real backing pixels, so the frame size has to come from the framebuffer
++    // as well. Trusting eglQuerySurface here leaves _screenSize frozen at the
++    // creation size and collapses the usable hit area into the top-left
++    // corner after every resize.
++    int framebufferWidth = 0;
++    int framebufferHeight = 0;
++    glfwGetFramebufferSize(_mainWindow, &framebufferWidth, &framebufferHeight);
++    if (framebufferWidth > 0 && framebufferHeight > 0)
++    {
++        surfaceWidth = static_cast<EGLint>(framebufferWidth);
++        surfaceHeight = static_cast<EGLint>(framebufferHeight);
++    }
 +    int windowWidth = 0;
 +    int windowHeight = 0;
 +    glfwGetWindowSize(_mainWindow, &windowWidth, &windowHeight);
