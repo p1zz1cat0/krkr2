@@ -103,6 +103,40 @@ namespace motion {
             return hasTexture && width > 0 && height > 0;
         }
 
+        inline std::uint8_t applyMotionMaskAlpha(
+            std::uint8_t destinationAlpha, std::uint8_t sourceAlpha,
+            int itemFlags, int maskMode, int threshold) {
+            const int src = static_cast<int>(sourceAlpha);
+            const int dst = static_cast<int>(destinationAlpha);
+            if(maskMode == 0) {
+                switch(itemFlags) {
+                    case 1:
+                        return src < threshold ? 0 : destinationAlpha;
+                    case 2:
+                        return src >= threshold ? 0 : destinationAlpha;
+                    case 5:
+                    case 6:
+                        return src >= threshold ? 255 : destinationAlpha;
+                    default:
+                        return destinationAlpha;
+                }
+            }
+
+            switch(itemFlags) {
+                case 1:
+                    return static_cast<std::uint8_t>((dst * src) / 255);
+                case 2:
+                    return static_cast<std::uint8_t>(((255 - src) * dst) /
+                                                     255);
+                case 5:
+                case 6:
+                    return static_cast<std::uint8_t>(
+                        src + (((255 - src) * dst) / 255));
+                default:
+                    return destinationAlpha;
+            }
+        }
+
         inline std::string renderSourceCacheIdentity(
             const std::string &motionPath, const std::string &sourceKey) {
             return motionPath + '\n' + sourceKey;

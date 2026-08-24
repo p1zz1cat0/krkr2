@@ -138,6 +138,24 @@ TEST_CASE("Nested render sources are cached per owning motion") {
           "chocola/action.psb\nsrc/face/eye");
 }
 
+TEST_CASE("Mask alpha mode preserves soft facial part edges") {
+    constexpr int threshold = 64;
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 63, 1, 0, threshold) ==
+          0);
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 64, 1, 0, threshold) ==
+          200);
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 63, 1, 1, threshold) ==
+          49);
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 255, 1, 1, threshold) ==
+          200);
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 64, 2, 0, threshold) ==
+          0);
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 63, 2, 0, threshold) ==
+          200);
+    CHECK(motion::detail::applyMotionMaskAlpha(200, 255, 5, 1, threshold) ==
+          255);
+}
+
 TEST_CASE("Top-level zero dt does not initialize post-Core physics") {
     motion::physics::BustControl bust(bustConfig());
     const auto zeroOutput =

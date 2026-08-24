@@ -703,7 +703,6 @@ namespace motion::internal::render_detail {
             return true;
         }
 
-        const bool thresholdMaskMode = playerStencilType == 0;
         for(int y = 0; y < height; ++y) {
             auto *dstRow = static_cast<std::uint8_t *>(
                 dstBmp->GetScanLineForWrite(dstY + y));
@@ -712,48 +711,9 @@ namespace motion::internal::render_detail {
             for(int x = 0; x < width; ++x) {
                 auto *dstPixel = dstRow + (dstX + x) * 4;
                 const auto *srcPixel = srcRow + (srcX + x) * 4;
-                const auto srcAlpha = static_cast<int>(srcPixel[3]);
-                auto &dstAlpha = dstPixel[3];
-                switch(itemFlags) {
-                    case 1:
-                        if(thresholdMaskMode) {
-                            if(srcAlpha < threshold) {
-                                dstAlpha = 0;
-                            }
-                        } else {
-                            dstAlpha = static_cast<std::uint8_t>(
-                                (static_cast<int>(dstAlpha) * srcAlpha) / 255);
-                        }
-                        break;
-                    case 2:
-                        if(thresholdMaskMode) {
-                            if(srcAlpha >= threshold) {
-                                dstAlpha = 0;
-                            }
-                        } else {
-                            dstAlpha = static_cast<std::uint8_t>(
-                                ((255 - srcAlpha) *
-                                 static_cast<int>(dstAlpha)) /
-                                255);
-                        }
-                        break;
-                    case 5:
-                    case 6:
-                        if(thresholdMaskMode) {
-                            if(srcAlpha >= threshold) {
-                                dstAlpha = 255;
-                            }
-                        } else {
-                            dstAlpha = static_cast<std::uint8_t>(
-                                srcAlpha +
-                                ((255 - srcAlpha) *
-                                 static_cast<int>(dstAlpha)) /
-                                    255);
-                        }
-                        break;
-                    default:
-                        break;
-                }
+                dstPixel[3] = detail::applyMotionMaskAlpha(
+                    dstPixel[3], srcPixel[3], itemFlags, playerStencilType,
+                    threshold);
             }
         }
 

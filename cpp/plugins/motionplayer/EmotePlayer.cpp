@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "D3DEmoteModule.h"
 #include "EmotePlayer.h"
 #include "RuntimeSupport.h"
 #include "ncbind.hpp"
@@ -98,7 +99,9 @@ namespace {
 
 namespace motion {
 
-    EmotePlayer::EmotePlayer(ResourceManager rm) : _player(std::move(rm)) {}
+    EmotePlayer::EmotePlayer(ResourceManager rm) : _player(std::move(rm)) {
+        _player.setMaskMode(D3DEmoteModule::getMaskMode());
+    }
 
     EmotePlayer::~EmotePlayer() = default;
 

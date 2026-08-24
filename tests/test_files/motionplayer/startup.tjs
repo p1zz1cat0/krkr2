@@ -43,6 +43,14 @@ var manager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
 Motion.ResourceManager.setEmotePSBDecryptSeed(742877301);
 var data = manager.load("../emote/e-mote3.0バニラパジャマa.psb");
 var player = new Motion.EmotePlayer(manager);
+pluginAssertEqual("E-mote module default mask mode", Motion.MaskModeAlpha,
+    player.maskMode);
+player.maskMode = Motion.MaskModeStencil;
+pluginAssertEqual("E-mote mask mode setter keeps stencil override",
+    Motion.MaskModeStencil, player.maskMode);
+player.maskMode = Motion.MaskModeAlpha;
+pluginAssertEqual("E-mote mask mode setter restores alpha",
+    Motion.MaskModeAlpha, player.maskMode);
 player.motionKey = Storages.getPlacedPath(
     "../emote/e-mote3.0バニラパジャマa.psb");
 player.chara = data.metadata.base.chara;
