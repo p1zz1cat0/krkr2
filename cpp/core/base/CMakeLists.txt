@@ -39,6 +39,7 @@ find_package(LibXml2 REQUIRED)
 include_directories(${LIBXML2_INCLUDE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE ${LIBXML2_LIBRARIES})
 find_package(LibArchive REQUIRED)
+find_library(LIBB2_LIBRARY NAMES b2 libb2 REQUIRED)
 find_package(zstd CONFIG REQUIRED)
 find_package(cocos2dx CONFIG REQUIRED)
 
@@ -46,6 +47,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     uchardet::libuchardet
     unrar::unrar
     LibArchive::LibArchive
+    ${LIBB2_LIBRARY}
     zstd::libzstd
 
     cocos2dx::cocos2d

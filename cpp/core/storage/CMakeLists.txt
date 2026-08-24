@@ -28,4 +28,6 @@ target_link_libraries(${PROJECT_NAME} PUBLIC tjs2 core_io core_msg archive_xp3)
 
 find_package(unrar CONFIG REQUIRED)
 find_package(LibArchive REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE unrar::unrar LibArchive::LibArchive)
+find_library(LIBB2_LIBRARY NAMES b2 libb2 REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE unrar::unrar LibArchive::LibArchive
+    ${LIBB2_LIBRARY})
