@@ -27,6 +27,7 @@ namespace motion {
     class ResourceManager;
 
     namespace detail {
+        struct MotionSnapshot;
         struct PlayerRuntime;
     }
 
@@ -51,10 +52,10 @@ namespace motion {
             std::shared_ptr<tTVPBaseBitmap> baseBitmap;
             std::shared_ptr<tTVPBaseBitmap> backingBitmap;
             iTVPTexture2D *sourceTexture = nullptr;
-            // A missing source is authoritative for one active motion. Keep
-            // that result so render retries do not rescan every mounted XP3
-            // on every frame. A motion identity change reopens the lookup.
-            const void *motionIdentity = nullptr;
+            // Flattened nested players can reuse the same source key. Cache
+            // entries therefore retain the snapshot that owns that key.
+            std::shared_ptr<detail::MotionSnapshot> sourceMotion;
+            std::string sourceIdentity;
             bool backingLoadAttempted = false;
         };
 
@@ -76,10 +77,13 @@ namespace motion {
                                const tTJSVariant &currentSource, int blendMode,
                                const std::array<std::uint32_t, 4> &packedColors,
                                iTJSDispatch2 *layerTreeOwnerObject,
-                               iTJSDispatch2 *parentLayerObject);
+                               iTJSDispatch2 *parentLayerObject,
+                               const std::shared_ptr<detail::MotionSnapshot>
+                                   &sourceMotion);
         iTVPTexture2D *loadRenderSourceTextureByName(
             const ttstr &name, const tTJSVariant &currentSource, int blendMode,
-            const std::array<std::uint32_t, 4> &packedColors);
+            const std::array<std::uint32_t, 4> &packedColors,
+            const std::shared_ptr<detail::MotionSnapshot> &sourceMotion);
         tTJSVariant findSource(ttstr name);
         void clearCache();
         void eraseSource(ttstr name);
@@ -93,14 +97,19 @@ namespace motion {
     private:
         Entry *findEntry(const std::string &key, int blendMode,
                          const std::array<std::uint32_t, 4> &packedColors);
-        Entry *findRenderEntry(const std::string &key, int blendMode);
+        Entry *findRenderEntry(const std::string &key, int blendMode,
+                               const std::string &sourceIdentity);
         Entry *findEntryByKey(const std::string &key);
         Entry &ensureEntry(const std::string &key,
                            const std::string &resolvedKey, int blendMode,
-                           const std::array<std::uint32_t, 4> &packedColors);
+                           const std::array<std::uint32_t, 4> &packedColors,
+                           const std::shared_ptr<detail::MotionSnapshot>
+                               &sourceMotion,
+                           const std::string &sourceIdentity);
         bool ensureEntryBackingBitmap(
             Entry &entry, const std::string &key, int blendMode,
-            const std::array<std::uint32_t, 4> &packedColors);
+            const std::array<std::uint32_t, 4> &packedColors,
+            const std::shared_ptr<detail::MotionSnapshot> &sourceMotion);
         void releaseEntryTexture(Entry &entry);
         tTJSVariant loadRawSourceVariant(const ttstr &name,
                                          std::string &resolvedKey) const;

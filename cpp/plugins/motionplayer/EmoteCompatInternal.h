@@ -103,6 +103,11 @@ namespace motion {
             return hasTexture && width > 0 && height > 0;
         }
 
+        inline std::string renderSourceCacheIdentity(
+            const std::string &motionPath, const std::string &sourceKey) {
+            return motionPath + '\n' + sourceKey;
+        }
+
         inline bool sourceKeepsEmoteDeformation(const std::string &source,
                                                 int parameterizeIndex) {
             if(parameterizeIndex >= 0) {

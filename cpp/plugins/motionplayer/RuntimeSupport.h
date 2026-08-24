@@ -378,6 +378,9 @@ namespace motion::detail {
             int nodeIndex = 0;
             tTJSVariant srcRef;
             std::string sourceKey;
+            // Flattened child keys are local to the snapshot that owns the
+            // child, not necessarily to the root player's active motion.
+            std::shared_ptr<MotionSnapshot> sourceMotion;
             bool hasOwnSource = false;
             bool groupOnly = false;
             bool topLevelList = true;

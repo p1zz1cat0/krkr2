@@ -726,7 +726,8 @@ namespace motion {
                 auto *sourceTexture =
                     _runtime->sourceCacheNative->loadRenderSourceTextureByName(
                         detail::widen(item.sourceKey), item.srcRef,
-                        item.blendMode, item.packedColors);
+                        item.blendMode, item.packedColors,
+                        item.sourceMotion);
                 if(!detail::shouldAppendPrivateMotionGLLItem(
                        sourceTexture != nullptr,
                        sourceTexture ? sourceTexture->GetWidth() : 0,
@@ -964,7 +965,7 @@ namespace motion {
                     _runtime->sourceCacheNative->loadRenderSourceByName(
                         detail::widen(item.sourceKey), item.srcRef,
                         item.blendMode, item.packedColors, layerTreeOwner,
-                        targetLayerObject);
+                        targetLayerObject, item.sourceMotion);
                 if(sourceObject.Type() != tvtObject ||
                    !sourceObject.AsObjectNoAddRef()) {
                     ++skippedSource;
@@ -1306,7 +1307,7 @@ namespace motion {
             auto *sourceTexture =
                 _runtime->sourceCacheNative->loadRenderSourceTextureByName(
                     detail::widen(item.sourceKey), item.srcRef, item.blendMode,
-                    item.packedColors);
+                    item.packedColors, item.sourceMotion);
             if(!sourceTexture || sourceTexture->GetWidth() <= 0 ||
                sourceTexture->GetHeight() <= 0) {
                 ++skippedTexture;

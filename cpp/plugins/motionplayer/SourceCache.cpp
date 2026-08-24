@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <unordered_set>
@@ -10,6 +11,7 @@
 #include <cocos2d.h>
 #include "BitmapIntf.h"
 #include "GraphicsLoaderIntf.h"
+#include "EmoteCompatInternal.h"
 #include "LayerBitmapIntf.h"
 #include "LayerIntf.h"
 #include "PlayerInternal.h"
@@ -20,6 +22,19 @@
 #include <spdlog/spdlog.h>
 
 namespace {
+
+    bool emoteSourceTraceEnabled() {
+        static const bool enabled = [] {
+            const char *value = std::getenv("KRKR_TRACE_EMOTE_SOURCE");
+            return value && *value && std::strcmp(value, "0") != 0;
+        }();
+        return enabled;
+    }
+
+    std::string diagnosticMotionName(const std::string &path) {
+        const auto slash = path.find_last_of("/\\");
+        return slash == std::string::npos ? path : path.substr(slash + 1);
+    }
 
     bool getObjectProperty(const tTJSVariant &object, const tjs_char *name,
                            tTJSVariant &out) {
@@ -541,7 +556,8 @@ namespace motion {
     tTJSVariant SourceCache::loadRenderSourceByName(
         const ttstr &name, const tTJSVariant &currentSource, int blendMode,
         const std::array<std::uint32_t, 4> &packedColors,
-        iTJSDispatch2 *layerTreeOwnerObject, iTJSDispatch2 *parentLayerObject) {
+        iTJSDispatch2 *layerTreeOwnerObject, iTJSDispatch2 *parentLayerObject,
+        const std::shared_ptr<detail::MotionSnapshot> &sourceMotion) {
         const auto key = detail::narrow(name);
         if(key.empty()) {
             return {};
@@ -564,9 +580,15 @@ namespace motion {
         // large hidden cost. Reuse the cached rawSource/resolvedKey and let
         // ensureEntryBackingBitmap's backingLoadAttempted guard make known
         // failures a cheap return.
+        const auto effectiveMotion = sourceMotion
+            ? sourceMotion
+            : (_runtime ? _runtime->activeMotion : nullptr);
+        const auto sourceIdentity = detail::renderSourceCacheIdentity(
+            effectiveMotion ? effectiveMotion->path : std::string{}, key);
         std::string resolvedKey;
         tTJSVariant rawSource;
-        Entry *entryPtr = findRenderEntry(key, blendMode);
+        Entry *entryPtr =
+            findRenderEntry(key, blendMode, sourceIdentity);
         if(entryPtr) {
             if(entryPtr->packedColors == packedColors &&
                entryPtr->sourceObject.Type() == tvtObject &&
@@ -580,12 +602,14 @@ namespace motion {
                 ? currentSource
                 : loadRawSourceVariant(name, resolvedKey);
             entryPtr = &ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
-                                    blendMode, packedColors);
+                                    blendMode, packedColors, effectiveMotion,
+                                    sourceIdentity);
             entryPtr->rawSource = rawSource;
         }
         auto &entry = *entryPtr;
 
-        if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors)) {
+        if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors,
+                                     effectiveMotion)) {
             return entry.rawSource;
         }
 
@@ -614,15 +638,22 @@ namespace motion {
 
     iTVPTexture2D *SourceCache::loadRenderSourceTextureByName(
         const ttstr &name, const tTJSVariant &currentSource, int blendMode,
-        const std::array<std::uint32_t, 4> &packedColors) {
+        const std::array<std::uint32_t, 4> &packedColors,
+        const std::shared_ptr<detail::MotionSnapshot> &sourceMotion) {
         const auto key = detail::narrow(name);
         if(key.empty()) {
             return nullptr;
         }
 
+        const auto effectiveMotion = sourceMotion
+            ? sourceMotion
+            : (_runtime ? _runtime->activeMotion : nullptr);
+        const auto sourceIdentity = detail::renderSourceCacheIdentity(
+            effectiveMotion ? effectiveMotion->path : std::string{}, key);
         std::string resolvedKey;
         tTJSVariant rawSource;
-        Entry *entryPtr = findRenderEntry(key, blendMode);
+        Entry *entryPtr =
+            findRenderEntry(key, blendMode, sourceIdentity);
         if(entryPtr) {
             if(entryPtr->packedColors == packedColors &&
                entryPtr->sourceTexture) {
@@ -635,12 +666,14 @@ namespace motion {
                 ? currentSource
                 : loadRawSourceVariant(name, resolvedKey);
             entryPtr = &ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
-                                    blendMode, packedColors);
+                                    blendMode, packedColors, effectiveMotion,
+                                    sourceIdentity);
             entryPtr->rawSource = rawSource;
         }
         auto &entry = *entryPtr;
 
-        if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors)) {
+        if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors,
+                                     effectiveMotion)) {
             return nullptr;
         }
         if(entry.sourceTexture) {
@@ -740,11 +773,13 @@ namespace motion {
         return nullptr;
     }
 
-    SourceCache::Entry *SourceCache::findRenderEntry(const std::string &key,
-                                                     int blendMode) {
+    SourceCache::Entry *SourceCache::findRenderEntry(
+        const std::string &key, int blendMode,
+        const std::string &sourceIdentity) {
         for(auto it = _entries.begin(); it != _entries.end(); ++it) {
             if((it->key == key || it->resolvedKey == key) &&
-               it->blendMode == blendMode) {
+               it->blendMode == blendMode &&
+               it->sourceIdentity == sourceIdentity) {
                 _entries.splice(_entries.begin(), _entries, it);
                 return &_entries.front();
             }
@@ -765,8 +800,12 @@ namespace motion {
     SourceCache::Entry &
     SourceCache::ensureEntry(const std::string &key,
                              const std::string &resolvedKey, int blendMode,
-                             const std::array<std::uint32_t, 4> &packedColors) {
-        if(auto *entry = findRenderEntry(key, blendMode)) {
+                             const std::array<std::uint32_t, 4> &packedColors,
+                             const std::shared_ptr<detail::MotionSnapshot>
+                                 &sourceMotion,
+                             const std::string &sourceIdentity) {
+        if(auto *entry =
+               findRenderEntry(key, blendMode, sourceIdentity)) {
             return *entry;
         }
 
@@ -774,22 +813,22 @@ namespace motion {
         entry.key = key;
         entry.resolvedKey = resolvedKey.empty() ? key : resolvedKey;
         entry.blendMode = blendMode;
+        entry.sourceMotion = sourceMotion;
+        entry.sourceIdentity = sourceIdentity;
         _entries.push_front(std::move(entry));
         return _entries.front();
     }
 
     bool SourceCache::ensureEntryBackingBitmap(
         Entry &entry, const std::string &key, int blendMode,
-        const std::array<std::uint32_t, 4> &packedColors) {
-        const auto *activeMotion =
-            _runtime && _runtime->activeMotion
-            ? _runtime->activeMotion.get()
-            : nullptr;
-        if(entry.motionIdentity != activeMotion) {
+        const std::array<std::uint32_t, 4> &packedColors,
+        const std::shared_ptr<detail::MotionSnapshot> &sourceMotion) {
+        const auto *activeMotion = sourceMotion.get();
+        if(entry.sourceMotion.get() != activeMotion) {
             releaseEntryTexture(entry);
             entry.baseBitmap.reset();
             entry.backingBitmap.reset();
-            entry.motionIdentity = activeMotion;
+            entry.sourceMotion = sourceMotion;
             entry.backingLoadAttempted = false;
         }
 
@@ -808,8 +847,25 @@ namespace motion {
             const auto path = resolveMotionSourcePathLike_0x6948E8(
                 *activeMotion, key);
             entry.baseBitmap = loadGraphicBitmap(path);
+            std::string sourceOrigin =
+                entry.baseBitmap ? "external" : "miss";
             if(!entry.baseBitmap) {
                 entry.baseBitmap = loadPsbBitmap(*activeMotion, key);
+                if(entry.baseBitmap) {
+                    sourceOrigin = "embedded";
+                }
+            }
+            if(emoteSourceTraceEnabled()) {
+                if(auto logger = spdlog::get("plugin")) {
+                    logger->info(
+                        "source.cache.resolve motion={} key={} origin={} "
+                        "result={}x{} attached={}",
+                        diagnosticMotionName(activeMotion->path), key,
+                        sourceOrigin,
+                        entry.baseBitmap ? entry.baseBitmap->GetWidth() : 0,
+                        entry.baseBitmap ? entry.baseBitmap->GetHeight() : 0,
+                        activeMotion->attachedSnapshots.size());
+                }
             }
             const double loadMs =
                 std::chrono::duration<double, std::milli>(

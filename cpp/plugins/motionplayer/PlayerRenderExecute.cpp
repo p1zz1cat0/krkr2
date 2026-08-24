@@ -322,7 +322,8 @@ namespace motion {
             resolved.object =
                 _runtime->sourceCacheNative->loadRenderSourceByName(
                     detail::widen(item.sourceKey), item.srcRef, item.blendMode,
-                    item.packedColors, scratchOwner, scratchParent);
+                    item.packedColors, scratchOwner, scratchParent,
+                    item.sourceMotion);
             if(resolved.object.Type() != tvtObject ||
                !resolved.object.AsObjectNoAddRef()) {
                 return resolved;

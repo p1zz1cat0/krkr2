@@ -420,6 +420,7 @@ namespace motion {
         auto restoreNativeFieldLifetime =
             [&](detail::PlayerRuntime::PreparedRenderItem &entry) {
                 entry.nativeLifetimeOwner = _runtime.get();
+                entry.sourceMotion = _runtime->activeMotion;
                 entry.nativeLifetimeKey = entry.nodeIndex;
                 const auto it =
                     _runtime->renderItemNativeFieldLifetimeByNode.find(

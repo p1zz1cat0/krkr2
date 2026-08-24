@@ -128,6 +128,16 @@ TEST_CASE("Private Motion GLL skips only unusable source textures") {
     CHECK(motion::detail::shouldAppendPrivateMotionGLLItem(true, 64, 64));
 }
 
+TEST_CASE("Nested render sources are cached per owning motion") {
+    CHECK(motion::detail::renderSourceCacheIdentity(
+              "chocola/action.psb", "src/face/eye") !=
+          motion::detail::renderSourceCacheIdentity(
+              "vanilla/action.psb", "src/face/eye"));
+    CHECK(motion::detail::renderSourceCacheIdentity(
+              "chocola/action.psb", "src/face/eye") ==
+          "chocola/action.psb\nsrc/face/eye");
+}
+
 TEST_CASE("Top-level zero dt does not initialize post-Core physics") {
     motion::physics::BustControl bust(bustConfig());
     const auto zeroOutput =
