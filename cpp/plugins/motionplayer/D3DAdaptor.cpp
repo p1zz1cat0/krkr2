@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include "LayerBitmapIntf.h"
 #include "MsgIntf.h"
 #include "RenderManager.h"
 
@@ -171,6 +172,57 @@ namespace motion {
         const tTVPRect rc(0, 0, _width, _height);
         mgr->OperateRect(method, _targetTexture, nullptr, rc,
                          tRenderTexRectArray());
+    }
+
+    bool D3DAdaptor::copyTextureFrom(iTVPTexture2D *sourceTexture) {
+        if(!sourceTexture || !_targetTexture || _width <= 0 || _height <= 0 ||
+           sourceTexture->GetWidth() < static_cast<tjs_uint>(_width) ||
+           sourceTexture->GetHeight() < static_cast<tjs_uint>(_height)) {
+            return false;
+        }
+
+        auto *mgr = TVPGetRenderManager();
+        if(!mgr) {
+            return false;
+        }
+
+        iTVPRenderMethod *method = nullptr;
+        if(mgr->IsSoftware()) {
+            method = mgr->GetRenderMethod(255, false, bmAlphaOnAlpha);
+        } else {
+            method = mgr->GetRenderMethod("AlphaBlend_color_d");
+        }
+        if(!method) {
+            return false;
+        }
+        const int colorId = method->EnumParameterID("color");
+        if(colorId >= 0) {
+            method->SetParameterColor4B(colorId, 0xFFFFFFFFu);
+        }
+
+        const tTVPRect targetRect(0, 0, _width, _height);
+        const tTVPPointD points[] = {
+            { 0.0, 0.0 },
+            { static_cast<double>(_width), 0.0 },
+            { 0.0, static_cast<double>(_height) },
+            { static_cast<double>(_width), 0.0 },
+            { 0.0, static_cast<double>(_height) },
+            { static_cast<double>(_width), static_cast<double>(_height) },
+        };
+        const tTVPPointD sourcePoints[] = {
+            { 0.0, 0.0 },
+            { static_cast<double>(_width), 0.0 },
+            { 0.0, static_cast<double>(_height) },
+            { static_cast<double>(_width), 0.0 },
+            { 0.0, static_cast<double>(_height) },
+            { static_cast<double>(_width), static_cast<double>(_height) },
+        };
+        tRenderTexQuadArray::Element source[] = {
+            tRenderTexQuadArray::Element(sourceTexture, sourcePoints),
+        };
+        mgr->OperateTriangles(method, 2, _targetTexture, _targetTexture,
+                              targetRect, points, tRenderTexQuadArray(source));
+        return true;
     }
 
     bool

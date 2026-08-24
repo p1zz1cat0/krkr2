@@ -103,6 +103,17 @@ namespace motion {
             return hasTexture && width > 0 && height > 0;
         }
 
+        // E-mote's authored masks are antialiased alpha composites. The
+        // private GPU queue can only represent those masks as a binary
+        // stencil, while the layer-command renderer preserves the source
+        // alpha and applies Player::_maskMode. Keep ordinary Motion players
+        // on the cheaper queue; only an E-mote-like runtime in Alpha mode
+        // needs the command path.
+        inline bool shouldUseContinuousEmoteMask(bool emoteLike,
+                                                  int maskMode) {
+            return emoteLike && maskMode != 0;
+        }
+
         inline std::uint8_t applyMotionMaskAlpha(
             std::uint8_t destinationAlpha, std::uint8_t sourceAlpha,
             int itemFlags, int maskMode, int threshold) {

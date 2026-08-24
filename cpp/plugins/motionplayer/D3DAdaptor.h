@@ -69,6 +69,7 @@ namespace motion {
         bool hasTargetTexture() const { return _targetTexture != nullptr; }
         bool ensureTargetTexture();
         void clearTargetTexture();
+        bool copyTextureFrom(iTVPTexture2D *sourceTexture);
         bool copyTargetTextureRowsForCaptureLike_0x6AD92C(std::uint8_t *dst,
                                                           tjs_int dstPitch);
 

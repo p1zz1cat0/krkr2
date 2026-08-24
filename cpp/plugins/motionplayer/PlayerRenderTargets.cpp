@@ -125,6 +125,12 @@ namespace motion {
             return !item.sourceKey.empty();
         }
 
+        bool isEmoteLikeRuntime(const detail::PlayerRuntime *runtime) {
+            return runtime && runtime->activeMotion &&
+                (runtime->isEmoteMode || !runtime->parameterEntries.empty() ||
+                 !runtime->activeMotion->variableLabels.empty());
+        }
+
         int privateMotionGLLOpacityLike_0x6DE738(const PreparedRenderItem &item,
                                                  bool preview) {
             int opacity = item.opacity;
@@ -1219,6 +1225,40 @@ namespace motion {
         return renderFromPlayerLike_0x6ADE24(adaptor);
     }
 
+    bool Player::renderAlphaMaskedD3DLike_0x6ADFBC(D3DAdaptor *adaptor) {
+        if(!adaptor || !_runtime || !_runtime->activeMotion) {
+            return false;
+        }
+
+        iTJSDispatch2 *windowObject = adaptor->getWindowObject();
+        if(!windowObject) {
+            windowObject = resolveMainWindowOwnerObject();
+        }
+        iTJSDispatch2 *primaryLayerObject =
+            resolvePrimaryLayerObject(windowObject);
+        if(!windowObject || !primaryLayerObject) {
+            return false;
+        }
+
+        iTJSDispatch2 *renderLayerObject = ensureReusableLayerObject(
+            _runtime->internalRenderLayer, windowObject, primaryLayerObject,
+            static_cast<tTVPLayerType>(ltAlpha), false);
+        if(!renderLayerObject ||
+           !prepareLayerForRender(renderLayerObject, adaptor->getWidth(),
+                                  adaptor->getHeight(), 0x00000000)) {
+            return false;
+        }
+        if(!buildRenderCommands(adaptor->getWidth(), adaptor->getHeight()) ||
+           !executeLayerRenderCommands(renderLayerObject, true)) {
+            return false;
+        }
+
+        auto *renderLayer = resolveNativeLayer(renderLayerObject);
+        auto *image = renderLayer ? renderLayer->GetMainImage() : nullptr;
+        auto *sourceTexture = image ? image->GetTexture() : nullptr;
+        return adaptor->copyTextureFrom(sourceTexture);
+    }
+
     bool Player::renderFromPlayerLike_0x6ADE24(D3DAdaptor *adaptor) {
         if(!adaptor || adaptor->getWidth() <= 0 || adaptor->getHeight() <= 0) {
             return false;
@@ -1239,6 +1279,24 @@ namespace motion {
         }
         if(adaptor->getClearEnabled()) {
             adaptor->clearTargetTexture();
+        }
+        const bool emoteLike = isEmoteLikeRuntime(_runtime.get());
+        const bool continuousMask =
+            detail::shouldUseContinuousEmoteMask(emoteLike, _maskMode);
+        if(continuousMask && renderAlphaMaskedD3DLike_0x6ADFBC(adaptor)) {
+            detail::logoChainTraceLogf(
+                _runtime->activeMotion->path, "draw.d3d.alphaMask",
+                "0x6ADFBC", _clampedEvalTime,
+                "route=executeLayerRenderCommands maskMode={} emoteLike=1",
+                _maskMode);
+            return true;
+        }
+        if(continuousMask) {
+            if(auto logger = spdlog::get("plugin")) {
+                logger->warn(
+                    "D3D alpha-mask command route failed; falling back to "
+                    "binary stencil path");
+            }
         }
         return renderItemsToD3DTextureLike_0x6ADFBC(adaptor);
     }
@@ -1540,9 +1598,13 @@ namespace motion {
 
         int canvasWidth = 0;
         int canvasHeight = 0;
-        const bool accurateSla = isAccurateSlaRenderEnabled();
+        const bool emoteLike = isEmoteLikeRuntime(_runtime.get());
+        const bool continuousMask =
+            detail::shouldUseContinuousEmoteMask(emoteLike, _maskMode);
         iTJSDispatch2 *targetLayerObject =
             tryResolveLayerDispatch(sla->getTargetLayer());
+        const bool accurateSla = isAccurateSlaRenderEnabled() ||
+            (continuousMask && targetLayerObject != nullptr);
         iTJSDispatch2 *renderTarget = nullptr;
         if(accurateSla) {
             if(targetLayerObject) {
@@ -1571,6 +1633,11 @@ namespace motion {
             accurateSla ? 1 : 0,
             accurateSla ? "0x6C9CA8 -> 0x6CE938"
                         : "Player_RenderMotionFrame -> Layer_UpdateRect");
+        detail::logoChainTraceLogf(
+            motionPath, "draw.sla.mask", "0x6D5658", _clampedEvalTime,
+            "emoteLike={} maskMode={} continuousMask={} accurate={}",
+            emoteLike ? 1 : 0, _maskMode, continuousMask ? 1 : 0,
+            accurateSla ? 1 : 0);
         detail::logoChainTraceLogf(
             motionPath, "sla.resolveTarget", "0x6D5948", _clampedEvalTime,
             "targetLayer={} privateTarget={} absolute={} canvas={}x{} "

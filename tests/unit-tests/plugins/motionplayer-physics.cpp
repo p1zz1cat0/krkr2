@@ -128,6 +128,12 @@ TEST_CASE("Private Motion GLL skips only unusable source textures") {
     CHECK(motion::detail::shouldAppendPrivateMotionGLLItem(true, 64, 64));
 }
 
+TEST_CASE("E-mote alpha masks use the layer command renderer") {
+    CHECK(motion::detail::shouldUseContinuousEmoteMask(true, 1));
+    CHECK_FALSE(motion::detail::shouldUseContinuousEmoteMask(true, 0));
+    CHECK_FALSE(motion::detail::shouldUseContinuousEmoteMask(false, 1));
+}
+
 TEST_CASE("Nested render sources are cached per owning motion") {
     CHECK(motion::detail::renderSourceCacheIdentity(
               "chocola/action.psb", "src/face/eye") !=
