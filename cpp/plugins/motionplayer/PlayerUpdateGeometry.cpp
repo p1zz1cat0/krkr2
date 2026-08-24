@@ -362,17 +362,6 @@ namespace motion {
 
                     auto warpThroughMeshAncestors = [&](float &wx, float &wy) {
                         bool warped = false;
-                        for(const auto *externalMeshParent :
-                            _externalMeshParents) {
-                            if(!externalMeshParent ||
-                               externalMeshParent->meshType != 1) {
-                                continue;
-                            }
-                            warped =
-                                cascadeThroughParent(*externalMeshParent, wx,
-                                                     wy) ||
-                                warped;
-                        }
                         int clipWalk = vn.meshParentIndex;
                         while(clipWalk >= 0 &&
                               clipWalk < static_cast<int>(nodes.size())) {
@@ -385,6 +374,20 @@ namespace motion {
                                     warped;
                             }
                             clipWalk = cn.meshParentIndex;
+                        }
+                        // Coordinates move from the leaf outwards. Local mesh
+                        // parents therefore run before the inherited wrapper
+                        // chain; Bezier warps are not commutative.
+                        for(const auto *externalMeshParent :
+                            _externalMeshParents) {
+                            if(!externalMeshParent ||
+                               externalMeshParent->meshType != 1) {
+                                continue;
+                            }
+                            warped =
+                                cascadeThroughParent(*externalMeshParent, wx,
+                                                     wy) ||
+                                warped;
                         }
                         return warped;
                     };

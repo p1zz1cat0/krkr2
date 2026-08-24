@@ -675,6 +675,14 @@ namespace motion {
                         }
                         meshParentIndex = meshParent.meshParentIndex;
                     }
+                    // Preserve the full nearest-to-farthest chain across
+                    // nested Players. The child first traverses this Player's
+                    // local mesh parents, then the mesh parents inherited by
+                    // this Player from its own wrapper.
+                    child._externalMeshParents.insert(
+                        child._externalMeshParents.end(),
+                        _externalMeshParents.begin(),
+                        _externalMeshParents.end());
                     // Control-driven child motions (目L/眉L style: no
                     // parameterized nodes, motion.parameter[] defines the
                     // control variable): their layer timelines are indexed by

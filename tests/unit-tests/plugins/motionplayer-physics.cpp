@@ -305,3 +305,102 @@ TEST_CASE("Hit shapes reject degenerate origin boxes") {
     CHECK(motion::detail::hitTestHitData(bust, 200.0, 280.0));
     CHECK_FALSE(motion::detail::hitTestHitData(bust, 10.0, 10.0));
 }
+
+TEST_CASE("Null mesh.bp rest keys lerp against the unit grid") {
+    std::vector<double> deformed = { 0.0, -0.01, 1.0 / 3.0, -0.01, 2.0 / 3.0,
+                                     -0.01, 1.0, -0.01,     0.0,   1.0 / 3.0,
+                                     1.0 / 3.0,  1.0 / 3.0, 2.0 / 3.0,
+                                     1.0 / 3.0,  1.0,       1.0 / 3.0,
+                                     0.0,        2.0 / 3.0, 1.0 / 3.0,
+                                     2.0 / 3.0,  2.0 / 3.0, 2.0 / 3.0,
+                                     1.0,        2.0 / 3.0, 0.0,   1.0,
+                                     1.0 / 3.0,  1.0,       2.0 / 3.0, 1.0,
+                                     1.0,        1.0 };
+    REQUIRE(deformed.size() == 32);
+
+    std::vector<double> towardRest = deformed;
+    motion::detail::lerpMeshBezierPoints(towardRest, {}, 0.5);
+    REQUIRE(towardRest.size() == 32);
+    CHECK(towardRest[1] == Catch::Approx(-0.005).margin(1.0e-12));
+    CHECK(towardRest[2] == Catch::Approx(1.0 / 3.0).margin(1.0e-12));
+
+    std::vector<double> fromRest;
+    motion::detail::lerpMeshBezierPoints(fromRest, deformed, 0.5);
+    REQUIRE(fromRest.size() == 32);
+    CHECK(fromRest[1] == Catch::Approx(-0.005).margin(1.0e-12));
+
+    std::vector<double> empty;
+    motion::detail::lerpMeshBezierPoints(empty, {}, 0.5);
+    CHECK(empty.empty());
+
+    std::vector<double> missing;
+    motion::detail::fillUnitMeshBezierIfEmpty(missing);
+    REQUIRE(missing.size() == 32);
+    CHECK(missing[0] == Catch::Approx(0.0));
+    CHECK(missing[2] == Catch::Approx(1.0 / 3.0));
+    CHECK(missing[31] == Catch::Approx(1.0));
+    CHECK(motion::detail::isExactUnitMeshBezier(missing));
+    CHECK(motion::detail::isExactUnitMeshBezier({}));
+    CHECK_FALSE(motion::detail::isExactUnitMeshBezier(deformed));
+}
+
+TEST_CASE("Difference timeline ownership survives a zero-valued track") {
+    CHECK(motion::detail::differenceTrackOwnsLabel(
+        true, 2, 1.0, "body_UD", "body_UD", false));
+    CHECK_FALSE(motion::detail::differenceTrackOwnsLabel(
+        true, 2, 1.0, "body_UD", "head_UD", false));
+    CHECK_FALSE(motion::detail::differenceTrackOwnsLabel(
+        true, 2, 0.0, "body_UD", "body_UD", false));
+    CHECK_FALSE(motion::detail::differenceTrackOwnsLabel(
+        true, 2, 1.0, "body_UD", "body_UD", true));
+}
+
+TEST_CASE("Warped quad uses all four corners in a 2x2 mesh") {
+    const std::array<float, 8> corners = { 1.0f,  2.0f,  11.0f, 3.0f,
+                                            13.0f, 17.0f, -2.0f, 19.0f };
+    const auto points = motion::detail::quadCornersToMeshPoints(corners);
+    const std::array<float, 8> expected = { 1.0f,  2.0f,  11.0f, 3.0f,
+                                            -2.0f, 19.0f, 13.0f, 17.0f };
+    CHECK(points == expected);
+}
+
+TEST_CASE("Hit coordinates undo the draw affine transform") {
+    double localX = 0.0;
+    double localY = 0.0;
+
+    const std::array<double, 6> translate = { 1.0, 0.0, 0.0, 1.0, 480.0,
+                                              320.0 };
+    REQUIRE(motion::detail::inverseAffinePoint(translate, 500.0, 340.0, localX,
+                                               localY));
+    CHECK(localX == Catch::Approx(20.0));
+    CHECK(localY == Catch::Approx(20.0));
+    CHECK(motion::detail::pointInAabb(localX, localY, 0.0, 0.0, 40.0, 40.0));
+
+    // Regression: the touch box used to collapse toward the top-left because
+    // draw-space points were compared against local-space bounds. With a
+    // half-scale placement at (480,320), a click on the middle of a character
+    // whose local box is 0..400 x 0..800 must still land inside it.
+    const std::array<double, 6> scaled = { 0.5, 0.0, 0.0, 0.5, 480.0, 320.0 };
+    REQUIRE(motion::detail::inverseAffinePoint(scaled, 580.0, 520.0, localX,
+                                               localY));
+    CHECK(localX == Catch::Approx(200.0));
+    CHECK(localY == Catch::Approx(400.0));
+    CHECK(motion::detail::pointInAabb(localX, localY, 0.0, 0.0, 400.0, 800.0));
+
+    // The un-inverted point (580,520) would have missed that box entirely,
+    // and only clicks near the origin would have registered.
+    CHECK_FALSE(
+        motion::detail::pointInAabb(580.0, 520.0, 0.0, 0.0, 400.0, 800.0));
+
+    // Rotation must round-trip too (90deg CCW about the origin).
+    const std::array<double, 6> rotated = { 0.0, 1.0, -1.0, 0.0, 0.0, 0.0 };
+    REQUIRE(motion::detail::inverseAffinePoint(rotated, -50.0, 10.0, localX,
+                                               localY));
+    CHECK(localX == Catch::Approx(10.0));
+    CHECK(localY == Catch::Approx(50.0));
+
+    // Degenerate matrices must be rejected rather than dividing by zero.
+    const std::array<double, 6> singular = { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    CHECK_FALSE(motion::detail::inverseAffinePoint(singular, 1.0, 1.0, localX,
+                                                   localY));
+}

@@ -286,10 +286,10 @@ namespace motion {
             return false;
         };
 
-        // Nested Players model sub-motions from one E-mote tree. Every depth
-        // resolves against the outer wrapper/controller owner; intermediate
-        // child maps contain seeded zero scratch values and must not shadow
-        // that table.
+        // Nested Players model sub-motions from one E-mote tree. Prefer a live
+        // value owned by the outer wrapper so intermediate seeded-zero scratch
+        // maps cannot shadow it, but retain child-owned parameters when the
+        // wrapper does not define that label.
         const Player *controllerOwner = this;
         while(controllerOwner->_parentPlayer) {
             controllerOwner = controllerOwner->_parentPlayer;
@@ -300,6 +300,13 @@ namespace motion {
             if(findValue(controllerOwner->_variableValues, value) ||
                findValue(controllerOwner->_evalResultValues, value)) {
                 return value;
+            }
+            for(const Player *player = this; player != controllerOwner;
+                player = player->_parentPlayer) {
+                if(findValue(player->_variableValues, value) ||
+                   findValue(player->_evalResultValues, value)) {
+                    return value;
+                }
             }
             return 0.0;
         }

@@ -1,5 +1,33 @@
 Scripts.execStorage("../common/plugin_assert.tjs");
 function check(condition, message) { pluginAssertTrue(message, condition); }
+function layerRasterSamples(layer) {
+    var w = Math.max(1, layer.imageWidth);
+    var h = Math.max(1, layer.imageHeight);
+    var hash = 0;
+    for (var gy = 0; gy < 8; gy++) {
+        for (var gx = 0; gx < 8; gx++) {
+            hash = (hash * 33) ^ layer.getMainPixel(
+                Math.min(w - 1, Math.floor((gx + 0.5) * w / 8)),
+                Math.min(h - 1, Math.floor((gy + 0.5) * h / 8)));
+        }
+    }
+    return [layer.getMainPixel(Math.floor(w / 4), Math.floor(h / 4)),
+            layer.getMainPixel(Math.floor(w / 2), Math.floor(h / 4)),
+            layer.getMainPixel(Math.floor(w / 2), Math.floor(h / 2)),
+            layer.getMainPixel(Math.floor(w / 4), Math.floor(h * 3 / 4)),
+            layer.getMainPixel(Math.floor(w * 3 / 4), Math.floor(h * 3 / 4)),
+            hash];
+}
+function visibleRasterLayerCount(parent) {
+    var count = 0;
+    for (var i = 0; i < parent.children.count; i++) {
+        var layer = parent.children[i];
+        if (layer.visible && layer.opacity > 0 &&
+            layer.imageWidth > 0 && layer.imageHeight > 0)
+            count++;
+    }
+    return count;
+}
 
 Plugins.link("motionplayer.dll");
 Plugins.link("emoteplayer.dll");
@@ -50,6 +78,36 @@ player.progress(1000.0 / 60.0);
 check(player.getVariable("face_eye_open") != eye0,
     "Eye output reaches the same progress Core path");
 
+// NEKOPARA's MotionAffineSourceLayer.tjs uses flag 1 for "always parallel"
+// main timelines and flag 3 for parallel + difference. Starting a face diff
+// must not stop the body action that is already playing.
+pluginAssertEqual("timeline difference constant", 2,
+    Motion.TimelinePlayFlagDifference);
+pluginAssertEqual("legacy sequential alias", 2,
+    Motion.TimelinePlayFlagSequential);
+pluginAssertEqual("non-loop timeline authored duration", 86,
+    player.getTimelineTotalFrameCount("挨拶"));
+check(player.getLoopTimeline("差分用_waiting_loop2"),
+    "diff timeline reports authored loop range");
+player.setVariable("body_UD", 0);
+player.setVariable("head_UD", 0);
+player.playTimeline("挨拶", Motion.TimelinePlayFlagParallel);
+for (var actionFrame = 0; actionFrame < 30; actionFrame++) {
+    player.progress(1000.0 / 60.0);
+}
+check(player.getVariable("body_UD") != 0 ||
+      player.getVariable("head_UD") != 0,
+    "main action timeline advances authored body or head variables");
+player.playTimeline("差分用_waiting_loop2",
+    Motion.TimelinePlayFlagParallel | Motion.TimelinePlayFlagDifference);
+check(player.getTimelinePlaying("挨拶"),
+    "parallel diff preserves main action timeline");
+check(player.getTimelinePlaying("差分用_waiting_loop2"),
+    "parallel diff timeline starts");
+pluginAssertEqual("parallel main plus diff count", 2,
+    player.countPlayingTimelines());
+player.stopTimeline("");
+
 // Render-path coverage: draw twice through the recommended
 // SeparateLayerAdaptor route. The fixture contains nested motion players
 // (382 type-3 nodes), so this exercises the merged child-item path whose
@@ -59,11 +117,225 @@ drawLayer.setImageSize(1280, 720);
 var adaptor = new Motion.SeparateLayerAdaptor(drawLayer);
 adaptor.targetLayer = drawLayer;
 adaptor.absolute = 100;
+player.progress(0);
 player.draw(adaptor);
 player.progress(1000.0 / 60.0);
 player.draw(adaptor);
 check(player.getVariable("face_eye_open") != void,
     "player state intact after SLA draws");
+
+// contains() accepts draw-space coordinates. Find one point in the rendered
+// AABB, then prove a subsequent draw affine moves the hit area exactly once.
+var hitX = 0;
+var hitY = 0;
+var foundHit = false;
+for (var y = 0; y <= 720 && !foundHit; y += 32) {
+    for (var x = 0; x <= 1280; x += 32) {
+        if (player.contains(x, y)) {
+            hitX = x;
+            hitY = y;
+            foundHit = true;
+            break;
+        }
+    }
+}
+check(foundHit, "contains finds the rendered draw-space AABB");
+
+// External world/emotion objects are siblings of the character's AffineLayer.
+// Accurate-SLA part layers must remain inside the ltBinder character subtree;
+// a later sibling with a higher absolute order must stay visibly in front.
+var stackWindow = new Window();
+var stackRoot = new Layer(stackWindow, null);
+stackRoot.setImageSize(1280, 720);
+stackRoot.setSize(1280, 720);
+stackRoot.visible = true;
+var motionTarget = new Layer(stackWindow, stackRoot);
+motionTarget.setImageSize(1280, 720);
+motionTarget.setSize(1280, 720);
+motionTarget.type = ltBinder;
+motionTarget.absolute = 0;
+motionTarget.visible = true;
+var stackManager = new Motion.ResourceManager(stackWindow, 20 * 1024 * 1024);
+var stackData = stackManager.load("../emote/e-mote3.0バニラパジャマa.psb");
+var stackPlayer = new Motion.EmotePlayer(stackManager);
+stackPlayer.motionKey = Storages.getPlacedPath(
+    "../emote/e-mote3.0バニラパジャマa.psb");
+stackPlayer.chara = stackData.metadata.base.chara;
+stackPlayer.play(stackData.metadata.base.motion, Motion.PlayFlagForce);
+stackData.metadata.eyeControl[0].blinkIntervalMin = 0;
+stackData.metadata.eyeControl[0].blinkIntervalMax = 0;
+stackData.metadata.eyeControl[0].blinkFrameCount = 2;
+stackPlayer.initPhysics(stackData.metadata);
+stackPlayer.setCoord(640, 720);
+stackPlayer.setScale(1.0);
+stackPlayer.progress(0);
+var stackAdaptor = new Motion.SeparateLayerAdaptor(motionTarget);
+stackAdaptor.targetLayer = motionTarget;
+stackPlayer.draw(stackAdaptor);
+var baselineVisibleRasterLayers = visibleRasterLayerCount(motionTarget);
+check(baselineVisibleRasterLayers > 0,
+    "neutral pose exposes visible accurate-SLA rasters");
+var baselineOutput = new Layer(new Window(), null);
+baselineOutput.setImageSize(1280, 720);
+baselineOutput.setSize(1280, 720);
+baselineOutput.piledCopy(0, 0, stackRoot, 0, 0, 1280, 720);
+var baselinePixel = baselineOutput.getMainPixel(hitX, hitY);
+var emotionLayer = new Layer(stackWindow, stackRoot);
+emotionLayer.setImageSize(1, 1);
+emotionLayer.setSize(1, 1);
+emotionLayer.left = hitX;
+emotionLayer.top = hitY;
+emotionLayer.fillRect(0, 0, 1, 1, 0xFF12AB34);
+var emotionPixel = emotionLayer.getMainPixel(0, 0);
+emotionLayer.absolute = 1;
+emotionLayer.visible = true;
+var stackedOutput = new Layer(new Window(), null);
+stackedOutput.setImageSize(1280, 720);
+stackedOutput.setSize(1280, 720);
+stackedOutput.piledCopy(0, 0, stackRoot, 0, 0, 1280, 720);
+check(baselinePixel != emotionPixel,
+    "emotion test pixel differs from motion baseline");
+pluginAssertEqual("external emotion sibling stays above motion binder",
+    emotionPixel, stackedOutput.getMainPixel(hitX, hitY));
+
+// Nested Players are a port implementation detail. They must resolve the
+// wrapper's controller table instead of shadowing it with their locally
+// seeded zero values. Observe the final accurate-SLA Layer tree, not merely
+// the public variable getter.
+var actionLayerState = [];
+for (var actionLayerIndex = 0;
+     actionLayerIndex < motionTarget.children.count; actionLayerIndex++) {
+    var actionLayer = motionTarget.children[actionLayerIndex];
+    var actionSamples = layerRasterSamples(actionLayer);
+    actionLayerState.add([actionLayer.left, actionLayer.top,
+                          actionLayer.width, actionLayer.height,
+                          actionLayer.opacity, actionSamples[0],
+                          actionSamples[1], actionSamples[2],
+                          actionSamples[3], actionSamples[4],
+                          actionSamples[5]]);
+}
+stackPlayer.setVariable("body_UD", 30);
+stackPlayer.progress(0);
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+pluginAssertEqual("body mesh keeps all visible facial rasters",
+    baselineVisibleRasterLayers, visibleRasterLayerCount(motionTarget));
+var changedActionLayers = 0;
+var comparableActionLayers = Math.min(actionLayerState.count,
+                                      motionTarget.children.count);
+for (var actionCompare = 0; actionCompare < comparableActionLayers;
+     actionCompare++) {
+    var currentActionLayer = motionTarget.children[actionCompare];
+    var oldActionLayer = actionLayerState[actionCompare];
+    var currentActionSamples = layerRasterSamples(currentActionLayer);
+    if (currentActionLayer.left != oldActionLayer[0] ||
+        currentActionLayer.top != oldActionLayer[1] ||
+        currentActionLayer.width != oldActionLayer[2] ||
+        currentActionLayer.height != oldActionLayer[3] ||
+        currentActionLayer.opacity != oldActionLayer[4] ||
+        currentActionSamples[0] != oldActionLayer[5] ||
+        currentActionSamples[1] != oldActionLayer[6] ||
+        currentActionSamples[2] != oldActionLayer[7] ||
+        currentActionSamples[3] != oldActionLayer[8] ||
+        currentActionSamples[4] != oldActionLayer[9] ||
+        currentActionSamples[5] != oldActionLayer[10])
+        changedActionLayers++;
+}
+check(changedActionLayers > 0,
+    "body_UD mesh bezier reaches accurate-SLA child geometry");
+
+var faceLayerState = [];
+for (var faceLayerIndex = 0;
+     faceLayerIndex < motionTarget.children.count; faceLayerIndex++) {
+    var faceLayer = motionTarget.children[faceLayerIndex];
+    var faceSamples = layerRasterSamples(faceLayer);
+    faceLayerState.add([faceLayer.left, faceLayer.top,
+                        faceLayer.width, faceLayer.height, faceLayer.opacity,
+                        faceSamples[0], faceSamples[1], faceSamples[2],
+                        faceSamples[3], faceSamples[4], faceSamples[5]]);
+}
+stackPlayer.setVariable("face_eyebrow", 50);
+stackPlayer.setVariable("face_mouth", 30);
+stackPlayer.setVariable("face_eye_LR", 30);
+stackPlayer.setVariable("face_eye_UD", 30);
+stackPlayer.progress(0);
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+var changedFaceLayers = 0;
+var comparableFaceLayers = Math.min(faceLayerState.count,
+                                    motionTarget.children.count);
+for (var faceCompare = 0; faceCompare < comparableFaceLayers; faceCompare++) {
+    var currentFaceLayer = motionTarget.children[faceCompare];
+    var oldFaceLayer = faceLayerState[faceCompare];
+    var currentFaceSamples = layerRasterSamples(currentFaceLayer);
+    if (currentFaceLayer.left != oldFaceLayer[0] ||
+        currentFaceLayer.top != oldFaceLayer[1] ||
+        currentFaceLayer.width != oldFaceLayer[2] ||
+        currentFaceLayer.height != oldFaceLayer[3] ||
+        currentFaceLayer.opacity != oldFaceLayer[4] ||
+        currentFaceSamples[0] != oldFaceLayer[5] ||
+        currentFaceSamples[1] != oldFaceLayer[6] ||
+        currentFaceSamples[2] != oldFaceLayer[7] ||
+        currentFaceSamples[3] != oldFaceLayer[8] ||
+        currentFaceSamples[4] != oldFaceLayer[9] ||
+        currentFaceSamples[5] != oldFaceLayer[10])
+        changedFaceLayers++;
+}
+check(changedFaceLayers > 0,
+    "face controller reaches accurate-SLA face rasters");
+
+stackPlayer.setVariable("body_UD", 0);
+stackPlayer.setVariable("head_UD", 0);
+stackPlayer.setVariable("face_eyebrow", 0);
+stackPlayer.setVariable("face_mouth", 0);
+stackPlayer.setVariable("face_eye_LR", 0);
+stackPlayer.setVariable("face_eye_UD", 0);
+stackPlayer.progress(0);
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+var stableLayerState = [];
+for (var stableLayerIndex = 0;
+     stableLayerIndex < motionTarget.children.count; stableLayerIndex++) {
+    var stableLayer = motionTarget.children[stableLayerIndex];
+    var stableSamples = layerRasterSamples(stableLayer);
+    stableLayerState.add([stableLayer.left, stableLayer.top,
+                          stableLayer.width, stableLayer.height,
+                          stableLayer.opacity, stableSamples[0],
+                          stableSamples[1], stableSamples[2],
+                          stableSamples[3], stableSamples[4],
+                          stableSamples[5]]);
+}
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+pluginAssertEqual("stable redraw keeps child count", stableLayerState.count,
+    motionTarget.children.count);
+var unstableLayers = 0;
+for (var stableCompare = 0; stableCompare < stableLayerState.count;
+     stableCompare++) {
+    var currentStableLayer = motionTarget.children[stableCompare];
+    var oldStableLayer = stableLayerState[stableCompare];
+    var currentStableSamples = layerRasterSamples(currentStableLayer);
+    if (currentStableLayer.left != oldStableLayer[0] ||
+        currentStableLayer.top != oldStableLayer[1] ||
+        currentStableLayer.width != oldStableLayer[2] ||
+        currentStableLayer.height != oldStableLayer[3] ||
+        currentStableLayer.opacity != oldStableLayer[4] ||
+        currentStableSamples[0] != oldStableLayer[5] ||
+        currentStableSamples[1] != oldStableLayer[6] ||
+        currentStableSamples[2] != oldStableLayer[7] ||
+        currentStableSamples[3] != oldStableLayer[8] ||
+        currentStableSamples[4] != oldStableLayer[9] ||
+        currentStableSamples[5] != oldStableLayer[10])
+        unstableLayers++;
+}
+pluginAssertEqual("identical redraw does not jitter parts", 0, unstableLayers);
+
+player.setDrawAffineTranslateMatrix(1, 0, 0, 1, 4096, 0);
+player.draw(adaptor);
+check(player.contains(hitX + 4096, hitY),
+    "contains follows draw affine translation once");
+check(!player.contains(hitX, hitY),
+    "contains no longer reports the pre-transform position");
 
 player.stopWind();
 manager.clearCache();
