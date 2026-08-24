@@ -4,6 +4,8 @@
 #include "PlayerInternal.h"
 #include "MotionTraceWeb.h"
 
+#include <cstdlib>
+
 using namespace motion::internal;
 
 namespace {
@@ -363,6 +365,7 @@ namespace motion {
             }
         };
 
+        int nextMergedNodeIndex = static_cast<int>(nodes.size());
         auto appendChildEntriesAtCurrentNode = [&](Player *child,
                                                    bool nodePriorDraw) {
             if(!child || !child->_runtime) {
@@ -387,6 +390,45 @@ namespace motion {
             auto &childEntries = child->_runtime->preparedRenderItems;
             if(childEntries.empty()) {
                 return;
+            }
+
+            // A flattened child owns a node-index namespace local to its own
+            // Player. Reusing those indices in the parent list makes the
+            // later ancestor walk bind an eye/eyebrow/mouth item to an
+            // unrelated parent node with the same small index. Reserve a
+            // synthetic range for this child and rewrite its local ancestor
+            // references before moving the entries into the parent list.
+            int maxChildNodeIndex = -1;
+            for(const auto &entry : childEntries) {
+                maxChildNodeIndex = std::max(maxChildNodeIndex,
+                                             entry.nodeIndex);
+                maxChildNodeIndex = std::max(maxChildNodeIndex,
+                                             entry.visibleAncestorIndex);
+            }
+            if(maxChildNodeIndex >= 0) {
+                const int nodeIndexOffset = nextMergedNodeIndex;
+                for(auto &entry : childEntries) {
+                    if(entry.nodeIndex >= 0) {
+                        entry.nodeIndex += nodeIndexOffset;
+                    }
+                    if(entry.visibleAncestorIndex >= 0) {
+                        entry.visibleAncestorIndex += nodeIndexOffset;
+                    }
+                    // A child group root must be discoverable from the
+                    // containing command walk even when its local item was
+                    // auxiliary-only in the child Player.
+                    entry.topLevelList = true;
+                }
+                nextMergedNodeIndex += maxChildNodeIndex + 1;
+                detail::logoChainTraceLogf(
+                    motionPath, "prepare.childNamespace", "0x6C2334",
+                    _clampedEvalTime,
+                    "childMotionPath={} nodeOffset={} maxNodeIndex={} "
+                    "entries={}",
+                    child->_runtime->activeMotion
+                        ? child->_runtime->activeMotion->path
+                        : std::string("<none>"),
+                    nodeIndexOffset, maxChildNodeIndex, childEntries.size());
             }
             entries.insert(entries.end(),
                            std::make_move_iterator(childEntries.begin()),
@@ -1091,9 +1133,11 @@ namespace motion {
         for(auto &item : _runtime->preparedRenderItems) {
             item.parentItem = nullptr;
             item.childItems.clear();
-            if(isLocalPreparedItem(item)) {
-                entryPtrByNode.emplace(item.nodeIndex, &item);
-            }
+            // Child entries have been moved into an isolated synthetic index
+            // range, so they can safely participate in numeric ancestor
+            // lookup. Only metadata dereferences below remain local-runtime
+            // gated.
+            entryPtrByNode.emplace(item.nodeIndex, &item);
         }
         for(auto &item : _runtime->preparedRenderItems) {
             if(item.selfSeedChildList) {
@@ -1198,6 +1242,63 @@ namespace motion {
                 continue;
             }
             entry.parentItem = it->second;
+        }
+
+        // Rebuild the ancestor chain for flattened child entries without
+        // dereferencing their indices through this Player's node deque. This
+        // is the missing half of sourceMotion ownership: preserving the
+        // source snapshot alone is not enough if nested command composition is
+        // discarded while flattening.
+        for(auto &entry : _runtime->preparedRenderItems) {
+            if(isLocalPreparedItem(entry) || entry.parentItem != nullptr ||
+               entry.visibleAncestorIndex < 0) {
+                continue;
+            }
+            const auto it = entryPtrByNode.find(entry.visibleAncestorIndex);
+            if(it == entryPtrByNode.end() || it->second == &entry) {
+                continue;
+            }
+            entry.parentItem = it->second;
+            it->second->childItems.push_back(&entry);
+        }
+
+        // KRKR_TRACE_EMOTE_NESTED=1 exposes the post-flattening ownership
+        // contract without dumping game paths or pixels. This is the probe
+        // needed to distinguish a source-cache miss from a broken nested
+        // command tree in a commercial title: every foreign item should have
+        // a synthetic namespace, and every non-root foreign item should bind
+        // to a parent command.
+        static const bool traceNested = [] {
+            const char *value = std::getenv("KRKR_TRACE_EMOTE_NESTED");
+            return value && value[0] != '\0' && value[0] != '0';
+        }();
+        if(traceNested) {
+            std::size_t foreignItems = 0;
+            std::size_t foreignWithParent = 0;
+            std::size_t foreignRoots = 0;
+            std::size_t localItems = 0;
+            for(const auto &entry : _runtime->preparedRenderItems) {
+                if(isLocalPreparedItem(entry)) {
+                    ++localItems;
+                    continue;
+                }
+                ++foreignItems;
+                if(entry.parentItem) {
+                    ++foreignWithParent;
+                } else {
+                    ++foreignRoots;
+                }
+            }
+            if(auto logger = spdlog::get("plugin")) {
+                logger->info(
+                    "emote.nested namespace={} localItems={} "
+                    "foreignItems={} foreignWithParent={} foreignRoots={} "
+                    "preparedItems={}",
+                    _runtime->activeMotion ? _runtime->activeMotion->path
+                                            : std::string("<none>"),
+                    localItems, foreignItems, foreignWithParent, foreignRoots,
+                    _runtime->preparedRenderItems.size());
+            }
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)
         detail::motionTraceRenderBuildItemsLeave(this);
