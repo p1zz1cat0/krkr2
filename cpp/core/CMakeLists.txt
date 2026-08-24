@@ -19,6 +19,8 @@ add_subdirectory(sound)
 add_subdirectory(visual)
 add_subdirectory(utils)
 
+find_library(KRKR2_LIBB2_LIBRARY NAMES b2 libb2 REQUIRED)
+
 target_link_libraries(${PROJECT_NAME} INTERFACE
         tjs2
         core_base_module
@@ -29,6 +31,7 @@ target_link_libraries(${PROJECT_NAME} INTERFACE
         core_sound_module
         core_visual_module
         core_utils_module
+        ${KRKR2_LIBB2_LIBRARY}
 )
 
 target_include_directories(${PROJECT_NAME} INTERFACE
