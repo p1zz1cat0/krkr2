@@ -20,11 +20,15 @@ namespace motion {
             if(mn.nodeType != 3)
                 continue;
 
-            // Aligned to libkrkr2.so sub_6BE0C0 (0x6BE204..0x6BE214):
-            // v12 is parameterEntry->mode (entry+48), using the node entry
-            // or the Player_initNonEmoteMotion default entry as fallback.
+            // Match AetherKiri 31060275: the child play trigger comes from
+            // the owning layer's raw priorDraw value, falling back to the
+            // Player-level value. Using parameterEntry->mode here made a
+            // visible face/head Motion child miss its rebind when an action
+            // switched slots without changing that parameter mode.
             auto *parameterEntry = resolveNodeParameterEntry(*_runtime, mn);
-            int v12 = parameterEntry ? parameterEntry->mode : 0;
+            const int v12 = mn.tjsLayerObject
+                ? mn.priorDraw
+                : static_cast<int>(_priorDraw);
 
             // Get child Player via TJS dispatch (0x6BE220..0x6BE260)
             // Aligned to binary: node+1912 → NativeInstanceSupport → native
@@ -46,9 +50,10 @@ namespace motion {
                      slotSrc.rfind("motion/head_parts/", 0) == 0 ||
                      slotSrc.rfind("motion/body_parts/", 0) == 0);
 
-                // If no v12 flags and not dirty -> skip to LABEL_18 (0x6BE270).
-                // sub_6BE0C0 tests node+1504 here; visible is node+1506.
-                if(!v12 && !mn.accumulated.dirty &&
+                // Aether's working fallback gates this on visibility, not the
+                // transient dirty bit. A visible child must remain eligible
+                // for slot/source rebinding throughout an action.
+                if(!v12 && !mn.accumulated.visible &&
                    !needsBoundedChildBootstrap) {
                     goto label_18;
                 }
