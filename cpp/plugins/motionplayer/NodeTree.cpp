@@ -406,6 +406,8 @@ namespace motion::detail {
                 auto &target = runtime.nodes[static_cast<size_t>(it->second)];
                 if(target.nodeType == 0 || target.nodeType == 3) {
                     target.stencilCompositeMaskReferenced = true;
+                    node.stencilCompositeMaskNodeIndices.push_back(
+                        it->second);
                 }
             }
         }

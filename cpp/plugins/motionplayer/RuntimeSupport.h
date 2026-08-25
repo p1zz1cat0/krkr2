@@ -400,6 +400,12 @@ namespace motion::detail {
             int coordinateMode = 0;
             int objTriPriority = 0;
             int visibleAncestorIndex = -1;
+            bool stencilMaskReferenced = false;
+            // Resolved authored mask inputs for a type-12 composite. These
+            // are kept separate from visibleAncestorIndex because a mask
+            // layer is an alpha input, not necessarily the render parent of
+            // the colour item it clips.
+            std::vector<int> stencilMaskNodeIndices;
             int meshDivX = 0;
             int meshDivY = 0;
             int meshType = 0;
@@ -411,6 +417,8 @@ namespace motion::detail {
                 nullptr; // semantic mapping of item +264
             std::vector<PreparedRenderItem *>
                 childItems; // semantic mapping of item +24
+            std::vector<PreparedRenderItem *>
+                stencilMaskItems; // dedicated item+304-like mask inputs
             tTJSVariant leafLayer; // item+304 variant
             tTJSVariant composedLayer; // item+324 variant
             std::array<int, 4> builtRect{ 0, 0, 0, 0 };

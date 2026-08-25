@@ -82,6 +82,12 @@ namespace motion::detail {
         bool hasMeshData = false; // node+1962: has active mesh data
         bool stencilCompositeMaskReferenced =
             false; // node+1961: post-build mask-layer reference
+        // Resolved node indices from a type-12
+        // `stencilCompositeMaskLayerList`. The boolean above is enough for
+        // the native item flag, but flattening a child Player also needs the
+        // authored mask identity so the renderer can remap it into the
+        // containing namespace.
+        std::vector<int> stencilCompositeMaskNodeIndices;
         bool meshCombineAuthored = false; // PSB "meshCombine"
         bool meshCombineEnabled =
             false; // node+1963: mesh combines with children

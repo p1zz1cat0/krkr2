@@ -404,6 +404,10 @@ namespace motion {
                                              entry.nodeIndex);
                 maxChildNodeIndex = std::max(maxChildNodeIndex,
                                              entry.visibleAncestorIndex);
+                for(const int maskNodeIndex : entry.stencilMaskNodeIndices) {
+                    maxChildNodeIndex = std::max(maxChildNodeIndex,
+                                                 maskNodeIndex);
+                }
             }
             if(maxChildNodeIndex >= 0) {
                 const int nodeIndexOffset = nextMergedNodeIndex;
@@ -413,6 +417,11 @@ namespace motion {
                     }
                     if(entry.visibleAncestorIndex >= 0) {
                         entry.visibleAncestorIndex += nodeIndexOffset;
+                    }
+                    for(int &maskNodeIndex : entry.stencilMaskNodeIndices) {
+                        if(maskNodeIndex >= 0) {
+                            maskNodeIndex += nodeIndexOffset;
+                        }
                     }
                     // A child group root must be discoverable from the
                     // containing command walk even when its local item was
@@ -502,6 +511,16 @@ namespace motion {
                     entry.paintBox[3] = fy;
             };
 
+        // A mask group can sit outside the ordinary visibleAncestor chain:
+        // its authored `stencilCompositeMaskLayerList` names alpha inputs,
+        // not a transform parent. Keep a synthetic group entry even when no
+        // leaf happens to point at the type-12 node directly.
+        for(size_t i = 0; i < nodes.size(); ++i) {
+            if(!_runtime->nodes[i].stencilCompositeMaskNodeIndices.empty()) {
+                requiredGroupNodeIndices.insert(static_cast<int>(i));
+            }
+        }
+
         for(size_t i = 0; i < nodes.size(); ++i) {
             auto &node = _runtime->nodes[i];
             if(!node.accumulated.active)
@@ -562,19 +581,18 @@ namespace motion {
                 requiredGroupNodeIndices.insert(node.visibleAncestorIndex);
             }
 
-            if(const detail::MotionNode *ancestorNode =
-                   tryGetLocalNode(node.visibleAncestorIndex)) {
-                climbVisibleAncestorChain(
-                    ancestorNode->visibleAncestorIndex,
-                    [&](int ancestorIndex, const detail::MotionNode &ancestor) {
-                        const bool isSpecialCompositeParent =
-                            ancestor.nodeType == 12 &&
-                            (ancestor.stencilType & 4) != 0;
-                        if(isSpecialCompositeParent) {
-                            requiredGroupNodeIndices.insert(ancestorIndex);
-                        }
-                    });
-            }
+            // Aether treats every type-12 composite as an off-screen group;
+            // restricting this to stencilType&4 loses mode-1 groups such as
+            // the eye/shirome differential composites. Walk from the direct
+            // visible ancestor so a type-12 node is retained even when it is
+            // separated from the leaf by UD/LR transform nodes.
+            climbVisibleAncestorChain(
+                node.visibleAncestorIndex,
+                [&](int ancestorIndex, const detail::MotionNode &ancestor) {
+                    if(ancestor.nodeType == 12 || ancestor.nodeType == 7) {
+                        requiredGroupNodeIndices.insert(ancestorIndex);
+                    }
+                });
         }
 
         for(size_t i = 0; i < nodes.size(); ++i) {
@@ -644,6 +662,10 @@ namespace motion {
             entry.topLevelList = true;
             entry.groupList = false;
             entry.selfSeedChildList = false;
+            entry.stencilMaskReferenced =
+                node.stencilCompositeMaskReferenced;
+            entry.stencilMaskNodeIndices =
+                node.stencilCompositeMaskNodeIndices;
             if(hasOwnSource) {
                 entry.sourceKey = node.interpolatedCache.src;
                 entry.srcRef = findSource(detail::widen(entry.sourceKey));
@@ -1133,6 +1155,7 @@ namespace motion {
         for(auto &item : _runtime->preparedRenderItems) {
             item.parentItem = nullptr;
             item.childItems.clear();
+            item.stencilMaskItems.clear();
             // Child entries have been moved into an isolated synthetic index
             // range, so they can safely participate in numeric ancestor
             // lookup. Only metadata dereferences below remain local-runtime
@@ -1297,6 +1320,108 @@ namespace motion {
             entry.parentItem = it->second;
         }
 
+        auto appendUniqueItem =
+            [](std::vector<detail::PlayerRuntime::PreparedRenderItem *> &items,
+               detail::PlayerRuntime::PreparedRenderItem *candidate) {
+                if(!candidate ||
+                   std::find(items.begin(), items.end(), candidate) ==
+                       items.end()) {
+                    if(candidate) {
+                        items.push_back(candidate);
+                    }
+                }
+            };
+
+        auto unionPreparedPaintBox =
+            [](detail::PlayerRuntime::PreparedRenderItem &parent,
+               const detail::PlayerRuntime::PreparedRenderItem &child) {
+                if(child.paintBox[2] < child.paintBox[0] ||
+                   child.paintBox[3] < child.paintBox[1]) {
+                    return;
+                }
+                if(parent.paintBox[2] < parent.paintBox[0] ||
+                   parent.paintBox[3] < parent.paintBox[1]) {
+                    parent.paintBox = child.paintBox;
+                    return;
+                }
+                parent.paintBox[0] =
+                    std::min(parent.paintBox[0], child.paintBox[0]);
+                parent.paintBox[1] =
+                    std::min(parent.paintBox[1], child.paintBox[1]);
+                parent.paintBox[2] =
+                    std::max(parent.paintBox[2], child.paintBox[2]);
+                parent.paintBox[3] =
+                    std::max(parent.paintBox[3], child.paintBox[3]);
+            };
+
+        // Materialize authored stencil inputs in the flattened namespace.
+        // The previous port retained only the target-node boolean, which made
+        // an eye mask indistinguishable from an ordinary top-level bitmap.
+        for(auto &group : _runtime->preparedRenderItems) {
+            if(group.stencilMaskNodeIndices.empty()) {
+                continue;
+            }
+            for(const int maskNodeIndex : group.stencilMaskNodeIndices) {
+                const auto it = entryPtrByNode.find(maskNodeIndex);
+                if(it == entryPtrByNode.end() || it->second == &group) {
+                    continue;
+                }
+                auto *mask = it->second;
+                mask->stencilMaskReferenced = true;
+                appendUniqueItem(group.stencilMaskItems, mask);
+                if(mask->parentItem == nullptr) {
+                    mask->parentItem = &group;
+                }
+            }
+        }
+
+        // A type-12 group owns the complete drawable descendant subtree, not
+        // just items whose immediate visibleAncestor points at the group.
+        // Transform-only nodes (UD/LR/head controls) can sit between the group
+        // and the actual eye/eyebrow/mouth leaves. Walk the scoped numeric
+        // ancestor chain and attach those leaves to the nearest mask group.
+        for(auto &candidate : _runtime->preparedRenderItems) {
+            if(candidate.stencilMaskReferenced ||
+               candidate.stencilMaskNodeIndices.size() != 0) {
+                continue;
+            }
+            int ancestorIndex = candidate.visibleAncestorIndex;
+            for(int guard = 0; ancestorIndex >= 0 && guard < 256; ++guard) {
+                const auto it = entryPtrByNode.find(ancestorIndex);
+                if(it == entryPtrByNode.end() || it->second == &candidate) {
+                    break;
+                }
+                auto *ancestor = it->second;
+                if(!ancestor->stencilMaskNodeIndices.empty()) {
+                    if(candidate.parentItem == nullptr) {
+                        candidate.parentItem = ancestor;
+                    }
+                    appendUniqueItem(ancestor->childItems, &candidate);
+                    break;
+                }
+                if(ancestor->visibleAncestorIndex == ancestorIndex) {
+                    break;
+                }
+                ancestorIndex = ancestor->visibleAncestorIndex;
+            }
+        }
+
+        for(auto &group : _runtime->preparedRenderItems) {
+            if(group.stencilMaskNodeIndices.empty()) {
+                continue;
+            }
+            for(auto *child : group.childItems) {
+                if(child) {
+                    unionPreparedPaintBox(group, *child);
+                }
+            }
+            for(auto *mask : group.stencilMaskItems) {
+                if(mask) {
+                    unionPreparedPaintBox(group, *mask);
+                }
+            }
+        }
+
         // Preserving sourceMotion alone is not enough if nested command
         // composition is discarded while flattening. The type-aware passes
         // above restore that composition without changing the direct render
@@ -1312,12 +1437,41 @@ namespace motion {
             const char *value = std::getenv("KRKR_TRACE_EMOTE_NESTED");
             return value && value[0] != '\0' && value[0] != '0';
         }();
+        static const bool traceNestedDetail = [] {
+            const char *value = std::getenv("KRKR_TRACE_EMOTE_NESTED_DETAIL");
+            return value && value[0] != '\0' && value[0] != '0';
+        }();
         if(traceNested) {
             std::size_t foreignItems = 0;
             std::size_t foreignWithParent = 0;
             std::size_t foreignRoots = 0;
             std::size_t localItems = 0;
+            std::size_t maskGroups = 0;
+            std::size_t maskInputs = 0;
+            std::size_t nodeMaskGroups = 0;
+            std::size_t nodeMaskInputs = 0;
+            std::size_t ownerMaskGroups = 0;
+            for(const auto &node : _runtime->nodes) {
+                if(!node.stencilCompositeMaskNodeIndices.empty()) {
+                    ++nodeMaskGroups;
+                    nodeMaskInputs +=
+                        node.stencilCompositeMaskNodeIndices.size();
+                }
+            }
             for(const auto &entry : _runtime->preparedRenderItems) {
+                if(entry.nativeLifetimeOwner &&
+                   entry.nativeLifetimeKey >= 0 &&
+                   static_cast<size_t>(entry.nativeLifetimeKey) <
+                       entry.nativeLifetimeOwner->nodes.size() &&
+                   !entry.nativeLifetimeOwner
+                        ->nodes[static_cast<size_t>(entry.nativeLifetimeKey)]
+                        .stencilCompositeMaskNodeIndices.empty()) {
+                    ++ownerMaskGroups;
+                }
+                if(!entry.stencilMaskNodeIndices.empty()) {
+                    ++maskGroups;
+                    maskInputs += entry.stencilMaskItems.size();
+                }
                 if(isLocalPreparedItem(entry)) {
                     ++localItems;
                     continue;
@@ -1330,14 +1484,32 @@ namespace motion {
                 }
             }
             if(auto logger = spdlog::get("plugin")) {
+                if(traceNestedDetail) {
+                    for(const auto &node : _runtime->nodes) {
+                        if(node.stencilCompositeMaskNodeIndices.empty()) {
+                            continue;
+                        }
+                        logger->info(
+                            "emote.nested.node index={} label={} type={} "
+                            "visibleAncestor={} parentIndex={} stencilType={} "
+                            "maskCount={}",
+                            node.index, node.layerName, node.nodeType,
+                            node.visibleAncestorIndex, node.parentIndex,
+                            node.stencilType,
+                            node.stencilCompositeMaskNodeIndices.size());
+                    }
+                }
                 logger->info(
                     "emote.nested namespace={} localItems={} "
                     "foreignItems={} foreignWithParent={} foreignRoots={} "
-                    "preparedItems={}",
+                    "preparedItems={} maskGroups={} maskInputs={} "
+                    "nodeMaskGroups={} nodeMaskInputs={} ownerMaskGroups={}",
                     _runtime->activeMotion ? _runtime->activeMotion->path
                                             : std::string("<none>"),
                     localItems, foreignItems, foreignWithParent, foreignRoots,
-                    _runtime->preparedRenderItems.size());
+                    _runtime->preparedRenderItems.size(), maskGroups,
+                    maskInputs, nodeMaskGroups, nodeMaskInputs,
+                    ownerMaskGroups);
             }
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)

@@ -673,7 +673,8 @@ namespace motion {
             if(item.executedDirect || item.leafBuilt || item.composedBuilt) {
                 return true;
             }
-            const bool hasChildren = !item.childItems.empty();
+            const bool hasChildren = !item.childItems.empty() ||
+                !item.stencilMaskItems.empty();
             const bool useDirectRenderPath =
                 shouldUseDirectRenderPathLike_0x6C7440(item, _clearEnabled) &&
                 !hasChildren && item.parentItem == nullptr && !item.skipFlag0 &&
@@ -768,6 +769,9 @@ namespace motion {
             for(auto *childItem : item.childItems) {
                 hasBuiltChildren = self(self, childItem) || hasBuiltChildren;
             }
+            for(auto *maskItem : item.stencilMaskItems) {
+                hasBuiltChildren = self(self, maskItem) || hasBuiltChildren;
+            }
 
             if(!hasBuiltChildren) {
                 return true;
@@ -805,7 +809,8 @@ namespace motion {
                 if(!child.rawFlag21 || child.rawFlag16) {
                     continue;
                 }
-                if((item.stencilComposite & 4) != 0) {
+                if((item.stencilComposite & 4) != 0 &&
+                   item.stencilMaskItems.empty()) {
                     auto *childMaskLayerObject =
                         child.leafLayer.Type() == tvtObject
                         ? child.leafLayer.AsObjectNoAddRef()
@@ -850,6 +855,37 @@ namespace motion {
                     child.builtRect[1] - item.clipRect[1],
                     childOutputLayer->GetMainImage(), childLocalRect,
                     childBlendMode, childOpacity);
+            }
+
+            // Aether's command graph keeps authored mask inputs separate from
+            // ordinary colour descendants. Apply each resolved mask after the
+            // group has been composed; applying sequentially preserves the
+            // native alpha operation for one or multiple mask layers without
+            // exposing the mask bitmap as a top-level colour draw.
+            for(auto *maskPtr : item.stencilMaskItems) {
+                if(!maskPtr || !maskPtr->rawFlag21 || maskPtr->rawFlag16) {
+                    continue;
+                }
+                auto *maskLayerObject = chooseItemOutputLayerObject(*maskPtr);
+                auto *maskLayer = resolveNativeLayer(maskLayerObject);
+                if(!maskLayerObject || !maskLayer ||
+                   !maskLayer->GetMainImage()) {
+                    continue;
+                }
+                const int maskWidth =
+                    maskPtr->builtRect[2] - maskPtr->builtRect[0];
+                const int maskHeight =
+                    maskPtr->builtRect[3] - maskPtr->builtRect[1];
+                if(maskWidth <= 0 || maskHeight <= 0) {
+                    continue;
+                }
+                applyMotionAlphaMaskLike_0x6AF104(
+                    composedLayerObject,
+                    maskPtr->builtRect[0] - item.clipRect[0],
+                    maskPtr->builtRect[1] - item.clipRect[1],
+                    maskLayerObject, 0, 0, maskWidth, maskHeight, 64,
+                    playerStencilType, item.stencilComposite, motionPath,
+                    _clampedEvalTime, item.nodeIndex, maskPtr->nodeIndex);
             }
 
             item.composedBuilt = true;
