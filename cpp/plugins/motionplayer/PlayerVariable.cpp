@@ -297,6 +297,14 @@ namespace motion {
         if(controllerOwner->_runtime &&
            detail::isEmoteLikeMotion(*controllerOwner->_runtime)) {
             double value = 0.0;
+            for(const Player *player = this; player != nullptr;
+                player = player->_parentPlayer) {
+                if(player->_runtime &&
+                   findValue(player->_runtime->inheritedVariableInputs,
+                             value)) {
+                    return value;
+                }
+            }
             if(findValue(controllerOwner->_variableValues, value) ||
                findValue(controllerOwner->_evalResultValues, value)) {
                 return value;
@@ -349,22 +357,32 @@ namespace motion {
         bindParameterEntriesLike_0x6C4668(_runtime->parameterEntries, parts,
                                           mode, value, directControllerFrame);
 
+        const auto propagateInherited = [&](Player *child) {
+            if(!child || !child->_runtime) {
+                return;
+            }
+            auto [it, inserted] =
+                child->_runtime->inheritedVariableInputs.try_emplace(label,
+                                                                      value);
+            if(!inserted && it->second == value) {
+                return;
+            }
+            it->second = value;
+            child->_emoteDirty = true;
+        };
+
         for(auto &node : _runtime->nodes) {
             if(node.nodeType == 3) {
                 if(auto *child = node.getChildPlayer()) {
+                    propagateInherited(child);
                     child->bindParameterValueLike_0x6C4668(label, mode, value);
-                    // Aether marks the child dirty when the effective
-                    // inherited value changes. Without this edge an emote
-                    // child may skip its next frameProgress and keep stale
-                    // face rasters during a body/difference action.
-                    child->_emoteDirty = true;
                 }
             } else if(node.nodeType == 4) {
                 for(int i = 0; i < node.getParticleCount(); ++i) {
                     if(auto *child = node.getParticleChild(i)) {
+                        propagateInherited(child);
                         child->bindParameterValueLike_0x6C4668(label, mode,
                                                                value);
-                        child->_emoteDirty = true;
                     }
                 }
             }

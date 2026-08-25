@@ -65,6 +65,7 @@ namespace motion {
         _boundsMaxY = 0.0;
         _variableKeys.Clear();
         _variableValues.clear();
+        _runtime->inheritedVariableInputs.clear();
         _variableAnimators.clear();
         clearControllerAnimatorStateLike_0x671228();
         _evalResultValues.clear();

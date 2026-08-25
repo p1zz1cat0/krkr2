@@ -316,6 +316,7 @@ namespace motion {
         _runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         _variableKeys.Clear();
         _variableValues.clear();
+        _runtime->inheritedVariableInputs.clear();
         _variableAnimators.clear();
         clearControllerAnimatorStateLike_0x671228();
         _evalResultValues.clear();
@@ -418,6 +419,7 @@ namespace motion {
         _runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         _variableKeys.Clear();
         _variableValues.clear();
+        _runtime->inheritedVariableInputs.clear();
         _variableAnimators.clear();
         clearControllerAnimatorStateLike_0x671228();
         _evalResultValues.clear();
@@ -490,6 +492,7 @@ namespace motion {
         self->_runtime->drawAffineMatrix = { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         self->_variableKeys.Clear();
         self->_variableValues.clear();
+        self->_runtime->inheritedVariableInputs.clear();
         if(self->ensureMotionLoaded()) {
             self->initNonEmoteMotionLike_0x6B365C(0);
         }

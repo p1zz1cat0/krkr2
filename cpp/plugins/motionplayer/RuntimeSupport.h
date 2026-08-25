@@ -326,6 +326,11 @@ namespace motion::detail {
         // creates index 0 as the root node; loaded layer trees append real
         // nodes at indices [1,end) during Player_buildNodeTree (0x6B51F0).
         std::deque<MotionNode> nodes;
+        // Values inherited from the owning Player's evaluated controller
+        // table. Keep them separate from the child's local neutral values so
+        // a nested face Player cannot republish its seed pose over a parent
+        // action on the next update pass.
+        std::unordered_map<std::string, double> inheritedVariableInputs;
         // Aligned to libkrkr2.so Player+1296 std::vector<LabelEntry>.
         // Populated eagerly by Player_initVariables (0x6CD750) right after
         // buildNodeTree on the play / setMotion path.
