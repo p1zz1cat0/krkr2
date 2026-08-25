@@ -353,12 +353,18 @@ namespace motion {
             if(node.nodeType == 3) {
                 if(auto *child = node.getChildPlayer()) {
                     child->bindParameterValueLike_0x6C4668(label, mode, value);
+                    // Aether marks the child dirty when the effective
+                    // inherited value changes. Without this edge an emote
+                    // child may skip its next frameProgress and keep stale
+                    // face rasters during a body/difference action.
+                    child->_emoteDirty = true;
                 }
             } else if(node.nodeType == 4) {
                 for(int i = 0; i < node.getParticleCount(); ++i) {
                     if(auto *child = node.getParticleChild(i)) {
                         child->bindParameterValueLike_0x6C4668(label, mode,
                                                                value);
+                        child->_emoteDirty = true;
                     }
                 }
             }
