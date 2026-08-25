@@ -790,6 +790,36 @@ namespace motion {
         const auto renderStart = std::chrono::steady_clock::now();
         buildRenderCommands(canvasWidth, canvasHeight);
 
+        static const bool traceSlaWrites = [] {
+            const char *value = std::getenv("KRKR_TRACE_EMOTE_SLA_WRITE");
+            return value && value[0] != '\0' && value[0] != '0';
+        }();
+        const auto traceSlaWrite = [&](const char *stage,
+                                       const PreparedRenderItem &item,
+                                       tTJSNI_BaseLayer *layer,
+                                       bool copied) {
+            if(!traceSlaWrites || item.sourceKey.find("face_") ==
+                                      std::string::npos) {
+                return;
+            }
+            auto logger = spdlog::get("plugin");
+            if(!logger) {
+                return;
+            }
+            const auto *image = layer ? layer->GetMainImage() : nullptr;
+            logger->info(
+                "emote.sla.write stage={} node={} layerId={} source={} "
+                "copied={} visible={} hasImage={} image={}x{} opacity={} "
+                "clip=[{},{},{},{}] player={}",
+                stage, item.nodeIndex, item.layerId, item.sourceKey,
+                copied ? 1 : 0, layer && layer->GetVisible() ? 1 : 0,
+                layer && layer->GetHasImage() ? 1 : 0,
+                image ? image->GetWidth() : 0, image ? image->GetHeight() : 0,
+                item.opacity, item.clipRect[0], item.clipRect[1],
+                item.clipRect[2], item.clipRect[3],
+                static_cast<const void *>(this));
+        };
+
         iTJSDispatch2 *layerTreeOwner = resolveMainWindowOwnerObject();
         if(!layerTreeOwner) {
             layerTreeOwner = targetLayerObject;
@@ -915,6 +945,7 @@ namespace motion {
                 continue;
             }
             if(!shouldRenderAccurateSlaItemLike_0x6C9CA8(*itemPtr)) {
+                traceSlaWrite("gate-skip", *itemPtr, nullptr, false);
                 ++skippedGate;
                 continue;
             }
@@ -924,6 +955,7 @@ namespace motion {
             if(!computeAccurateSlaClipLike_0x6C9CA8(
                    item, static_cast<int>(canvasWidth),
                    static_cast<int>(canvasHeight), clip)) {
+                traceSlaWrite("clip-skip", item, nullptr, false);
                 ++skippedClip;
                 if(skippedClip <= 6 && _runtime && !_runtime->slaFirstRenderLogged) {
                     if(auto logger = spdlog::get("plugin")) {
@@ -949,6 +981,7 @@ namespace motion {
             auto *itemLayerObject = itemLayerResult.object;
             auto *itemLayer = resolveNativeLayer(itemLayerObject);
             if(!itemLayerObject || !itemLayer) {
+                traceSlaWrite("layer-skip", item, itemLayer, false);
                 ++skippedLayer;
                 continue;
             }
@@ -974,6 +1007,7 @@ namespace motion {
                         targetLayerObject, item.sourceMotion);
                 if(sourceObject.Type() != tvtObject ||
                    !sourceObject.AsObjectNoAddRef()) {
+                    traceSlaWrite("source-skip", item, itemLayer, false);
                     ++skippedSource;
                     rejectRaster();
                     continue;
@@ -986,6 +1020,7 @@ namespace motion {
                    sourceImage->GetHeight() <= 0 ||
                    !setLayerSizeLike_0x6CE19C(itemLayerObject, clipWidth,
                                               clipHeight)) {
+                    traceSlaWrite("size-skip", item, itemLayer, false);
                     ++skippedSize;
                     rejectRaster();
                     continue;
@@ -1016,6 +1051,7 @@ namespace motion {
                     copied = true;
                 }
                 if(!copied) {
+                    traceSlaWrite("copy-skip", item, itemLayer, false);
                     ++skippedCopy;
                     rejectRaster();
                     continue;
@@ -1026,6 +1062,7 @@ namespace motion {
             itemLayer->SetType(layerType);
             itemLayer->SetVisible(true);
             itemLayer->SetOpacity(std::clamp(item.opacity, 0, 255));
+            traceSlaWrite("after-visible", item, itemLayer, needsRaster);
             ++renderedItems;
 
 #if defined(KRKR2_WASMTIME_HEADLESS)
