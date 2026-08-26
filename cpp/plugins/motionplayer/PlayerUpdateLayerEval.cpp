@@ -898,6 +898,14 @@ namespace motion {
                     _independentLayerInherit ? 1 : 0);
             }
 
+            // sub_6B1058 initializes node+52 from the authored stencilType,
+            // and sub_6BF714 copies it unchanged to render-item+244.  Reset
+            // to the base every phase (aligned to Aether REF Phase2): the
+            // frame-list type belongs to the active slot; mixing it into the
+            // stencil operation changes normal eye cropping (1) into reverse
+            // cropping (2).
+            node.stencilType = node.stencilTypeBase;
+
             auto state = advanceNodeFrameSelectionLike_0x6926B4(
                 node, nodeEvalTime, emoteLike, layerList);
             if(detail::logoChainTraceEnabled(_runtime->activeMotion) &&
