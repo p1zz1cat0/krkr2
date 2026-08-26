@@ -1019,6 +1019,22 @@ namespace motion::detail {
             clip.owner = path[path.size() - 3];
             clip.motionObject = dic;
             clip.contentObject = dic;
+            // Motion-level parameterize: an object or numeric index drives
+            // clip parameter selection for motions whose layers carry no
+            // node-level parameterize (faces such as 目L/眉L blink cycles).
+            // Aligned to Aether REF RuntimeSupport.cpp populateClip.
+            if(const auto parameterizeValue = (*dic)["parameterize"]) {
+                if(const auto parameterize =
+                       std::dynamic_pointer_cast<PSB::PSBDictionary>(
+                           parameterizeValue)) {
+                    (void)parameterize;
+                    clip.defaultParameterIndex =
+                        dictionaryList(dic, { "parameter" }) ? 0 : -1;
+                } else if(const auto defaultIndex =
+                              psbNumber(parameterizeValue)) {
+                    clip.defaultParameterIndex = static_cast<int>(*defaultIndex);
+                }
+            }
             clip.totalFrames =
                 dictionaryNumber(dic,
                                  { "lastTime", "frameCount", "frame_count",

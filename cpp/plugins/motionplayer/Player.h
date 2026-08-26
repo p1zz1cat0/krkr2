@@ -786,11 +786,6 @@ namespace motion {
         // and sub_6BEDD0 case 2 (0x6BEFF4). When true, case 2 falls through
         // to interpolated derivative path instead of using deltaPos.
         bool _noUpdateYet = true; // player+608
-        // Child motions whose layers carry no parameterize binding but whose
-        // motion.parameter[] defines a control variable (目L/眉L blink and
-        // brow cycles) are tick-driven: their eval time is transToTick of
-        // the wrapper's live control value. Phase2 must not freeze them.
-        bool _controlDrivenEvalTime = false;
 
         // Aligned to libkrkr2.so emote scale/rotate fields:
         // sub_681F20: player+1184, sub_681F28: player+1192, sub_681F30:

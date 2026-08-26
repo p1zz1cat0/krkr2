@@ -707,6 +707,107 @@ namespace motion {
                 writeEvalResultValueLike_0x6C4668(label, 0,
                                                   frames.front().value);
             }
+            // Controller state and its evaluated output are distinct. Auto
+            // blink, clamp and timeline blending write the latter without
+            // changing the expression animator's base value.  Pass the
+            // evaluated value down the motion ownership tree per frame, with
+            // the child's inherited inputs winning over neutral seeds (A1:
+            // aligned to REF effectiveVariableScratch).
+            const auto effectiveVariableGeneration =
+                _runtime->beginEffectiveVariableScratch();
+            for(const auto &[label, value] : _variableValues) {
+                _runtime->setEffectiveVariableScratch(label, value);
+            }
+            for(const auto &[label, value] : _evalResultValues) {
+                _runtime->setEffectiveVariableScratch(label, value);
+            }
+            for(const auto &[label, value] :
+                _runtime->inheritedVariableInputs) {
+                _runtime->setEffectiveVariableScratch(label, value);
+            }
+            // Mark labels whose first path segment names a type-3 node, so
+            // children do not inherit path-qualified siblings twice.
+            for(auto &[label, scratch] :
+                _runtime->effectiveVariableScratch) {
+                if(scratch.generation != effectiveVariableGeneration) {
+                    continue;
+                }
+                const auto slash = label.find('/');
+                if(slash == std::string::npos) {
+                    continue;
+                }
+                bool found = false;
+                for(const auto &candidate : _runtime->nodes) {
+                    if(candidate.nodeType == 3 &&
+                       candidate.layerName.size() == slash &&
+                       label.compare(0, slash, candidate.layerName) == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                scratch.hasRoutingNode = found;
+            }
+            // Bind path-qualified variables to child Players (REF:
+            // propagateInheritedVariable).  Each path segment names a motion
+            // node; transparent wrapper motions keep the full path until the
+            // player containing that segment is reached, then only the
+            // remaining suffix belongs to the selected child.
+            const auto propagateInheritedVariable =
+                [](Player *child, const std::string &label, double value) {
+                    if(!child || !child->_runtime) {
+                        return;
+                    }
+                    auto [it, inserted] =
+                        child->_runtime->inheritedVariableInputs.try_emplace(
+                            label, value);
+                    if(!inserted && it->second == value) {
+                        return;
+                    }
+                    it->second = value;
+                    child->_emoteDirty = true;
+                };
+            for(auto &vn : _runtime->nodes) {
+                if(vn.nodeType == 3) {
+                    if(auto *cp = vn.getChildPlayer()) {
+                        const auto prefixSize = vn.layerName.size();
+                        for(const auto &[label, scratch] :
+                            _runtime->effectiveVariableScratch) {
+                            if(scratch.generation !=
+                               effectiveVariableGeneration) {
+                                continue;
+                            }
+                            const auto value = scratch.value;
+                            if(!vn.layerName.empty() &&
+                               label.size() > prefixSize + 1 &&
+                               label.compare(0, prefixSize,
+                                             vn.layerName) == 0 &&
+                               label[prefixSize] == '/') {
+                                propagateInheritedVariable(
+                                    cp, label.substr(prefixSize + 1), value);
+                                continue;
+                            }
+                            if(label.find('/') == std::string::npos) {
+                                propagateInheritedVariable(cp, label, value);
+                            } else if(!scratch.hasRoutingNode) {
+                                propagateInheritedVariable(cp, label, value);
+                            }
+                        }
+                    }
+                } else if(vn.nodeType == 4) {
+                    for(int pi2 = 0; pi2 < vn.getParticleCount(); ++pi2) {
+                        if(auto *cp = vn.getParticleChild(pi2)) {
+                            for(const auto &[label, scratch] :
+                                _runtime->effectiveVariableScratch) {
+                                if(scratch.generation ==
+                                   effectiveVariableGeneration) {
+                                    propagateInheritedVariable(
+                                        cp, label, scratch.value);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Aligned to sub_6C4668: refresh parameter entries directly. This
             // intentionally does not call public setVariable() on child
             // players.
@@ -737,9 +838,28 @@ namespace motion {
             auto &node = nodes[i];
 
             double nodeEvalTime = currentTime;
-            if(freezeBodyTimeline && node.parameterizeIndex < 0 &&
-               !_controlDrivenEvalTime) {
-                nodeEvalTime = 0.0;
+            // Faces such as 目L/眉L carry no node-level parameterize; their
+            // layer timelines are indexed by the motion's own parameter axis.
+            // Resolve through the clip's defaultParameterIndex and map the
+            // parameter value onto the timeline (aligned to Aether REF
+            // Phase2).  This replaces the former MotionSubNode local fix that
+            // transToTick'd the first child parameter manually.
+            if(node.parameterizeIndex < 0) {
+                const auto *clip = selectActiveClip();
+                if(clip && clip->defaultParameterIndex >= 0 &&
+                   static_cast<size_t>(clip->defaultParameterIndex) <
+                       _runtime->parameterEntries.size()) {
+                    const auto &entry = _runtime->parameterEntries[
+                        static_cast<size_t>(clip->defaultParameterIndex)];
+                    if(!entry.id.empty() && entry.rangeScale != 0.0) {
+                        const double raw =
+                            initialParameterRawValueLike_0x6B1ABC(entry.id);
+                        nodeEvalTime = detail::parameterizedClipTime(
+                            *clip, entry, raw);
+                    }
+                } else if(freezeBodyTimeline) {
+                    nodeEvalTime = 0.0;
+                }
             }
 
             const int origParentIdx = node.parentIndex;
