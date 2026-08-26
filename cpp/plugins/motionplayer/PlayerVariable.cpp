@@ -305,6 +305,19 @@ namespace motion {
                     return value;
                 }
             }
+            // A1 fallback: no inherited input this frame — fall back to the
+            // controllerOwner chain.  Trace once per label so the missing
+            // propagation path is observable without flooding the log.
+            {
+                static std::unordered_set<std::string> fallbackLogged;
+                if(fallbackLogged.insert(id).second) {
+                    LOGGER->debug(
+                        "emote.var.fallback label={} owner={} source=variableValues",
+                        id, controllerOwner == this
+                                  ? std::string{"self"}
+                                  : std::string{"wrapper"});
+                }
+            }
             if(findValue(controllerOwner->_variableValues, value) ||
                findValue(controllerOwner->_evalResultValues, value)) {
                 return value;
