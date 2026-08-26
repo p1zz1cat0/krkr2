@@ -1124,10 +1124,13 @@ namespace motion {
                        it != _variableValues.end()) {
                         bodyUd = it->second;
                     }
+                    int maskCount = static_cast<int>(item.stencilMaskItems.size());
+                    bool isMaskRef = item.stencilMaskReferenced;
                     pluginLogger->info(
                         "sla.accurate.item.dump body_UD={:.2f} node={} "
                         "label='{}' layerId={} source='{}' opacity={} "
                         "skip0={} flag16={} maskMode={} player={} "
+                        "parent={} visAnc={} maskN={} maskRef={} "
                         "paintBox=[{:.1f},{:.1f},"
                         "{:.1f},{:.1f}]",
                         bodyUd, item.nodeIndex,
@@ -1135,6 +1138,9 @@ namespace motion {
                         item.sourceKey, item.opacity,
                         item.skipFlag0 ? 1 : 0, item.rawFlag16 ? 1 : 0,
                         _maskMode, static_cast<const void *>(this),
+                        item.parentItem != nullptr ? 1 : 0,
+                        item.visibleAncestorIndex,
+                        maskCount, isMaskRef ? 1 : 0,
                         item.paintBox[0], item.paintBox[1],
                         item.paintBox[2], item.paintBox[3]);
                 }

@@ -1364,6 +1364,31 @@ namespace motion {
             for(const int maskNodeIndex : group.stencilMaskNodeIndices) {
                 const auto it = entryPtrByNode.find(maskNodeIndex);
                 if(it == entryPtrByNode.end() || it->second == &group) {
+                    // TEMP diag: mask leaf resolution miss under foreign
+                    // flattening.  The group declares authored mask inputs
+                    // that the numeric namespace cannot resolve — this is
+                    // the eye-mask binding hole behind missing eyeball
+                    // eyelid/eyewhite rendering.
+                    static const bool maskDiag = [] {
+                        const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
+                        return env && env[0] != '\0' && env[0] != '0';
+                    }();
+                    if(maskDiag) {
+                        LOGGER->warn(
+                            "emote.mask.bind.fail groupNode={} "
+                            "groupLabel='{}' maskNodeIndex={} player={}",
+                            group.nodeIndex,
+                            group.nodeIndex >= 0 &&
+                                    static_cast<size_t>(
+                                        group.nodeIndex) <
+                                        _runtime->nodes.size()
+                                ? _runtime->nodes[static_cast<size_t>(
+                                                      group.nodeIndex)]
+                                      .layerName
+                                : std::string("<none>"),
+                            maskNodeIndex,
+                            static_cast<const void *>(this));
+                    }
                     continue;
                 }
                 auto *mask = it->second;

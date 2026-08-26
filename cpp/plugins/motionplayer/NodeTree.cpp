@@ -399,15 +399,87 @@ namespace motion::detail {
                 if(!label || label->value.empty()) {
                     continue;
                 }
-                auto it = runtime.nodeLabelMap.find(label->value);
-                if(it == runtime.nodeLabelMap.end()) {
+                // Mask leaves often live in a nested Player (the eyelid
+                // outline is authored inside the head/face subtree) while the
+                // stencil group stays in the wrapper tree.  The local label
+                // map cannot resolve a foreign label; walking the child
+                // Players recovers the cross-Player mask binding that is
+                // otherwise silently dropped — dropping it leaves the eye
+                // region unprotected (eyewhite/iris drawn without the eyelid
+                // mask).
+                detail::PlayerRuntime *maskRuntime = &runtime;
+                int maskNodeIndex = -1;
+                if(const auto it = runtime.nodeLabelMap.find(label->value);
+                   it != runtime.nodeLabelMap.end()) {
+                    maskNodeIndex = it->second;
+                }
+                if(maskNodeIndex < 0) {
+                    // Mask leaves may live either deeper (eyelid outline in
+                    // the head/face subtree) or in an ancestor wrapper
+                    // (body/head deform bases referenced by a nested
+                    // stencil group).  Search children first, then walk the
+                    // parent chain.
+                    std::function<detail::PlayerRuntime *(
+                        detail::PlayerRuntime &, int &)>
+                        findInChild = [&](detail::PlayerRuntime &rt,
+                                          int &outIndex)
+                        -> detail::PlayerRuntime * {
+                            for(const auto &childNode : rt.nodes) {
+                                if(childNode.nodeType != 3 ||
+                                   !childNode.getChildPlayer()) {
+                                    continue;
+                                }
+                                Player *childPlayer =
+                                    childNode.getChildPlayer();
+                                if(!childPlayer->_runtime) {
+                                    continue;
+                                }
+                                auto &childRt = *childPlayer->_runtime;
+                                if(const auto it =
+                                       childRt.nodeLabelMap.find(
+                                           label->value);
+                                   it != childRt.nodeLabelMap.end()) {
+                                    outIndex = it->second;
+                                    return &childRt;
+                                }
+                                if(auto *found =
+                                       findInChild(childRt, outIndex)) {
+                                    return found;
+                                }
+                            }
+                            return nullptr;
+                        };
+                    if(auto *found = findInChild(runtime, maskNodeIndex)) {
+                        maskRuntime = found;
+                    } else {
+                        for(const Player *ancestor = ownerPlayer;
+                            ancestor != nullptr;
+                            ancestor = ancestor->parentPlayerLike()) {
+                            if(!ancestor->_runtime) {
+                                continue;
+                            }
+                            auto &ancRt = *ancestor->_runtime;
+                            if(const auto it =
+                                   ancRt.nodeLabelMap.find(label->value);
+                               it != ancRt.nodeLabelMap.end()) {
+                                maskNodeIndex = it->second;
+                                maskRuntime = &ancRt;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if(maskNodeIndex < 0 ||
+                   static_cast<size_t>(maskNodeIndex) >=
+                       maskRuntime->nodes.size()) {
                     continue;
                 }
-                auto &target = runtime.nodes[static_cast<size_t>(it->second)];
+                auto &target = maskRuntime
+                                   ->nodes[static_cast<size_t>(maskNodeIndex)];
                 if(target.nodeType == 0 || target.nodeType == 3) {
                     target.stencilCompositeMaskReferenced = true;
                     node.stencilCompositeMaskNodeIndices.push_back(
-                        it->second);
+                        maskNodeIndex);
                 }
             }
         }

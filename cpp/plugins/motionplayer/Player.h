@@ -408,6 +408,9 @@ namespace motion {
         void setParentPlayerLike_0x6B1ABC(Player *parentPlayer) {
             _parentPlayer = parentPlayer;
         }
+        // Read-only parent chain access needed by node-tree label resolution
+        // (mask leaves authored in an ancestor wrapper).
+        const Player *parentPlayerLike() const { return _parentPlayer; }
         // Aligned to libkrkr2.so 0x681CAC: motion property as raw callback
         // so we have objthis to call onFindMotion TJS callback.
         static tjs_error setMotionCompat(tTJSVariant *result, tjs_int numparams,
