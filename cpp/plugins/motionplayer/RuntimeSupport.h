@@ -117,6 +117,10 @@ namespace motion::detail {
         double rangeScale = 1.0;
         double value = 0.0;
         int mode = 0;
+        // Authored motion-timeline subdivision.  distinct from the parameter
+        // range; selector/gradient parameters use their own value count for
+        // quantization (see parameterizedClipTime).
+        double division = 0.0;
     };
 
     struct MotionClip {
@@ -135,7 +139,59 @@ namespace motion::detail {
         // on each player init to mirror libkrkr2.so ownership/lifetime.
         std::shared_ptr<const PSB::PSBDictionary> motionObject;
         std::shared_ptr<const PSB::PSBDictionary> contentObject;
+        // Faces such as 目L/眉L carry no node-level parameterize; their layer
+        // timelines are indexed by the motion's own parameter axis.  This
+        // clip-level index points into PlayerRuntime::parameterEntries and is
+        // used by parameterizedClipTime in Phase2 (aligned to Aether REF
+        // MotionClip::defaultParameterIndex).
+        int defaultParameterIndex = -1;
     };
+
+    // Map an authored parameter value onto the motion timeline's frame axis
+    // (aligned to Aether REF RuntimeSupport.h parameterizedClipTime).  The
+    // timeline end is the clip's authored frame count, not the parameter
+    // division: E-mote eye clips span a 61-frame axis over a [-10,50]
+    // parameter range, and using division would select the wrong frame and
+    // leave the iris exposed during blinks.
+    inline double parameterizedClipTime(const MotionClip &clip,
+                                        const MotionParameterEntry &parameter,
+                                        double value) {
+        const double range = parameter.rangeEnd - parameter.rangeBegin;
+        if(std::abs(range) <= 0.0000001) {
+            return 0.0;
+        }
+
+        const double minimum =
+            std::min(parameter.rangeBegin, parameter.rangeEnd);
+        const double maximum =
+            std::max(parameter.rangeBegin, parameter.rangeEnd);
+        double normalized =
+            (std::clamp(value, minimum, maximum) - parameter.rangeBegin) /
+            range;
+
+        // Discrete parameters select authored input values, while `division`
+        // describes the motion timeline's subdivisions.  Those counts can be
+        // different: selector parameters quantize by their own value count.
+        if(parameter.discretization) {
+            const double rangeMagnitude = std::abs(range);
+            const double integerSteps = std::round(rangeMagnitude);
+            const double selectorSteps =
+                integerSteps >= 1.0 &&
+                        std::abs(rangeMagnitude - integerSteps) <= 0.0000001
+                    ? integerSteps
+                    : parameter.division;
+            if(selectorSteps > 0.0) {
+                normalized = std::round(normalized * selectorSteps) /
+                             selectorSteps;
+            }
+        }
+        normalized = std::clamp(normalized, 0.0, 1.0);
+
+        const double timelineEnd = clip.totalFrames > 0.0
+            ? std::max(0.0, clip.totalFrames - 1.0)
+            : std::max(0.0, parameter.division);
+        return normalized * timelineEnd;
+    }
 
     struct TimelineState {
         std::string label;
@@ -331,6 +387,39 @@ namespace motion::detail {
         // a nested face Player cannot republish its seed pose over a parent
         // action on the next update pass.
         std::unordered_map<std::string, double> inheritedVariableInputs;
+        // Layer evaluation overlays persistent, evaluated and inherited
+        // variables on every tick (aligned to Aether REF
+        // RuntimeSupport.h effectiveVariableScratch).  Retain the union's
+        // nodes between ticks so stable E-mote variable tables update values
+        // in place instead of allocating two temporary unordered_maps per
+        // frame.  The generation excludes labels which disappeared this tick
+        // without requiring the scratch map itself to be cleared.
+        struct EffectiveVariableScratchEntry {
+            double value = 0.0;
+            std::uint64_t generation = 0;
+            bool hasRoutingNode = false;
+        };
+        std::unordered_map<std::string, EffectiveVariableScratchEntry>
+            effectiveVariableScratch;
+        std::uint64_t effectiveVariableScratchGeneration = 0;
+
+        std::uint64_t beginEffectiveVariableScratch() {
+            ++effectiveVariableScratchGeneration;
+            if(effectiveVariableScratchGeneration == 0) {
+                effectiveVariableScratch.clear();
+                effectiveVariableScratchGeneration = 1;
+            }
+            return effectiveVariableScratchGeneration;
+        }
+
+        void setEffectiveVariableScratch(
+            const std::string &label, double value) {
+            auto [it, inserted] = effectiveVariableScratch.try_emplace(label);
+            (void)inserted;
+            it->second.value = value;
+            it->second.generation = effectiveVariableScratchGeneration;
+            it->second.hasRoutingNode = false;
+        }
         // Aligned to libkrkr2.so Player+1296 std::vector<LabelEntry>.
         // Populated eagerly by Player_initVariables (0x6CD750) right after
         // buildNodeTree on the play / setMotion path.
