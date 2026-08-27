@@ -253,6 +253,8 @@ namespace motion {
         RenderClipRect clipScratch;
         std::string clipReasonScratch;
         std::array<size_t, 5> cmdGraphGateRejects{};
+        const auto localRenderScopeId =
+            static_cast<const void *>(_runtime.get());
 
         // Pass 1 — sub_6C4E28-equivalent preparation, replicating the legacy
         // buildRenderCommands body exactly (gating included): every entry
@@ -322,6 +324,25 @@ namespace motion {
                     ++cmdGraphGateRejects[3];
                 } else if(!entry.rawFlag21) {
                     ++cmdGraphGateRejects[4];
+                    if(kRenderCommandGraphDiag) {
+                        if(auto logger = LOGGER) {
+                            logger->warn(
+                                "emote.cmdgraph.noclip player={} "
+                                "nodeIndex={} groupOnly={} "
+                                "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] "
+                                "viewport={} visAnc={} scope={} scopedIdx={}",
+                                static_cast<const void *>(this),
+                                entry.nodeIndex, entry.groupOnly ? 1 : 0,
+                                entry.paintBox[0], entry.paintBox[1],
+                                entry.paintBox[2], entry.paintBox[3],
+                                entry.hasViewport ? 1 : 0,
+                                entry.visibleAncestorIndex,
+                                entry.renderScopeId == localRenderScopeId
+                                    ? "local"
+                                    : "foreign",
+                                entry.scopedNodeIndex);
+                        }
+                    }
                 }
             }
             // skipFlag1 mirrors the executor's preview-only consumption
@@ -350,6 +371,9 @@ namespace motion {
                     ? static_cast<const void *>(entry.nativeLifetimeOwner)
                     : static_cast<const void *>(_runtime.get());
             cmd.scopedNodeIndex = entry.nativeLifetimeKey;
+            cmd.parentRenderScopeId = entry.parentRenderScopeId;
+            cmd.scopedParentNodeIndex = entry.scopedParentNodeIndex;
+            cmd.outerRenderAncestorChain = entry.outerRenderAncestorChain;
             cmd.groupOnly = entry.groupOnly;
             cmd.hasOwnSource = entry.hasOwnSource;
             cmd.blendMode = entry.blendMode;
@@ -410,18 +434,121 @@ namespace motion {
                 ? commands.size()
                 : flatIt->second;
         };
+        struct PairScopeHash {
+            size_t operator()(
+                const std::pair<const void *, int> &value) const {
+                const auto h1 =
+                    std::hash<const void *>{}(value.first);
+                return h1 ^ (std::hash<int>{}(value.second) << 1);
+            }
+        };
+        // REF findNearestAncestorCommandIndex (PlayerRender.cpp 8343..8424):
+        // resolve the nearest command for an authored ancestor reference.
+        // Scoped identity wins; a flattened child motion may point through
+        // source-less transform nodes that correctly have no command, so the
+        // walk climbs the local node tree before crossing the next recorded
+        // Player boundary, then tries the outer ancestor chain.
+        auto findNearestAncestorCommandIndex =
+            [&](const void *scopeId, int scopedNodeIndex,
+                int flattenedNodeIndex,
+                const std::vector<
+                    detail::PlayerRuntime::PreparedRenderItem::
+                        RenderAncestorReference> &outerAncestorChain,
+                std::unordered_map<
+                    const void *, std::unordered_map<int, size_t>>
+                    &commandIndexByScopedNode,
+                std::unordered_map<int, size_t> &commandIndexByNode,
+                std::unordered_set<std::pair<const void *, int>,
+                                   PairScopeHash> &visitedScopedNodes)
+            -> size_t {
+            auto walkScopedAncestors =
+                [&](const void *candidateScopeId,
+                    int candidateScopedNodeIndex,
+                    int candidateFlattenedNodeIndex) -> size_t {
+                while(true) {
+                    const size_t commandIndex = findCommandIndex(
+                        candidateScopeId, candidateScopedNodeIndex,
+                        candidateFlattenedNodeIndex);
+                    if(commandIndex < commands.size()) {
+                        return commandIndex;
+                    }
+                    if(candidateScopeId == nullptr ||
+                       candidateScopedNodeIndex < 0 ||
+                       !visitedScopedNodes.insert(
+                           {candidateScopeId, candidateScopedNodeIndex})
+                            .second) {
+                        break;
+                    }
+                    // Climb the scope's local node tree through nodes that
+                    // have no command of their own.
+                    auto scopeIt =
+                        commandIndexByScopedNode.find(candidateScopeId);
+                    (void)scopeIt;
+                    const auto *scopeRuntime = static_cast<
+                        const detail::PlayerRuntime *>(candidateScopeId);
+                    if(scopeRuntime == nullptr ||
+                       candidateScopedNodeIndex >=
+                           static_cast<int>(
+                               scopeRuntime->nodes.size())) {
+                        break;
+                    }
+                    const int nextScopedNodeIndex =
+                        scopeRuntime
+                            ->nodes[static_cast<size_t>(
+                                candidateScopedNodeIndex)]
+                            .visibleAncestorIndex;
+                    if(nextScopedNodeIndex == candidateScopedNodeIndex) {
+                        break;
+                    }
+                    candidateScopedNodeIndex = nextScopedNodeIndex;
+                    candidateFlattenedNodeIndex = -1;
+                }
+                return commands.size();
+            };
 
-        // Pass 3 — parent wiring (REF 8455..8604). TGT carries no per-entry
-        // parent scope identity (that is the phase-3 renderScopeId port), so
-        // the ancestor walk runs on the merged namespace with a visited
-        // guard; stencil groups own their whole drawable descendant subtree.
+            size_t commandIndex =
+                walkScopedAncestors(scopeId, scopedNodeIndex,
+                                    flattenedNodeIndex);
+            if(commandIndex < commands.size()) {
+                return commandIndex;
+            }
+            for(const auto &outerAncestor : outerAncestorChain) {
+                commandIndex = walkScopedAncestors(
+                    outerAncestor.renderScopeId,
+                    outerAncestor.scopedNodeIndex, -1);
+                if(commandIndex < commands.size()) {
+                    return commandIndex;
+                }
+            }
+            return commands.size();
+        };
+
+        // Pass 3 — parent wiring (REF 8455..8604 with the 8343..8424 scoped
+        // ancestor resolver). Each command walks its parent chain through
+        // (parentRenderScopeId, scopedParentNodeIndex) first, then its
+        // outerRenderAncestorChain, and only falls back to the merged
+        // numeric namespace when no scoped identity exists. Stencil groups
+        // own their whole drawable descendant subtree.
         size_t parentedCommands = 0;
         for(size_t i = 0; i < commands.size(); ++i) {
             int ancestorNodeIndex = commands[i].parentNodeIndex;
+            const void *ancestorScopeId = commands[i].parentRenderScopeId;
+            int ancestorScopedNodeIndex = commands[i].scopedParentNodeIndex;
+            const auto *ancestorOuterChain =
+                &commands[i].outerRenderAncestorChain;
             std::unordered_set<size_t> visitedAncestorCommands;
-            while(ancestorNodeIndex >= 0) {
+            std::unordered_set<std::pair<const void *, int>,
+                               PairScopeHash>
+                visitedScopedAncestors;
+            while(ancestorNodeIndex >= 0 ||
+                  (ancestorScopeId != nullptr &&
+                   ancestorScopedNodeIndex >= 0)) {
                 const size_t ancestorCommandIndex =
-                    findCommandIndex(nullptr, -1, ancestorNodeIndex);
+                    findNearestAncestorCommandIndex(
+                        ancestorScopeId, ancestorScopedNodeIndex,
+                        ancestorNodeIndex, *ancestorOuterChain,
+                        commandIndexByScopedNode, commandIndexByNode,
+                        visitedScopedAncestors);
                 if(ancestorCommandIndex >= commands.size() ||
                    !visitedAncestorCommands.insert(ancestorCommandIndex)
                         .second) {
@@ -446,10 +573,17 @@ namespace motion {
                 }
                 const int nextAncestorNodeIndex =
                     ancestorCommand.parentNodeIndex;
-                if(nextAncestorNodeIndex == ancestorNodeIndex) {
+                if(nextAncestorNodeIndex == ancestorNodeIndex &&
+                   ancestorCommand.parentRenderScopeId == ancestorScopeId &&
+                   ancestorCommand.scopedParentNodeIndex ==
+                       ancestorScopedNodeIndex) {
                     break;
                 }
                 ancestorNodeIndex = nextAncestorNodeIndex;
+                ancestorScopeId = ancestorCommand.parentRenderScopeId;
+                ancestorScopedNodeIndex =
+                    ancestorCommand.scopedParentNodeIndex;
+                ancestorOuterChain = &ancestorCommand.outerRenderAncestorChain;
             }
             if(commands[i].hasRenderParent) {
                 ++parentedCommands;
@@ -457,8 +591,9 @@ namespace motion {
         }
 
         // Pass 4 — flags-6 alpha modifiers attach to a concrete parent
-        // command (REF 8719..8741). Composition-side application of the
-        // item+264 alpha carrier lands with phase 2; until then the legacy
+        // command (REF 8719..8741), resolved through the same scoped
+        // ancestor resolver. Composition-side application of the item+264
+        // alpha carrier lands with phase 2; until then the legacy
         // child-as-mask fallback inside the executor still covers these
         // groups, so the wiring is recorded graph-side only.
         for(size_t i = 0; i < commands.size(); ++i) {
@@ -467,8 +602,15 @@ namespace motion {
                (modifier.itemFlags & 7) != 6 || modifier.parentNodeIndex < 0) {
                 continue;
             }
+            std::unordered_set<std::pair<const void *, int>, PairScopeHash>
+                modifierVisitedScopes;
             const size_t parentCommandIndex =
-                findCommandIndex(nullptr, -1, modifier.parentNodeIndex);
+                findNearestAncestorCommandIndex(
+                    modifier.parentRenderScopeId,
+                    modifier.scopedParentNodeIndex, modifier.parentNodeIndex,
+                    modifier.outerRenderAncestorChain,
+                    commandIndexByScopedNode, commandIndexByNode,
+                    modifierVisitedScopes);
             if(parentCommandIndex >= commands.size() ||
                parentCommandIndex == i) {
                 continue;

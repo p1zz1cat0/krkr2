@@ -463,9 +463,12 @@ namespace motion {
                             : (stencilCompositeAncestorIndex >= 0
                                    ? stencilCompositeAncestorIndex
                                    : parentNode.visibleAncestorIndex);
-                    if(externalAncestorNodeIndex >= 0) {
-                        externalAncestorNodeIndex += nodeIndexOffset;
-                    }
+                    // Deliberately NOT offset: local nodes keep their local
+                    // index in the merged namespace (only child entries are
+                    // shifted above nodes.size()), and scoped references
+                    // must use the referencing scope's local index to hit
+                    // the scoped command map (REF 5692-5696 assigns the raw
+                    // pending.externalAncestorNodeIndex).
                 }
                 for(auto &entry : childEntries) {
                     // Scoped identity survives flattening untouched: the

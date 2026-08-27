@@ -587,6 +587,13 @@ namespace motion::detail {
             // other's mask layers.
             const void *renderScopeId = nullptr;
             int scopedNodeIndex = -1;
+            // Scoped identity of the authored render parent (mirrors the
+            // PreparedRenderItem fields of the same name).
+            const void *parentRenderScopeId = nullptr;
+            int scopedParentNodeIndex = -1;
+            std::vector<detail::PlayerRuntime::PreparedRenderItem::
+                            RenderAncestorReference>
+                outerRenderAncestorChain;
             bool groupOnly = false;
             bool hasOwnSource = false;
             int blendMode = 16;
