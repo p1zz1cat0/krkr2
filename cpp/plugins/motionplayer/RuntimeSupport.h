@@ -482,6 +482,28 @@ namespace motion::detail {
             bool selfSeedChildList = false;
             PlayerRuntime *nativeLifetimeOwner = nullptr;
             int nativeLifetimeKey = 0;
+            // Scoped render identity (REF renderScopeId port). nodeIndex is
+            // rewritten into the merged numeric namespace during foreign
+            // flattening; these fields keep the creating runtime pointer and
+            // its local index so cross-Player references resolve against the
+            // authoring scope instead of the merged one. The pair must never
+            // be offset by merge logic (same invariant as nativeLifetimeKey).
+            const void *renderScopeId = nullptr;
+            int scopedNodeIndex = -1;
+            // Scoped identity of the authored render parent. Zero/negative
+            // means "no scoped parent recorded yet". Child roots that get
+            // externally re-attached keep their original scoped parent here
+            // and record the containing ancestor in outerRenderAncestorChain.
+            const void *parentRenderScopeId = nullptr;
+            int scopedParentNodeIndex = -1;
+            // Ancestor chain crossing Player boundaries: each reference is
+            // the next outer composition candidate after the local ancestor
+            // walk bottoms out in a foreign scope.
+            struct RenderAncestorReference {
+                const void *renderScopeId = nullptr;
+                int scopedNodeIndex = -1;
+            };
+            std::vector<RenderAncestorReference> outerRenderAncestorChain;
             double sortKey = 0.0;
             int blendMode = 16;
             tTJSVariant contextVariant; // original item +248 (player+1012 copy)

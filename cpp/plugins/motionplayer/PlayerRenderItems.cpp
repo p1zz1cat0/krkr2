@@ -366,8 +366,11 @@ namespace motion {
         };
 
         int nextMergedNodeIndex = static_cast<int>(nodes.size());
+        const auto localRenderScopeId =
+            static_cast<const void *>(_runtime.get());
         auto appendChildEntriesAtCurrentNode = [&](Player *child,
-                                                   bool nodePriorDraw) {
+                                                   bool nodePriorDraw,
+                                                   int parentNodeIndex) {
             if(!child || !child->_runtime) {
                 return;
             }
@@ -411,12 +414,92 @@ namespace motion {
             }
             if(maxChildNodeIndex >= 0) {
                 const int nodeIndexOffset = nextMergedNodeIndex;
+                // REF 5128-5169 equivalent: locate the containing external
+                // ancestor for child roots whose local visible chain ends at
+                // the child boundary. A mesh-combined parent points the
+                // child root at the parent node itself; otherwise the
+                // nearest stencil-composite ancestor wins over the plain
+                // visible ancestor.
+                int externalAncestorNodeIndex = -1;
+                bool forceExternalAncestorForRoot = false;
+                if(parentNodeIndex >= 0 &&
+                   parentNodeIndex < static_cast<int>(nodes.size())) {
+                    const auto &parentNode =
+                        nodes[static_cast<size_t>(parentNodeIndex)];
+                    forceExternalAncestorForRoot =
+                        parentNode.meshCombineEnabled;
+                    int stencilCompositeAncestorIndex = -1;
+                    int ancestorIndex = parentNode.visibleAncestorIndex;
+                    for(int guard = 0; ancestorIndex >= 0 &&
+                        ancestorIndex < static_cast<int>(nodes.size()) &&
+                        guard < 256;
+                        ++guard) {
+                        const auto &ancestor =
+                            nodes[static_cast<size_t>(ancestorIndex)];
+                        if(ancestor.nodeType == 12) {
+                            stencilCompositeAncestorIndex = ancestorIndex;
+                            break;
+                        }
+                        const int nextAncestorIndex =
+                            ancestor.visibleAncestorIndex;
+                        if(nextAncestorIndex == ancestorIndex) {
+                            break;
+                        }
+                        ancestorIndex = nextAncestorIndex;
+                    }
+                    externalAncestorNodeIndex =
+                        parentNode.meshCombineEnabled
+                            ? parentNodeIndex
+                            : (stencilCompositeAncestorIndex >= 0
+                                   ? stencilCompositeAncestorIndex
+                                   : parentNode.visibleAncestorIndex);
+                    if(externalAncestorNodeIndex >= 0) {
+                        externalAncestorNodeIndex += nodeIndexOffset;
+                    }
+                }
                 for(auto &entry : childEntries) {
+                    // Scoped identity survives flattening untouched: the
+                    // numeric offset only rewrites merged-namespace fields.
+                    // (renderScopeId/scopedNodeIndex keep the child runtime
+                    // values they received at local stamping time.)
+                    const bool hadScopedRenderParent =
+                        entry.parentRenderScopeId != nullptr &&
+                        entry.scopedParentNodeIndex >= 0;
                     if(entry.nodeIndex >= 0) {
                         entry.nodeIndex += nodeIndexOffset;
                     }
                     if(entry.visibleAncestorIndex >= 0) {
                         entry.visibleAncestorIndex += nodeIndexOffset;
+                    } else if(externalAncestorNodeIndex >= 0 &&
+                              (entry.groupOnly ||
+                               forceExternalAncestorForRoot)) {
+                        // Composite roots remain inside their containing
+                        // group; plain bitmap roots are complete colour
+                        // draws and stay independent. Mesh-combined roots
+                        // are the explicit exception and keep the external
+                        // parent.
+                        entry.visibleAncestorIndex =
+                            externalAncestorNodeIndex;
+                        entry.parentRenderScopeId = localRenderScopeId;
+                        entry.scopedParentNodeIndex =
+                            externalAncestorNodeIndex;
+                    }
+                    if(hadScopedRenderParent &&
+                       externalAncestorNodeIndex >= 0) {
+                        const detail::PlayerRuntime::PreparedRenderItem::
+                            RenderAncestorReference outerAncestor{
+                                localRenderScopeId,
+                                externalAncestorNodeIndex};
+                        if(entry.outerRenderAncestorChain.empty() ||
+                           entry.outerRenderAncestorChain.back()
+                                   .renderScopeId !=
+                               outerAncestor.renderScopeId ||
+                           entry.outerRenderAncestorChain.back()
+                                   .scopedNodeIndex !=
+                               outerAncestor.scopedNodeIndex) {
+                            entry.outerRenderAncestorChain.push_back(
+                                outerAncestor);
+                        }
                     }
                     for(int &maskNodeIndex : entry.stencilMaskNodeIndices) {
                         if(maskNodeIndex >= 0) {
@@ -606,7 +689,8 @@ namespace motion {
             // child render list still owns its per-frame visibility.
             if(mergedBoundedChild) {
                 appendChildEntriesAtCurrentNode(node.getChildPlayer(),
-                                                node.priorDraw != 0);
+                                                node.priorDraw != 0,
+                                                static_cast<int>(i));
             }
             if(!node.accumulated.active)
                 continue;
@@ -617,12 +701,14 @@ namespace motion {
                 if(!emoteLikePrepare) {
                     if(node.nodeType == 3 && !mergedBoundedChild) {
                         appendChildEntriesAtCurrentNode(node.getChildPlayer(),
-                                                        node.priorDraw != 0);
+                                                        node.priorDraw != 0,
+                                                        static_cast<int>(i));
                     } else if(node.nodeType == 4) {
                         const int particleCount = node.getParticleCount();
                         for(int pi = 0; pi < particleCount; ++pi) {
                             appendChildEntriesAtCurrentNode(
-                                node.getParticleChild(pi), node.priorDraw != 0);
+                                node.getParticleChild(pi),
+                                node.priorDraw != 0, static_cast<int>(i));
                         }
                     }
                 }
@@ -730,6 +816,20 @@ namespace motion {
                 entry.meshType = node.meshWarpedQuad ? 2 : node.meshType;
                 entry.meshDivX = node.meshWarpedQuad ? 2 : node.meshDivX;
                 entry.meshDivY = node.meshWarpedQuad ? 2 : node.meshDivY;
+            }
+
+            // Local scope stamping (REF PlayerUpdateLayers.cpp 5215-5225).
+            // Done after the item carries its authored visibleAncestorIndex
+            // and before any foreign merge can move nodeIndex:
+            // scopedNodeIndex records the authoring runtime's local index
+            // and merge logic must never offset it. syntheticParentOnly
+            // containers keep visibleAncestorIndex=-1 and thus no scoped
+            // parent, matching REF.
+            entry.renderScopeId = localRenderScopeId;
+            entry.scopedNodeIndex = entry.nodeIndex;
+            if(entry.visibleAncestorIndex >= 0) {
+                entry.parentRenderScopeId = localRenderScopeId;
+                entry.scopedParentNodeIndex = entry.visibleAncestorIndex;
             }
 
             bool havePaintBox = false;
