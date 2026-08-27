@@ -721,7 +721,11 @@ namespace motion {
 
         // Player_ResolveSLATarget @ 0x6D5948 owns PrivateMotionGLL sizing;
         // Player_RenderMotionFrame @ 0x6DE738 only emits render commands.
-        buildRenderCommands(canvasWidth, canvasHeight);
+        if(commandGraphEnabled()) {
+            buildRenderCommandGraph(canvasWidth, canvasHeight);
+        } else {
+            buildRenderCommands(canvasWidth, canvasHeight);
+        }
         std::size_t missingTextures = 0;
         if(_runtime && _runtime->sourceCacheNative) {
             for(const auto &item : _runtime->preparedRenderItems) {
@@ -788,7 +792,11 @@ namespace motion {
         const auto motionPath = _runtime->activeMotion->path;
 
         const auto renderStart = std::chrono::steady_clock::now();
-        buildRenderCommands(canvasWidth, canvasHeight);
+        if(commandGraphEnabled()) {
+            buildRenderCommandGraph(canvasWidth, canvasHeight);
+        } else {
+            buildRenderCommands(canvasWidth, canvasHeight);
+        }
 
         iTJSDispatch2 *layerTreeOwner = resolveMainWindowOwnerObject();
         if(!layerTreeOwner) {
@@ -1256,7 +1264,12 @@ namespace motion {
                                   adaptor->getHeight(), 0x00000000)) {
             return false;
         }
-        if(!buildRenderCommands(adaptor->getWidth(), adaptor->getHeight()) ||
+        const bool renderCommandsBuilt = commandGraphEnabled()
+            ? buildRenderCommandGraph(adaptor->getWidth(),
+                                      adaptor->getHeight())
+            : buildRenderCommands(adaptor->getWidth(),
+                                  adaptor->getHeight());
+        if(!renderCommandsBuilt ||
            !executeLayerRenderCommands(renderLayerObject, true)) {
             return false;
         }
@@ -1322,7 +1335,11 @@ namespace motion {
         const int width = adaptor->getWidth();
         const int height = adaptor->getHeight();
         const tTVPRect targetRect(0, 0, width, height);
-        buildRenderCommands(width, height);
+        if(commandGraphEnabled()) {
+            buildRenderCommandGraph(width, height);
+        } else {
+            buildRenderCommands(width, height);
+        }
 
         int stencilRefs = 0;
         if(!_preview) {
@@ -1492,7 +1509,11 @@ namespace motion {
             return false;
         }
 
-        buildRenderCommands(canvasWidth, canvasHeight);
+        if(commandGraphEnabled()) {
+            buildRenderCommandGraph(canvasWidth, canvasHeight);
+        } else {
+            buildRenderCommands(canvasWidth, canvasHeight);
+        }
         if(!executeLayerRenderCommands(renderLayerObject, true)) {
             return false;
         }

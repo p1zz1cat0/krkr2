@@ -5,7 +5,10 @@
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
 #include "SourceCache.h"
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <unordered_set>
 
 using namespace motion::internal;
 using namespace motion::internal::render_detail;
@@ -203,6 +206,372 @@ namespace motion {
         return ok;
     }
 
+    namespace {
+        // KRKR_EMOTE_COMMAND_GRAPH selects the REF render command graph port
+        // (buildRenderCommandGraph below) over the legacy PreparedItem
+        // two-stage path. Default stays off until the graph path passes a
+        // commercial reproduction verdict.
+        const bool kRenderCommandGraphEnabled = [] {
+            const char *env = std::getenv("KRKR_EMOTE_COMMAND_GRAPH");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        const bool kRenderCommandGraphDiag = [] {
+            const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+    }
+
+    bool Player::commandGraphEnabled() const {
+        return kRenderCommandGraphEnabled;
+    }
+
+    bool Player::buildRenderCommandGraph(tjs_int canvasWidth,
+                                         tjs_int canvasHeight) {
+#if defined(KRKR2_WASMTIME_HEADLESS)
+        detail::motionTraceRenderBuildCommandsEnter(
+            this, static_cast<int>(canvasWidth),
+            static_cast<int>(canvasHeight));
+#endif
+        if(!_runtime) {
+#if defined(KRKR2_WASMTIME_HEADLESS)
+            detail::motionTraceRenderBuildCommandsLeave(
+                this, static_cast<int>(canvasWidth),
+                static_cast<int>(canvasHeight));
+#endif
+            return false;
+        }
+        const auto motionPath =
+            _runtime->activeMotion ? _runtime->activeMotion->path
+                                   : std::string{};
+
+        using ScopedRenderCommand =
+            detail::PlayerRuntime::ScopedRenderCommand;
+        auto &commands = _runtime->renderCommands;
+        commands.clear();
+        _runtime->preparedRenderItemsTopLevel.clear();
+        _runtime->preparedRenderItemsGroup.clear();
+        RenderClipRect clipScratch;
+        std::string clipReasonScratch;
+        std::array<size_t, 5> cmdGraphGateRejects{};
+
+        // Pass 1 — sub_6C4E28-equivalent preparation, replicating the legacy
+        // buildRenderCommands body exactly (gating included): every entry
+        // gets clip/local-space reset, only drawable gates receive rawFlag21
+        // and local-space writes, and the topLevel/group lists keep native
+        // membership. The SLA path and executor consume these lists
+        // regardless of skip flags, so membership must not diverge.
+        for(auto &entry : _runtime->preparedRenderItems) {
+            entry.builtRect = { 0, 0, 0, 0 };
+            entry.leafBuilt = false;
+            entry.composedBuilt = false;
+            entry.executedDirect = false;
+            const bool drawableGate = entry.drawFlag && !entry.rawFlag16;
+            if(!entry.drawFlag) {
+                // Legacy branch: local execution state resets only.
+            } else if(!drawableGate ||
+                      !computeRenderClipRect(entry, canvasWidth, canvasHeight,
+                                             clipScratch, &clipReasonScratch)) {
+                entry.rawFlag21 = false;
+            } else {
+                entry.rawFlag21 = true;
+                entry.clipRect = { clipScratch.left, clipScratch.top,
+                                   clipScratch.right, clipScratch.bottom };
+                entry.dirtyRect = entry.clipRect;
+                for(size_t ci = 0; ci < entry.corners.size(); ci += 2) {
+                    entry.localCorners[ci] =
+                        entry.corners[ci] - 0.5f -
+                        static_cast<float>(clipScratch.left);
+                    entry.localCorners[ci + 1] =
+                        entry.corners[ci + 1] - 0.5f -
+                        static_cast<float>(clipScratch.top);
+                }
+                entry.localMeshPoints.clear();
+                entry.localMeshPoints.reserve(entry.meshPoints.size());
+                for(size_t pi = 0; pi + 1 < entry.meshPoints.size(); pi += 2) {
+                    entry.localMeshPoints.push_back(
+                        entry.meshPoints[pi] - 0.5f -
+                        static_cast<float>(clipScratch.left));
+                    entry.localMeshPoints.push_back(
+                        entry.meshPoints[pi + 1] - 0.5f -
+                        static_cast<float>(clipScratch.top));
+                }
+            }
+            persistNativeRenderItemFieldLifetimeLike_0x6C4E28(entry);
+            if(entry.groupList) {
+                _runtime->preparedRenderItemsGroup.push_back(&entry);
+            }
+            if(entry.topLevelList) {
+                _runtime->preparedRenderItemsTopLevel.push_back(&entry);
+            }
+        }
+
+        // Pass 1b — command creation under the REF 8044..8286 gate (without
+        // the Yuzu title utility-layer skips, which are game-specific and
+        // not ported). Zero-opacity authored mask sources stay alive through
+        // the stencilMaskReferenced escape in that gate.
+        for(auto &entry : _runtime->preparedRenderItems) {
+            if(kRenderCommandGraphDiag) {
+                if(!entry.drawFlag) {
+                    ++cmdGraphGateRejects[0];
+                } else if(entry.skipFlag0) {
+                    ++cmdGraphGateRejects[1];
+                } else if(_preview && entry.skipFlag1) {
+                    ++cmdGraphGateRejects[2];
+                } else if(entry.opacity <= 0 &&
+                          !entry.stencilMaskReferenced) {
+                    ++cmdGraphGateRejects[3];
+                } else if(!entry.rawFlag21) {
+                    ++cmdGraphGateRejects[4];
+                }
+            }
+            // skipFlag1 mirrors the executor's preview-only consumption
+            // (sub_6C7440 gates item+18 behind the preview flag); rejecting
+            // on it unconditionally would drop every non-priorDraw item in
+            // a normal commercial frame.
+            if(!entry.drawFlag || entry.skipFlag0 ||
+               (_preview && entry.skipFlag1) ||
+               (entry.opacity <= 0 && !entry.stencilMaskReferenced)) {
+                continue;
+            }
+            if(!entry.rawFlag21) {
+                continue;
+            }
+
+            ScopedRenderCommand cmd;
+            cmd.item = &entry;
+            cmd.nodeIndex = entry.nodeIndex;
+            // (renderScopeId, scopedNodeIndex) mirrors REF scoped identity.
+            // nativeLifetimeOwner/nativeLifetimeKey record the creating
+            // runtime and its local node index; merged-namespace offsets
+            // never rewrite the key, so the pair stays scoped-true across
+            // flattening.
+            cmd.renderScopeId =
+                entry.nativeLifetimeOwner
+                    ? static_cast<const void *>(entry.nativeLifetimeOwner)
+                    : static_cast<const void *>(_runtime.get());
+            cmd.scopedNodeIndex = entry.nativeLifetimeKey;
+            cmd.groupOnly = entry.groupOnly;
+            cmd.hasOwnSource = entry.hasOwnSource;
+            cmd.blendMode = entry.blendMode;
+            cmd.opacity = entry.opacity;
+            // item+244 composite flags; REF reads the same bits through
+            // entry.updateCount for its (itemFlags & 7) classification.
+            cmd.itemFlags = entry.stencilComposite;
+            cmd.parentNodeIndex = entry.visibleAncestorIndex;
+            cmd.stencilMaskInputs = entry.scopedStencilMaskInputs;
+            if(cmd.stencilMaskInputs.empty()) {
+                // Owner-less legacy references resolve inside the group's
+                // own scope first, matching native sub_6C7440's walk.
+                for(const int maskNodeIndex : entry.stencilMaskNodeIndices) {
+                    cmd.stencilMaskInputs.push_back({ maskNodeIndex, nullptr });
+                }
+            }
+            commands.push_back(std::move(cmd));
+        }
+
+        // Pass 2 — index maps. Scoped maps win over the merged namespace so
+        // duplicate node indexes across nested players (both eyes commonly
+        // use node 4/5) cannot steal each other's commands. REF resets the
+        // item-level mask flag here and re-marks it only when wired.
+        std::unordered_map<int, size_t> commandIndexByNode;
+        std::unordered_map<const void *,
+                           std::unordered_map<int, size_t>>
+            commandIndexByScopedNode;
+        commandIndexByNode.reserve(commands.size());
+        for(size_t i = 0; i < commands.size(); ++i) {
+            // Unlike REF, the item-level stencilMaskReferenced flag is NOT
+            // reset here: the legacy prepare pass owns it, and clearing it
+            // would unmark flattened foreign items whose lifecycle lives in
+            // a child runtime's lifetime map.
+            commandIndexByNode.emplace(commands[i].nodeIndex, i);
+            if(commands[i].renderScopeId != nullptr &&
+               commands[i].scopedNodeIndex >= 0) {
+                commandIndexByScopedNode[commands[i].renderScopeId].emplace(
+                    commands[i].scopedNodeIndex, i);
+            }
+        }
+        auto findCommandIndex =
+            [&](const void *scopeId, int scopedNodeIndex,
+                int flattenedNodeIndex) -> size_t {
+            if(scopeId != nullptr && scopedNodeIndex >= 0) {
+                const auto scopeIt =
+                    commandIndexByScopedNode.find(scopeId);
+                if(scopeIt != commandIndexByScopedNode.end()) {
+                    const auto nodeIt =
+                        scopeIt->second.find(scopedNodeIndex);
+                    if(nodeIt != scopeIt->second.end()) {
+                        return nodeIt->second;
+                    }
+                }
+            }
+            const auto flatIt =
+                commandIndexByNode.find(flattenedNodeIndex);
+            return flatIt == commandIndexByNode.end()
+                ? commands.size()
+                : flatIt->second;
+        };
+
+        // Pass 3 — parent wiring (REF 8455..8604). TGT carries no per-entry
+        // parent scope identity (that is the phase-3 renderScopeId port), so
+        // the ancestor walk runs on the merged namespace with a visited
+        // guard; stencil groups own their whole drawable descendant subtree.
+        size_t parentedCommands = 0;
+        for(size_t i = 0; i < commands.size(); ++i) {
+            int ancestorNodeIndex = commands[i].parentNodeIndex;
+            std::unordered_set<size_t> visitedAncestorCommands;
+            while(ancestorNodeIndex >= 0) {
+                const size_t ancestorCommandIndex =
+                    findCommandIndex(nullptr, -1, ancestorNodeIndex);
+                if(ancestorCommandIndex >= commands.size() ||
+                   !visitedAncestorCommands.insert(ancestorCommandIndex)
+                        .second) {
+                    break;
+                }
+                auto &ancestorCommand = commands[ancestorCommandIndex];
+                if(ancestorCommand.groupOnly) {
+                    const bool isStandaloneAlphaModifier =
+                        ancestorCommand.stencilMaskInputs.empty() &&
+                        (ancestorCommand.itemFlags & 7) == 6;
+                    // The independent difference-alpha classification stays
+                    // behind the REF policy seam, which is null in the
+                    // public fallback renderer this port mirrors; the
+                    // pairing fields remain wired for phase 2.
+                    if(!ancestorCommand.stencilMaskInputs.empty() ||
+                       isStandaloneAlphaModifier) {
+                        ancestorCommand.childCommandIndices.push_back(
+                            static_cast<int>(i));
+                        commands[i].hasRenderParent = true;
+                    }
+                    break;
+                }
+                const int nextAncestorNodeIndex =
+                    ancestorCommand.parentNodeIndex;
+                if(nextAncestorNodeIndex == ancestorNodeIndex) {
+                    break;
+                }
+                ancestorNodeIndex = nextAncestorNodeIndex;
+            }
+            if(commands[i].hasRenderParent) {
+                ++parentedCommands;
+            }
+        }
+
+        // Pass 4 — flags-6 alpha modifiers attach to a concrete parent
+        // command (REF 8719..8741). Composition-side application of the
+        // item+264 alpha carrier lands with phase 2; until then the legacy
+        // child-as-mask fallback inside the executor still covers these
+        // groups, so the wiring is recorded graph-side only.
+        for(size_t i = 0; i < commands.size(); ++i) {
+            auto &modifier = commands[i];
+            if(!modifier.groupOnly || !modifier.stencilMaskInputs.empty() ||
+               (modifier.itemFlags & 7) != 6 || modifier.parentNodeIndex < 0) {
+                continue;
+            }
+            const size_t parentCommandIndex =
+                findCommandIndex(nullptr, -1, modifier.parentNodeIndex);
+            if(parentCommandIndex >= commands.size() ||
+               parentCommandIndex == i) {
+                continue;
+            }
+            commands[parentCommandIndex].stencilModifierCommandIndices
+                .push_back(static_cast<int>(i));
+            modifier.hasRenderParent = true;
+        }
+
+        // Pass 5 — authored stencil-mask wiring (REF 8745..8772) resolved
+        // scope-first. An input carrying a foreign owner must NOT fall back
+        // to the merged namespace: both eyes commonly use node 4/5, and a
+        // flat hit would bind the group to an unrelated mask from an outer
+        // player. Owner-less legacy inputs fall back to the group's own
+        // scope, matching native sub_6C7440's scoped item walk.
+        size_t maskWiredCount = 0;
+        size_t maskBindFailCount = 0;
+        for(size_t gi = 0; gi < commands.size(); ++gi) {
+            auto &command = commands[gi];
+            for(const auto &input : command.stencilMaskInputs) {
+                size_t maskCommandIndex =
+                    findCommandIndex(input.second, input.first, input.first);
+                if(maskCommandIndex >= commands.size() &&
+                   (input.second == nullptr ||
+                    input.second == command.renderScopeId)) {
+                    maskCommandIndex =
+                        findCommandIndex(command.renderScopeId, input.first,
+                                         -1);
+                }
+                if(maskCommandIndex >= commands.size() ||
+                   maskCommandIndex == gi) {
+                    ++maskBindFailCount;
+                    continue;
+                }
+                command.stencilMaskCommandIndices.push_back(
+                    static_cast<int>(maskCommandIndex));
+                commands[maskCommandIndex].item->stencilMaskReferenced = true;
+                ++maskWiredCount;
+            }
+        }
+
+        // Pass 6 — projection onto the PreparedRenderItem pointer channels
+        // (parentItem/childItems/stencilMaskItems) that the proven executor
+        // consumes. Legacy relationships produced by the prepare post-pass
+        // are preserved (they own the type12 aggregation and wrapper-splice
+        // semantics that the binary enforces); the graph only APPENDS the
+        // scoped mask bindings the legacy numeric namespace could not
+        // resolve. Flags-6 modifier edges stay graph-only until the
+        // executor learns the item+264 alpha carrier (phase 2).
+        auto appendUniqueItem =
+            [](std::vector<detail::PlayerRuntime::PreparedRenderItem *> &list,
+               detail::PlayerRuntime::PreparedRenderItem *item) {
+                if(std::find(list.begin(), list.end(), item) == list.end()) {
+                    list.push_back(item);
+                }
+            };
+        for(auto &command : commands) {
+            for(const int childIndex : command.childCommandIndices) {
+                auto *childItem = commands[childIndex].item;
+                appendUniqueItem(command.item->childItems, childItem);
+                if(childItem->parentItem == nullptr) {
+                    childItem->parentItem = command.item;
+                }
+            }
+            for(const int maskIndex : command.stencilMaskCommandIndices) {
+                auto *maskItem = commands[maskIndex].item;
+                appendUniqueItem(command.item->stencilMaskItems, maskItem);
+                if(maskItem->parentItem == nullptr) {
+                    maskItem->parentItem = command.item;
+                }
+            }
+        }
+
+        detail::logoChainTraceLogf(
+            motionPath, "renderCommand.count", "0x6C4E28",
+            _clampedEvalTime,
+            "canvas={}x{} preparedItems={} renderCommands={} "
+            "parentedCommands={} maskWired={} maskBindFail={}",
+            canvasWidth, canvasHeight,
+            _runtime->preparedRenderItems.size(), commands.size(),
+            parentedCommands, maskWiredCount, maskBindFailCount);
+        if(kRenderCommandGraphDiag) {
+            if(auto logger = LOGGER) {
+                logger->warn(
+                    "emote.cmdgraph.count player={} items={} commands={} "
+                    "parented={} maskWired={} maskBindFail={} "
+                    "rejects[noDraw,skip0,skip1,opa0,noClip]={},{},{},{},{}",
+                    static_cast<const void *>(this),
+                    _runtime->preparedRenderItems.size(), commands.size(),
+                    parentedCommands, maskWiredCount, maskBindFailCount,
+                    cmdGraphGateRejects[0], cmdGraphGateRejects[1],
+                    cmdGraphGateRejects[2], cmdGraphGateRejects[3],
+                    cmdGraphGateRejects[4]);
+            }
+        }
+        const bool ok = !_runtime->preparedRenderItems.empty();
+#if defined(KRKR2_WASMTIME_HEADLESS)
+        detail::motionTraceRenderBuildCommandsLeave(
+            this, static_cast<int>(canvasWidth),
+            static_cast<int>(canvasHeight));
+#endif
+        return ok;
+    }
 
     bool Player::executeLayerRenderCommands(iTJSDispatch2 *renderLayerObject,
                                             bool skipUpdate) {

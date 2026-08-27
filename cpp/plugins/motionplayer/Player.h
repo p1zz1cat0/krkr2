@@ -598,6 +598,12 @@ namespace motion {
         void appendPreparedRenderItems();
         void applyPreparedRenderItemTranslateOffsets();
         bool buildRenderCommands(tjs_int canvasWidth, tjs_int canvasHeight);
+        // REF render command graph port (AetherKiri buildRenderCommands).
+        // Selected per run through KRKR_EMOTE_COMMAND_GRAPH; the legacy
+        // PreparedItem two-stage path above remains the default until the
+        // graph path is verified against a commercial reproduction.
+        bool commandGraphEnabled() const;
+        bool buildRenderCommandGraph(tjs_int canvasWidth, tjs_int canvasHeight);
         bool executeLayerRenderCommands(iTJSDispatch2 *renderLayerObject,
                                         bool skipUpdate);
         bool updateLayerAfterDrawLike_0x6CE7D8(tTJSVariant *target);

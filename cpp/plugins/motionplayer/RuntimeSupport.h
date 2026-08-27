@@ -500,6 +500,12 @@ namespace motion::detail {
             // layer is an alpha input, not necessarily the render parent of
             // the colour item it clips.
             std::vector<int> stencilMaskNodeIndices;
+            // Owning-scope identity parallel to stencilMaskNodeIndices. The
+            // referenced index stays valid inside its owning runtime's
+            // namespace; foreign flattening must not offset it again. Same
+            // length as stencilMaskNodeIndices on every appending path.
+            std::vector<std::pair<int, const void *>>
+                scopedStencilMaskInputs;
             int meshDivX = 0;
             int meshDivY = 0;
             int meshType = 0;
@@ -531,6 +537,46 @@ namespace motion::detail {
         std::vector<PreparedRenderItem *> preparedRenderItemsGroup;
         std::unordered_map<int, RenderItemNativeFieldLifetime>
             renderItemNativeFieldLifetimeByNode;
+
+        // REF render command graph (AetherKiri buildRenderCommands,
+        // PlayerRender.cpp 8034..8793): a topology-only projection of one
+        // PreparedRenderItem plus explicit render edges. Execution state
+        // keeps living in item so both execution paths share the same
+        // drawing primitives and native field lifetimes.
+        struct ScopedRenderCommand {
+            PreparedRenderItem *item = nullptr;
+            // Merged/flattened key within this frame's prepared list.
+            int nodeIndex = -1;
+            // Owning runtime identity + its local node index (the port of
+            // REF renderScopeId/scopedNodeIndex). Authored node references
+            // resolve through these instead of the merged namespace so two
+            // nested players that both use node 4/5 cannot steal each
+            // other's mask layers.
+            const void *renderScopeId = nullptr;
+            int scopedNodeIndex = -1;
+            bool groupOnly = false;
+            bool hasOwnSource = false;
+            int blendMode = 16;
+            int opacity = 255;
+            // item+244 composite flags (node.stencilType copy); gates the
+            // standalone alpha-modifier / difference-mask classification.
+            int itemFlags = 0;
+            int parentNodeIndex = -1; // authored visibleAncestorIndex
+            // Authored mask inputs with their owning scopes, resolved in the
+            // graph builder into stencilMaskCommandIndices.
+            std::vector<std::pair<int, const void *>> stencilMaskInputs;
+            bool hasRenderParent = false;
+            bool alphaMaskOnly = false;
+            bool implicitVisibleStencilGroup = false;
+            std::vector<int> childCommandIndices;
+            std::vector<int> stencilModifierCommandIndices;
+            std::vector<int> stencilMaskCommandIndices;
+            std::vector<int> differenceAlphaMaskSourceCommandIndices;
+            std::vector<int> differenceAlphaMaskGroupCommandIndices;
+            std::vector<int> differenceAlphaMaskInputCommandIndices;
+            int differenceAlphaMaskOperation = 0;
+        };
+        std::vector<ScopedRenderCommand> renderCommands;
 
         // Legacy local scratch for old diagnostics. libkrkr2.so player+384 is
         // the parameter table initialized by Player_initNonEmoteMotion
