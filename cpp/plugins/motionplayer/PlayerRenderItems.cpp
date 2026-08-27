@@ -285,6 +285,16 @@ namespace motion {
             haveBounds ? 1 : 0);
     }
 
+    namespace {
+        // Temporary S2 diagnostic: dump final groupOnly paint boxes under
+        // KRKR_EMOTE_MASK_DIAG to verify the second union absorbed child
+        // surfaces. Removed once the graph gate rejects[noClip] reaches 0.
+        const bool kSecondUnionDiag = [] {
+            const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+    }
+
     void Player::appendPreparedRenderItems() {
         // sub_6D5164 @ 0x6D5178: the first instruction of the libkrkr2.so
         // build+sort wrapper is `if (!*(DWORD*)(player+544)) return 0;`.
@@ -1153,26 +1163,93 @@ namespace motion {
                 if(!tryGetLocalNode(ancestorIndex)) {
                     break;
                 }
+                // The ancestor node may not produce a render item (a type-3
+                // wrapper root only splices its subtree), but the walk must
+                // continue past it: a type-12 container further up the
+                // authored chain still owns this subtree's surface.
                 const auto parentIt = entryIndexByNode.find(ancestorIndex);
-                if(parentIt == entryIndexByNode.end()) {
-                    break;
-                }
-                auto &parentEntry = entries[parentIt->second];
-                if(!isLocalPreparedItem(parentEntry)) {
-                    break;
+                if(parentIt != entryIndexByNode.end()) {
+                    auto &parentEntry = entries[parentIt->second];
+                    if(isLocalPreparedItem(parentEntry)) {
+                        unionPaintBox(parentEntry, childEntry);
+                    }
                 }
                 const detail::MotionNode *ancestorNode =
-                    tryGetLocalNode(parentEntry.nodeIndex);
+                    tryGetLocalNode(ancestorIndex);
                 if(!ancestorNode) {
                     break;
                 }
-                unionPaintBox(parentEntry, childEntry);
                 const int nextAncestorIndex =
                     ancestorNode->visibleAncestorIndex;
                 if(nextAncestorIndex == ancestorIndex) {
                     break;
                 }
                 ancestorIndex = nextAncestorIndex;
+            }
+        }
+
+        // REF 5757-5809 second paint-box union: the first pass above walks
+        // ancestors through tryGetLocalNode and silently drops items whose
+        // ancestor chain leaves the local namespace, and a synthetic local
+        // type-12 container starts with an invalid paint box it can never
+        // grow (unionPaintBox returns early on an invalid parent). Re-walk
+        // every entry in the merged namespace by (remapped) ancestor index
+        // so groupOnly containers absorb nested subtree surfaces regardless
+        // of lifetime owner.
+        for(const auto &childEntry : entries) {
+            int ancestorIndex = childEntry.visibleAncestorIndex;
+            for(int guard = 0; ancestorIndex >= 0 && guard < 256; ++guard) {
+                const auto parentIt = entryIndexByNode.find(ancestorIndex);
+                if(parentIt == entryIndexByNode.end()) {
+                    break;
+                }
+                auto &parentEntry = entries[parentIt->second];
+                if(!parentEntry.groupOnly) {
+                    break;
+                }
+                if(&parentEntry == &childEntry) {
+                    break;
+                }
+                unionPaintBox(parentEntry, childEntry);
+                // Continue outward through the merged namespace via the
+                // parent's own ancestor index.
+                const int nextAncestorIndex =
+                    parentEntry.visibleAncestorIndex;
+                if(nextAncestorIndex == ancestorIndex) {
+                    break;
+                }
+                ancestorIndex = nextAncestorIndex;
+            }
+        }
+        if(kSecondUnionDiag) {
+            for(const auto &entry : entries) {
+                if(entry.groupOnly) {
+                    LOGGER->warn(
+                        "emote.prep.unionDiag nodeIndex={} groupOnly={} "
+                        "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] visAnc={} "
+                        "scope={}",
+                        entry.nodeIndex, entry.groupOnly ? 1 : 0,
+                        entry.paintBox[0], entry.paintBox[1],
+                        entry.paintBox[2], entry.paintBox[3],
+                        entry.visibleAncestorIndex,
+                        isLocalPreparedItem(entry) ? "local" : "foreign");
+                }
+                if(!isLocalPreparedItem(entry) &&
+                   entry.visibleAncestorIndex >= 0 &&
+                   entry.visibleAncestorIndex <
+                       static_cast<int>(nodes.size())) {
+                    LOGGER->warn(
+                        "emote.prep.attachDiag foreignEntry nodeIndex={} "
+                        "visAnc={} groupOnly={} scopedParent=({},{}) "
+                        "outerChain={}",
+                        entry.nodeIndex, entry.visibleAncestorIndex,
+                        entry.groupOnly ? 1 : 0,
+                        entry.parentRenderScopeId == localRenderScopeId
+                            ? "local"
+                            : "other",
+                        entry.scopedParentNodeIndex,
+                        entry.outerRenderAncestorChain.size());
+                }
             }
         }
     }
