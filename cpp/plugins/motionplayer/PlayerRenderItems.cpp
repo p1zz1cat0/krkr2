@@ -285,16 +285,6 @@ namespace motion {
             haveBounds ? 1 : 0);
     }
 
-    namespace {
-        // Temporary S2 diagnostic: dump final groupOnly paint boxes under
-        // KRKR_EMOTE_MASK_DIAG to verify the second union absorbed child
-        // surfaces. Removed once the graph gate rejects[noClip] reaches 0.
-        const bool kSecondUnionDiag = [] {
-            const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
-            return env && env[0] != '\0' && env[0] != '0';
-        }();
-    }
-
     void Player::appendPreparedRenderItems() {
         // sub_6D5164 @ 0x6D5178: the first instruction of the libkrkr2.so
         // build+sort wrapper is `if (!*(DWORD*)(player+544)) return 0;`.
@@ -471,16 +461,7 @@ namespace motion {
                     // pending.externalAncestorNodeIndex).
                 }
                 if(maxChildNodeIndex >= 0) {
-                    if(kSecondUnionDiag) {
-                        const auto &pn =
-                            nodes[static_cast<size_t>(parentNodeIndex)];
-                        LOGGER->warn(
-                            "emote.prep.mergeDiag slot={} slotLabel='{}' "
-                            "slotType={} extAnc={} childEntries={}",
-                            parentNodeIndex, pn.layerName, pn.nodeType,
-                            externalAncestorNodeIndex,
-                            childEntries.size());
-                    }
+                    (void)parentNodeIndex;
                 }
                 for(auto &entry : childEntries) {
                     // Scoped identity survives flattening untouched: the
@@ -1254,36 +1235,6 @@ namespace motion {
                 if(parentEntry.groupOnly &&
                    &parentEntry != &childEntry) {
                     unionPaintBox(parentEntry, childEntry);
-                }
-            }
-        }
-        if(kSecondUnionDiag) {
-            for(const auto &entry : entries) {
-                if(entry.groupOnly) {
-                    LOGGER->warn(
-                        "emote.prep.unionDiag nodeIndex={} groupOnly={} "
-                        "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] visAnc={} "
-                        "scope={}",
-                        entry.nodeIndex, entry.groupOnly ? 1 : 0,
-                        entry.paintBox[0], entry.paintBox[1],
-                        entry.paintBox[2], entry.paintBox[3],
-                        entry.visibleAncestorIndex,
-                        isLocalPreparedItem(entry) ? "local" : "foreign");
-                }
-                if(!isLocalPreparedItem(entry) &&
-                   entry.groupOnly) {
-                    std::string chain;
-                    for(const auto &ref : entry.outerRenderAncestorChain) {
-                        chain += fmt::format("({},{})",
-                                             ref.renderScopeId != nullptr,
-                                             ref.scopedNodeIndex);
-                    }
-                    LOGGER->warn(
-                        "emote.prep.attachDiag foreignGroup nodeIndex={} "
-                        "visAnc={} scopedParent=({},{}) chain=[{}]",
-                        entry.nodeIndex, entry.visibleAncestorIndex,
-                        entry.parentRenderScopeId != nullptr ? "set" : "null",
-                        entry.scopedParentNodeIndex, chain);
                 }
             }
         }

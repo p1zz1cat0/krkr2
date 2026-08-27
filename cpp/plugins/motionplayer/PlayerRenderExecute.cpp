@@ -370,25 +370,6 @@ namespace motion {
                     entry.groupOnly && entry.stencilMaskReferenced;
                 if(!authorMaskedGroup && !maskWrapperRoot) {
                     ++cmdGraphGateRejects[4];
-                    if(kRenderCommandGraphDiag) {
-                        if(auto logger = LOGGER) {
-                            logger->warn(
-                                "emote.cmdgraph.noclip player={} "
-                                "nodeIndex={} groupOnly={} "
-                                "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] "
-                                "viewport={} visAnc={} scope={} scopedIdx={}",
-                                static_cast<const void *>(this),
-                                entry.nodeIndex, entry.groupOnly ? 1 : 0,
-                                entry.paintBox[0], entry.paintBox[1],
-                                entry.paintBox[2], entry.paintBox[3],
-                                entry.hasViewport ? 1 : 0,
-                                entry.visibleAncestorIndex,
-                                entry.renderScopeId == localRenderScopeId
-                                    ? "local"
-                                    : "foreign",
-                                entry.scopedNodeIndex);
-                        }
-                    }
                     continue;
                 }
             }
@@ -663,6 +644,81 @@ namespace motion {
         // scope, matching native sub_6C7440's scoped item walk.
         size_t maskWiredCount = 0;
         size_t maskBindFailCount = 0;
+        // A mask input naming a type-3 wrapper root has no command of its
+        // own (wrapper roots splice their subtree instead of emitting an
+        // item). Resolve such an input to the first drawable descendant
+        // command inside that wrapper's subtree: collect the wrapper's
+        // descendant node indexes in its owning runtime (via node
+        // parentIndex chains), then scan this frame's commands for the
+        // first one whose scopedNodeIndex belongs to that set. The S6
+        // geometry pass then backwrites the group rect from it, and the
+        // executor composes the whole subtree through the wired item.
+        auto resolveMaskInputOrSubtreeRoot =
+            [&](const void *ownerScope, int scopedNodeIndex,
+                size_t selfIndex) -> size_t {
+            const auto *ownerRuntime =
+                static_cast<const detail::PlayerRuntime *>(ownerScope);
+            if(ownerRuntime == nullptr || scopedNodeIndex < 0 ||
+               scopedNodeIndex >=
+                   static_cast<int>(ownerRuntime->nodes.size())) {
+                return commands.size();
+            }
+            const auto &maskNode =
+                ownerRuntime->nodes[static_cast<size_t>(scopedNodeIndex)];
+            if(maskNode.nodeType != 3) {
+                return commands.size();
+            }
+            std::set<int> subtreeNodes;
+            for(size_t ni = 0; ni < ownerRuntime->nodes.size(); ++ni) {
+                int ancestor = ownerRuntime->nodes[ni].parentIndex;
+                for(int guard = 0;
+                    ancestor >= 0 &&
+                    ancestor < static_cast<int>(
+                                   ownerRuntime->nodes.size()) &&
+                    guard < 256;
+                    ++guard) {
+                    if(ancestor == scopedNodeIndex) {
+                        subtreeNodes.insert(static_cast<int>(ni));
+                        break;
+                    }
+                    const int next =
+                        ownerRuntime->nodes[static_cast<size_t>(ancestor)]
+                            .parentIndex;
+                    if(next == ancestor) {
+                        break;
+                    }
+                    ancestor = next;
+                }
+            }
+            if(subtreeNodes.empty()) {
+                return commands.size(); // signals "unresolvable"
+            }
+            for(size_t ci = 0; ci < commands.size(); ++ci) {
+                if(ci == selfIndex) {
+                    continue;
+                }
+                if(commands[ci].renderScopeId == ownerScope &&
+                   subtreeNodes.count(commands[ci].scopedNodeIndex) != 0) {
+                    if(kRenderCommandGraphDiag) {
+                        if(auto logger = LOGGER) {
+                            logger->warn(
+                                "emote.cmdgraph.subtreehit wrapper={} "
+                                "descendants={} command={} scopedIdx={}",
+                                scopedNodeIndex, subtreeNodes.size(), ci,
+                                commands[ci].scopedNodeIndex);
+                        }
+                    }
+                    return ci;
+                }
+            }
+            // Authored self-reference: the referenced wrapper's only
+            // drawable descendant is the referencing group itself (body
+            // stencil groups 6/16/24 clip to their own children). REF
+            // leaves such an input unwired and the executor applies the
+            // children-as-alpha fallback ((stencilComposite&4) with no
+            // mask items), so treat it as intentionally unwired.
+            return commands.size() + 1;
+        };
         for(size_t gi = 0; gi < commands.size(); ++gi) {
             auto &command = commands[gi];
             for(const auto &input : command.stencilMaskInputs) {
@@ -674,6 +730,24 @@ namespace motion {
                     maskCommandIndex =
                         findCommandIndex(command.renderScopeId, input.first,
                                          -1);
+                }
+                if(maskCommandIndex >= commands.size() ||
+                   maskCommandIndex == gi) {
+                    // Wrapper-root fallback: bind the mask to the first
+                    // drawable descendant of the referenced wrapper
+                    // subtree. The executor follows stencilMaskItems ->
+                    // childItems recursively, so the composed result covers
+                    // the whole subtree either way. A return of size()+1
+                    // marks an authored self-reference — intentionally
+                    // unwired, not a binding failure.
+                    const void *fallbackScope =
+                        input.second != nullptr ? input.second
+                                                : command.renderScopeId;
+                    maskCommandIndex = resolveMaskInputOrSubtreeRoot(
+                        fallbackScope, input.first, gi);
+                    if(maskCommandIndex == commands.size() + 1) {
+                        continue;
+                    }
                 }
                 if(maskCommandIndex >= commands.size() ||
                    maskCommandIndex == gi) {
