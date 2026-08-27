@@ -1036,6 +1036,52 @@ namespace motion {
             itemLayer->SetOpacity(std::clamp(item.opacity, 0, 255));
             ++renderedItems;
 
+            // Scoped stencil-mask application (phase-3 port): the accurate
+            // path renders each part as a standalone Layer tree member and
+            // historically applied no authored mask at all — the missing
+            // eyewhite/eyelid shape. When this item belongs to a stencil
+            // group's colour children (parentItem->stencilComposite&4) or
+            // is itself an authored mask input, burn the group's mask
+            // layers into this item's raster with the same alpha semantics
+            // the command-graph executor uses (threshold 64, mask mode
+            // from _maskMode).
+            if(item.parentItem != nullptr &&
+               !item.parentItem->stencilMaskItems.empty()) {
+                auto *groupItem = item.parentItem;
+                for(auto *maskPtr : groupItem->stencilMaskItems) {
+                    if(!maskPtr || maskPtr == &item || !maskPtr->rawFlag21) {
+                        continue;
+                    }
+                    auto *maskLayerObject =
+                        maskPtr->composedLayer.Type() == tvtObject
+                            ? maskPtr->composedLayer.AsObjectNoAddRef()
+                            : (maskPtr->leafLayer.Type() == tvtObject
+                                   ? maskPtr->leafLayer.AsObjectNoAddRef()
+                                   : nullptr);
+                    auto *maskLayer = resolveNativeLayer(maskLayerObject);
+                    if(!maskLayerObject || !maskLayer ||
+                       !maskLayer->GetMainImage()) {
+                        continue;
+                    }
+                    applyMotionAlphaMaskLike_0x6AF104(
+                        itemLayerObject, 0, 0, maskLayerObject, 0, 0,
+                        maskLayer->GetWidth(), maskLayer->GetHeight(), 64,
+                        _maskMode, groupItem->stencilComposite, motionPath,
+                        _clampedEvalTime, groupItem->nodeIndex,
+                        item.nodeIndex);
+                }
+            } else if(item.stencilMaskReferenced && item.parentItem == nullptr) {
+                // Authored mask input with a scope-split group (body
+                // stencil groups 6/16/24): the group clips its colour
+                // children to this item's alpha. Nothing to apply here —
+                // the group's children consume it — but the item must NOT
+                // render as a visible colour layer. park it invisible; its
+                // alpha lives on in the group mask composition below.
+                itemLayer->SetVisible(false);
+                itemLayer->SetHasImage(false);
+                --renderedItems;
+            }
+
 #if defined(KRKR2_WASMTIME_HEADLESS)
             detail::motionTraceRecordPostDrawLayerCandidate(
                 this, itemLayerObject,
