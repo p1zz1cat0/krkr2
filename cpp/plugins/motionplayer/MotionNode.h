@@ -88,6 +88,13 @@ namespace motion::detail {
         // authored mask identity so the renderer can remap it into the
         // containing namespace.
         std::vector<int> stencilCompositeMaskNodeIndices;
+        // Owning-runtime identity parallel to stencilCompositeMaskNodeIndices.
+        // A resolved input can live in another nested Player's namespace;
+        // recording that scope beside the index lets downstream passes treat
+        // the value as scoped instead of re-offsetting it across foreign
+        // merges. Same length as stencilCompositeMaskNodeIndices on every
+        // path that appends here.
+        std::vector<std::pair<int, const void *>> stencilCompositeMaskOwners;
         bool meshCombineAuthored = false; // PSB "meshCombine"
         bool meshCombineEnabled =
             false; // node+1963: mesh combines with children

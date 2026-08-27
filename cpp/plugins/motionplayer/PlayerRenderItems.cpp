@@ -666,6 +666,8 @@ namespace motion {
                 node.stencilCompositeMaskReferenced;
             entry.stencilMaskNodeIndices =
                 node.stencilCompositeMaskNodeIndices;
+            entry.scopedStencilMaskInputs =
+                node.stencilCompositeMaskOwners;
             if(hasOwnSource) {
                 entry.sourceKey = node.interpolatedCache.src;
                 entry.srcRef = findSource(detail::widen(entry.sourceKey));

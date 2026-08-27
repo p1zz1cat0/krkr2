@@ -480,6 +480,8 @@ namespace motion::detail {
                     target.stencilCompositeMaskReferenced = true;
                     node.stencilCompositeMaskNodeIndices.push_back(
                         maskNodeIndex);
+                    node.stencilCompositeMaskOwners.push_back(
+                        {maskNodeIndex, maskRuntime});
                 }
             }
         }
