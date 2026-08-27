@@ -355,7 +355,42 @@ namespace motion {
                 continue;
             }
             if(!entry.rawFlag21) {
-                continue;
+                // REF 8097-8119: an invalid clip drops the command — except
+                // that a type-12 stencil group keeps its graph presence
+                // when its authored mask inputs live in a nested Player
+                // scope (S6 derives its output rect from the mask subtree
+                // composite) AND a type-3 wrapper root that such groups
+                // reference as a mask stays alive too (its geometry comes
+                // from its own children). Without both exemptions the mask
+                // group cannot resolve its inputs and the mask root cannot
+                // materialize a bitmap for the mask group.
+                const bool authorMaskedGroup =
+                    entry.groupOnly && !entry.stencilMaskNodeIndices.empty();
+                const bool maskWrapperRoot =
+                    entry.groupOnly && entry.stencilMaskReferenced;
+                if(!authorMaskedGroup && !maskWrapperRoot) {
+                    ++cmdGraphGateRejects[4];
+                    if(kRenderCommandGraphDiag) {
+                        if(auto logger = LOGGER) {
+                            logger->warn(
+                                "emote.cmdgraph.noclip player={} "
+                                "nodeIndex={} groupOnly={} "
+                                "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] "
+                                "viewport={} visAnc={} scope={} scopedIdx={}",
+                                static_cast<const void *>(this),
+                                entry.nodeIndex, entry.groupOnly ? 1 : 0,
+                                entry.paintBox[0], entry.paintBox[1],
+                                entry.paintBox[2], entry.paintBox[3],
+                                entry.hasViewport ? 1 : 0,
+                                entry.visibleAncestorIndex,
+                                entry.renderScopeId == localRenderScopeId
+                                    ? "local"
+                                    : "foreign",
+                                entry.scopedNodeIndex);
+                        }
+                    }
+                    continue;
+                }
             }
 
             ScopedRenderCommand cmd;
@@ -649,6 +684,66 @@ namespace motion {
                     static_cast<int>(maskCommandIndex));
                 commands[maskCommandIndex].item->stencilMaskReferenced = true;
                 ++maskWiredCount;
+            }
+        }
+
+        // S6 — mask-derived output geometry for scope-split stencil groups.
+        // A type-12 group whose authored mask inputs resolve in a different
+        // Player scope has no drawable of its own in this namespace (its
+        // paint box stays empty), yet the executor composes it like any
+        // buffered group: its output rect is the union of its mask
+        // commands' clip rects. Likewise a mask wrapper-root group derives
+        // its rect from its own child commands. Two rounds: children feed
+        // wrapper roots first, then wrapper roots feed the stencil groups
+        // that reference them.
+        for(int round = 0; round < 2; ++round) {
+            for(auto &command : commands) {
+                auto *groupItem = command.item;
+                if(groupItem->rawFlag21 || !command.groupOnly) {
+                    continue;
+                }
+                int unionLeft = INT_MAX;
+                int unionTop = INT_MAX;
+                int unionRight = INT_MIN;
+                int unionBottom = INT_MIN;
+                auto absorb = [&](detail::PlayerRuntime::PreparedRenderItem
+                                      *sourceItem) {
+                    if(!sourceItem->rawFlag21) {
+                        return;
+                    }
+                    unionLeft = std::min(unionLeft,
+                                         sourceItem->clipRect[0]);
+                    unionTop = std::min(unionTop, sourceItem->clipRect[1]);
+                    unionRight = std::max(unionRight,
+                                          sourceItem->clipRect[2]);
+                    unionBottom = std::max(unionBottom,
+                                           sourceItem->clipRect[3]);
+                };
+                for(const int maskIndex : command.stencilMaskCommandIndices) {
+                    absorb(commands[maskIndex].item);
+                }
+                for(const int childIndex : command.childCommandIndices) {
+                    absorb(commands[childIndex].item);
+                }
+                if(unionLeft >= unionRight || unionTop >= unionBottom) {
+                    continue;
+                }
+                groupItem->clipRect = { unionLeft, unionTop, unionRight,
+                                        unionBottom };
+                groupItem->dirtyRect = groupItem->clipRect;
+                groupItem->paintBox = { static_cast<float>(unionLeft),
+                                        static_cast<float>(unionTop),
+                                        static_cast<float>(unionRight),
+                                        static_cast<float>(unionBottom) };
+                groupItem->corners = { static_cast<float>(unionLeft),
+                                       static_cast<float>(unionTop),
+                                       static_cast<float>(unionRight),
+                                       static_cast<float>(unionTop),
+                                       static_cast<float>(unionRight),
+                                       static_cast<float>(unionBottom),
+                                       static_cast<float>(unionLeft),
+                                       static_cast<float>(unionBottom) };
+                groupItem->rawFlag21 = true;
             }
         }
 

@@ -470,6 +470,18 @@ namespace motion {
                     // the scoped command map (REF 5692-5696 assigns the raw
                     // pending.externalAncestorNodeIndex).
                 }
+                if(maxChildNodeIndex >= 0) {
+                    if(kSecondUnionDiag) {
+                        const auto &pn =
+                            nodes[static_cast<size_t>(parentNodeIndex)];
+                        LOGGER->warn(
+                            "emote.prep.mergeDiag slot={} slotLabel='{}' "
+                            "slotType={} extAnc={} childEntries={}",
+                            parentNodeIndex, pn.layerName, pn.nodeType,
+                            externalAncestorNodeIndex,
+                            childEntries.size());
+                    }
+                }
                 for(auto &entry : childEntries) {
                     // Scoped identity survives flattening untouched: the
                     // numeric offset only rewrites merged-namespace fields.
@@ -483,36 +495,37 @@ namespace motion {
                     }
                     if(entry.visibleAncestorIndex >= 0) {
                         entry.visibleAncestorIndex += nodeIndexOffset;
-                    } else if(externalAncestorNodeIndex >= 0 &&
-                              (entry.groupOnly ||
-                               forceExternalAncestorForRoot)) {
-                        // Composite roots remain inside their containing
-                        // group; plain bitmap roots are complete colour
-                        // draws and stay independent. Mesh-combined roots
-                        // are the explicit exception and keep the external
-                        // parent.
+                    }
+                    // REF 5698-5714: every entry entering this scope
+                    // through a merge slot records the slot's containing
+                    // stencil-composite ancestor (when any) so later
+                    // passes can reach across the scope boundary — this is
+                    // how a nested eye surface reaches the wrapper's
+                    // stencil group 6/16/24. Applied to all merged entries,
+                    // not just roots, because deeper merges already ran and
+                    // will never revisit their own entries.
+                    if(externalAncestorNodeIndex >= 0 &&
+                       (entry.outerRenderAncestorChain.empty() ||
+                        entry.outerRenderAncestorChain.back()
+                                .renderScopeId != localRenderScopeId ||
+                        entry.outerRenderAncestorChain.back()
+                                .scopedNodeIndex !=
+                            externalAncestorNodeIndex)) {
+                        entry.outerRenderAncestorChain.push_back(
+                            {localRenderScopeId, externalAncestorNodeIndex});
+                    }
+                    if(hadScopedRenderParent &&
+                       entry.visibleAncestorIndex < 0 &&
+                       externalAncestorNodeIndex >= 0 &&
+                       (entry.groupOnly ||
+                        forceExternalAncestorForRoot)) {
+                        // Root containers with no local visible chain stay
+                        // inside their containing group.
                         entry.visibleAncestorIndex =
                             externalAncestorNodeIndex;
                         entry.parentRenderScopeId = localRenderScopeId;
                         entry.scopedParentNodeIndex =
                             externalAncestorNodeIndex;
-                    }
-                    if(hadScopedRenderParent &&
-                       externalAncestorNodeIndex >= 0) {
-                        const detail::PlayerRuntime::PreparedRenderItem::
-                            RenderAncestorReference outerAncestor{
-                                localRenderScopeId,
-                                externalAncestorNodeIndex};
-                        if(entry.outerRenderAncestorChain.empty() ||
-                           entry.outerRenderAncestorChain.back()
-                                   .renderScopeId !=
-                               outerAncestor.renderScopeId ||
-                           entry.outerRenderAncestorChain.back()
-                                   .scopedNodeIndex !=
-                               outerAncestor.scopedNodeIndex) {
-                            entry.outerRenderAncestorChain.push_back(
-                                outerAncestor);
-                        }
                     }
                     for(int &maskNodeIndex : entry.stencilMaskNodeIndices) {
                         if(maskNodeIndex >= 0) {
@@ -1198,7 +1211,10 @@ namespace motion {
         // grow (unionPaintBox returns early on an invalid parent). Re-walk
         // every entry in the merged namespace by (remapped) ancestor index
         // so groupOnly containers absorb nested subtree surfaces regardless
-        // of lifetime owner.
+        // of lifetime owner. A foreign entry whose ancestor chain bottoms
+        // out in its own scope also feeds every ancestor recorded in its
+        // outerRenderAncestorChain — that is how a nested eye surface
+        // reaches the containing wrapper's stencil group.
         for(const auto &childEntry : entries) {
             int ancestorIndex = childEntry.visibleAncestorIndex;
             for(int guard = 0; ancestorIndex >= 0 && guard < 256; ++guard) {
@@ -1223,6 +1239,23 @@ namespace motion {
                 }
                 ancestorIndex = nextAncestorIndex;
             }
+            for(const auto &outerAncestor :
+                childEntry.outerRenderAncestorChain) {
+                if(outerAncestor.scopedNodeIndex < 0 ||
+                   outerAncestor.renderScopeId != localRenderScopeId) {
+                    continue;
+                }
+                const auto parentIt = entryIndexByNode.find(
+                    outerAncestor.scopedNodeIndex);
+                if(parentIt == entryIndexByNode.end()) {
+                    continue;
+                }
+                auto &parentEntry = entries[parentIt->second];
+                if(parentEntry.groupOnly &&
+                   &parentEntry != &childEntry) {
+                    unionPaintBox(parentEntry, childEntry);
+                }
+            }
         }
         if(kSecondUnionDiag) {
             for(const auto &entry : entries) {
@@ -1238,20 +1271,19 @@ namespace motion {
                         isLocalPreparedItem(entry) ? "local" : "foreign");
                 }
                 if(!isLocalPreparedItem(entry) &&
-                   entry.visibleAncestorIndex >= 0 &&
-                   entry.visibleAncestorIndex <
-                       static_cast<int>(nodes.size())) {
+                   entry.groupOnly) {
+                    std::string chain;
+                    for(const auto &ref : entry.outerRenderAncestorChain) {
+                        chain += fmt::format("({},{})",
+                                             ref.renderScopeId != nullptr,
+                                             ref.scopedNodeIndex);
+                    }
                     LOGGER->warn(
-                        "emote.prep.attachDiag foreignEntry nodeIndex={} "
-                        "visAnc={} groupOnly={} scopedParent=({},{}) "
-                        "outerChain={}",
+                        "emote.prep.attachDiag foreignGroup nodeIndex={} "
+                        "visAnc={} scopedParent=({},{}) chain=[{}]",
                         entry.nodeIndex, entry.visibleAncestorIndex,
-                        entry.groupOnly ? 1 : 0,
-                        entry.parentRenderScopeId == localRenderScopeId
-                            ? "local"
-                            : "other",
-                        entry.scopedParentNodeIndex,
-                        entry.outerRenderAncestorChain.size());
+                        entry.parentRenderScopeId != nullptr ? "set" : "null",
+                        entry.scopedParentNodeIndex, chain);
                 }
             }
         }
