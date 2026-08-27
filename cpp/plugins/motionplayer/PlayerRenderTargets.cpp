@@ -918,6 +918,92 @@ namespace motion {
         int skippedSource = 0;
         int skippedSize = 0;
         int skippedCopy = 0;
+
+        // Phase-3 SLA mask materialization: authored stencil-mask inputs
+        // (face_eye_mask_l/r and friends) carry opacity=0, so the main gate
+        // below skips them and their leaf layer never receives a raster —
+        // which made every downstream mask application consume an empty
+        // image. Materialize each referenced mask item here with the same
+        // clip/raster flow as ordinary parts, but keep its layer invisible
+        // (SetVisible(false)) so it never appears as a colour part. The
+        // alpha burn in the main loop reads these rasters.
+        for(auto &maskEntry : _runtime->preparedRenderItems) {
+            if(!maskEntry.stencilMaskReferenced || maskEntry.sourceKey.empty()) {
+                continue;
+            }
+            if(maskEntry.opacity != 0 && !maskEntry.skipFlag0 &&
+               !maskEntry.rawFlag16) {
+                // Visible parts with mask references go through the main
+                // loop and get their raster there.
+                continue;
+            }
+            RenderClipRect maskClip;
+            if(!computeAccurateSlaClipLike_0x6C9CA8(
+                   maskEntry, static_cast<int>(canvasWidth),
+                   static_cast<int>(canvasHeight), maskClip)) {
+                continue;
+            }
+            auto maskItemResult = ensureAccurateSlaItemLayer(
+                maskEntry, ltAlpha, maskClip);
+            auto *maskLayerObject = maskItemResult.object;
+            auto *maskItemLayer = resolveNativeLayer(maskLayerObject);
+            if(!maskLayerObject || !maskItemLayer) {
+                continue;
+            }
+            tTJSVariant sourceObject =
+                _runtime->sourceCacheNative->loadRenderSourceByName(
+                    detail::widen(maskEntry.sourceKey), maskEntry.srcRef,
+                    maskEntry.blendMode, maskEntry.packedColors,
+                    layerTreeOwner, targetLayerObject,
+                    maskEntry.sourceMotion);
+            auto *sourceLayerObject =
+                sourceObject.Type() == tvtObject
+                    ? sourceObject.AsObjectNoAddRef()
+                    : nullptr;
+            auto *sourceLayer = resolveNativeLayer(sourceLayerObject);
+            auto *sourceImage =
+                sourceLayer ? sourceLayer->GetMainImage() : nullptr;
+            if(!sourceImage || sourceImage->GetWidth() <= 0 ||
+               sourceImage->GetHeight() <= 0 ||
+               !setLayerSizeLike_0x6CE19C(maskLayerObject,
+                                          maskClip.right - maskClip.left,
+                                          maskClip.bottom - maskClip.top)) {
+                continue;
+            }
+            const tTVPRect maskSourceRect(
+                0, 0, static_cast<tjs_int>(sourceImage->GetWidth()),
+                static_cast<tjs_int>(sourceImage->GetHeight()));
+            const float maskOffsetX =
+                -0.5f - static_cast<float>(maskClip.left);
+            const float maskOffsetY =
+                -0.5f - static_cast<float>(maskClip.top);
+            const bool maskMeshAsAffine = maskEntry.meshType == 1 &&
+                maskEntry.meshDivX <= 2 && maskEntry.meshDivY <= 2;
+            bool maskCopied = false;
+            if(maskEntry.meshType == 0 || maskMeshAsAffine) {
+                const auto localPts = buildAffineTrianglePoints(
+                    maskEntry.corners, maskOffsetX, maskOffsetY);
+                maskItemLayer->AffineCopy(localPts.data(), sourceImage,
+                                          maskSourceRect, stFastLinear, true);
+                maskCopied = true;
+            } else if((maskEntry.meshType == 1 ||
+                       maskEntry.meshType == 2) &&
+                      maskEntry.meshDivX >= 2 && maskEntry.meshDivY >= 2 &&
+                      !maskEntry.meshPoints.empty()) {
+                auto localMeshPoints = buildMeshPoints(
+                    maskEntry.meshPoints, maskOffsetX, maskOffsetY);
+                maskItemLayer->MeshCopy(localMeshPoints.data(),
+                                        maskEntry.meshDivX,
+                                        maskEntry.meshDivY, sourceImage,
+                                        maskSourceRect, stFastLinear, true);
+                maskCopied = true;
+            }
+            if(maskCopied) {
+                maskItemLayer->SetVisible(false);
+                ++changedItems;
+            }
+        }
+
         for(auto *itemPtr : _runtime->preparedRenderItemsTopLevel) {
             if(!itemPtr) {
                 continue;
