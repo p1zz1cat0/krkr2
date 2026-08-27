@@ -1265,6 +1265,19 @@ namespace motion {
             return false;
         }
 
+        // REF nested-child reuse gate (PlayerUpdateLayers.cpp 5074-5081):
+        // a child whose layer-state generation and inherited draw affine are
+        // unchanged since its last prepare reuses the previous entry list.
+        // Only nested children qualify — a top-level player's generation
+        // advances every tick, so its gate never hits.
+        if(_parentPlayer != nullptr && _runtime->preparedRenderItemsValid &&
+           _runtime->preparedLayerStateGeneration ==
+               _runtime->layerStateGeneration &&
+           _runtime->preparedDrawAffineMatrix ==
+               _runtime->drawAffineMatrix) {
+            return !_runtime->preparedRenderItems.empty();
+        }
+
         const bool savedInheritedFlag18 = _renderItemInheritedFlag18;
         _renderItemInheritedFlag18 = inheritedFlag18;
         _runtime->preparedRenderItems.clear();
@@ -1294,6 +1307,12 @@ namespace motion {
         detail::motionTraceRenderBuildItemsEnter(this);
 #endif
         appendPreparedRenderItems();
+        // REF reuse-gate stamping (PlayerUpdateLayers.cpp 5849-5853): the
+        // freshly built list is valid for the current layer-state
+        // generation and inherited draw affine.
+        _runtime->preparedLayerStateGeneration = _runtime->layerStateGeneration;
+        _runtime->preparedDrawAffineMatrix = _runtime->drawAffineMatrix;
+        _runtime->preparedRenderItemsValid = true;
         std::vector<double> beforeSortKeys;
         beforeSortKeys.reserve(_runtime->preparedRenderItems.size());
         for(const auto &item : _runtime->preparedRenderItems) {

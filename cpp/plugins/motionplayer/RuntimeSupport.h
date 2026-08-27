@@ -549,6 +549,17 @@ namespace motion::detail {
             bool executedDirect = false;
         };
         std::vector<PreparedRenderItem> preparedRenderItems; // player+936/944
+        // REF nested-child prepared-item reuse gate. A child Player whose
+        // layer state generation and inherited draw affine are unchanged
+        // since its last prepare can hand back the previous entry list
+        // instead of rebuilding it every parent frame. The top-level player
+        // always advances its generation, so only nested children hit the
+        // fast path.
+        std::uint64_t layerStateGeneration = 0;
+        std::uint64_t preparedLayerStateGeneration = 0;
+        std::array<double, 6> preparedDrawAffineMatrix{ 1.0, 0.0, 0.0, 1.0,
+                                                        0.0, 0.0 };
+        bool preparedRenderItemsValid = false;
         // Draw-space AABB captured by the normal render preparation path.
         // Hit testing reads this snapshot instead of rebuilding render items.
         std::array<double, 4> lastPreparedDrawBounds{};

@@ -175,6 +175,11 @@ namespace motion {
         for(auto &evalData : _runtime->perNodeEvalData) {
             evalData.dirtyFlag = 0;
         }
+
+        // REF layerStateGeneration bump (PlayerUpdateLayers.cpp 4359): every
+        // layer-state advance invalidates the nested-child prepared-item
+        // reuse gate for the next prepare pass.
+        ++_runtime->layerStateGeneration;
         finishProgressTransaction();
     }
 
