@@ -1886,9 +1886,46 @@ namespace motion {
             detail::MotionTraceRenderExecuteScope renderTrace(
                 this, targetLayerObject, false);
 #endif
-            if(!renderAccurateSlaLike_0x6C9CA8(sla, slaObject,
-                                               targetLayerObject, canvasWidth,
-                                               canvasHeight)) {
+            // Phase-3 architecture alignment (REF PlayerRender.cpp
+            // 13433-13440): REF's accurate-SLA mode has NO per-part
+            // rasterization — its main draw IS the command-graph executor
+            // (renderMotionFrame 0x6DE738 -> executeLayerRenderCommands)
+            // and the "after draw" step is just a target Update. TGT grew a
+            // self-built per-part SLA branch that bypassed the executor
+            // entirely, so every render-chain fix landed on a path the
+            // commercial game never draws through. Route the accurate mode
+            // through the proven executor and keep the legacy per-part
+            // path behind KRKR_EMOTE_SLA_LEGACY for A/B comparison.
+            static const bool legacySlaPath = [] {
+                const char *env = std::getenv("KRKR_EMOTE_SLA_LEGACY");
+                return env && env[0] != '\0' && env[0] != '0';
+            }();
+            bool drawn = false;
+            if(legacySlaPath) {
+                drawn = renderAccurateSlaLike_0x6C9CA8(
+                    sla, slaObject, targetLayerObject, canvasWidth,
+                    canvasHeight);
+            } else {
+                // 0x6C9CA8 equivalent: build the render commands and draw
+                // into the SLA private target (an alpha layer) — never the
+                // user-facing targetLayerObject, which may be a ltBinder
+                // without a main image (Not drawable layer type). The
+                // non-accurate branch renders through the same renderTarget
+                // via renderMotionFrameToTarget.
+                iTJSDispatch2 *slaRenderTarget =
+                    resolveSeparateLayerRenderTarget(sla, canvasWidth,
+                                                     canvasHeight);
+                if(!slaRenderTarget) {
+                    slaRenderTarget = targetLayerObject;
+                }
+                if(commandGraphEnabled()) {
+                    buildRenderCommandGraph(canvasWidth, canvasHeight);
+                } else {
+                    buildRenderCommands(canvasWidth, canvasHeight);
+                }
+                drawn = executeLayerRenderCommands(slaRenderTarget, true);
+            }
+            if(!drawn) {
                 detail::logoChainTraceSummary(
                     motionPath, "renderToSeparateLayerAdaptor",
                     _clampedEvalTime, "fail=renderAccurateSlaLike_0x6C9CA8");
@@ -1896,9 +1933,10 @@ namespace motion {
             }
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.begin", "0x6C9CA8", _clampedEvalTime,
-                "target={} canvas={}x{}",
+                "target={} canvas={}x{} path={}",
                 static_cast<const void *>(targetLayerObject), canvasWidth,
-                canvasHeight);
+                canvasHeight, legacySlaPath ? "legacy-per-part"
+                                            : "command-graph");
             updateAccurateSLAAfterDraw(targetLayerObject);
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.end", "0x6CE938", _clampedEvalTime,
