@@ -1893,12 +1893,21 @@ namespace motion {
             // and the "after draw" step is just a target Update. TGT grew a
             // self-built per-part SLA branch that bypassed the executor
             // entirely, so every render-chain fix landed on a path the
-            // commercial game never draws through. Route the accurate mode
-            // through the proven executor and keep the legacy per-part
-            // path behind KRKR_EMOTE_SLA_LEGACY for A/B comparison.
+            // commercial game never draws through.
+            //
+            // The executor path is currently NOT viable as a default: it
+            // costs 300-700ms per frame in a Debug software raster on a
+            // 1280x720 canvas (per-frame full rebuild, no output cache —
+            // that is phase-4 territory), which overheats and stalls the
+            // game. The legacy per-part path stays the default; the
+            // executor path enables per run through KRKR_EMOTE_SLA_GRAPH=1
+            // so a reproduction can A/B the render-chain behavior.
             static const bool legacySlaPath = [] {
-                const char *env = std::getenv("KRKR_EMOTE_SLA_LEGACY");
-                return env && env[0] != '\0' && env[0] != '0';
+                const char *env = std::getenv("KRKR_EMOTE_SLA_GRAPH");
+                if(env && env[0] != '\0' && env[0] != '0') {
+                    return false;
+                }
+                return true;
             }();
             bool drawn = false;
             if(legacySlaPath) {
