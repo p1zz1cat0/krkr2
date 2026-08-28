@@ -618,6 +618,33 @@ namespace motion::detail {
         };
         std::vector<ScopedRenderCommand> renderCommands;
 
+        // REF emote command output cache (RuntimeSupport.h 423-441). Layer
+        // objects retained across frames keyed by stable command-list slot;
+        // signatures decide whether pixels may be reused, so a topology
+        // change reuses allocations without reusing pixels. GC: entries
+        // unused for 240 generations are evicted every 120 generations,
+        // capacity capped at 512.
+        struct EmoteCommandOutputCacheEntry {
+            std::size_t leafSignature = 0;
+            std::size_t outputSignature = 0;
+            std::size_t maskSignature = 0;
+            tTJSVariant leafLayer;
+            tTJSVariant composedLayer;
+            tTJSVariant maskLayer;
+            tTJSVariant unionMaskLayer;
+            bool leafValid = false;
+            bool outputValid = false;
+            bool maskValid = false;
+            bool leafBuilt = false;
+            bool composedBuilt = false;
+            std::uint64_t lastUseGeneration = 0;
+        };
+        std::unordered_map<std::string, EmoteCommandOutputCacheEntry>
+            emoteCommandOutputCache;
+        std::uint64_t emoteCommandOutputCacheGeneration = 0;
+        std::uint64_t emoteCommandOutputCacheHits = 0;
+        std::uint64_t emoteCommandLeafCacheHits = 0;
+
         // Legacy local scratch for old diagnostics. libkrkr2.so player+384 is
         // the parameter table initialized by Player_initNonEmoteMotion
         // (0x6B365C), not per-node storage; node+8 resolves into

@@ -219,6 +219,93 @@ namespace motion {
             const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
             return env && env[0] != '\0' && env[0] != '0';
         }();
+
+        // REF renderReuseHashCombine + renderCommandLeafReuseSignature
+        // (PlayerRender.cpp 274-454). Exact float hashes are intentional:
+        // quantizing animation geometry would freeze sub-pixel eye/hair
+        // motion.
+        inline void renderReuseHashCombine(std::size_t &seed,
+                                           std::size_t value) {
+            seed ^= value + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+        }
+        std::size_t renderCommandLeafReuseSignature(
+            const detail::PlayerRuntime::ScopedRenderCommand &command) {
+            std::size_t seed = 0x6c7440u;
+            renderReuseHashCombine(seed,
+                                   std::hash<int>{}(command.nodeIndex));
+            renderReuseHashCombine(
+                seed, std::hash<const void *>{}(command.renderScopeId));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(command.scopedNodeIndex));
+            if(command.item != nullptr) {
+                renderReuseHashCombine(
+                    seed, std::hash<std::string>{}(command.item->sourceKey));
+                renderReuseHashCombine(
+                    seed, std::hash<bool>{}(command.hasOwnSource));
+                for(const auto value : command.item->packedColors) {
+                    renderReuseHashCombine(
+                        seed, std::hash<std::uint32_t>{}(value));
+                }
+                for(const auto value : command.item->localCorners) {
+                    renderReuseHashCombine(
+                        seed, std::hash<float>{}(value));
+                }
+                for(const auto value : command.item->localMeshPoints) {
+                    renderReuseHashCombine(
+                        seed, std::hash<float>{}(value));
+                }
+            }
+            renderReuseHashCombine(seed,
+                                   std::hash<bool>{}(command.groupOnly));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(command.blendMode & 0xF0));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(command.item->clipRect[2] -
+                                       command.item->clipRect[0]));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(command.item->clipRect[3] -
+                                       command.item->clipRect[1]));
+            return seed;
+        }
+        // Prepared-item variant: the executor consumes PreparedRenderItem
+        // slots, so the leaf signature hashes the same visual inputs from
+        // the item itself. The scoped identity (nativeLifetimeOwner/Key)
+        // keeps authored identity stable across topology changes.
+        std::size_t renderCommandLeafReuseSignatureForItem(
+            const detail::PlayerRuntime::PreparedRenderItem &item) {
+            std::size_t seed = 0x6c7440u;
+            renderReuseHashCombine(seed,
+                                   std::hash<int>{}(item.nodeIndex));
+            renderReuseHashCombine(
+                seed, std::hash<const void *>{}(
+                          static_cast<const void *>(
+                              item.nativeLifetimeOwner)));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(item.nativeLifetimeKey));
+            renderReuseHashCombine(
+                seed, std::hash<std::string>{}(item.sourceKey));
+            renderReuseHashCombine(
+                seed, std::hash<bool>{}(item.hasOwnSource));
+            renderReuseHashCombine(
+                seed, std::hash<bool>{}(item.groupOnly));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(item.blendMode & 0xF0));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(item.clipRect[2] - item.clipRect[0]));
+            renderReuseHashCombine(
+                seed, std::hash<int>{}(item.clipRect[3] - item.clipRect[1]));
+            for(const auto value : item.packedColors) {
+                renderReuseHashCombine(
+                    seed, std::hash<std::uint32_t>{}(value));
+            }
+            for(const auto value : item.localCorners) {
+                renderReuseHashCombine(seed, std::hash<float>{}(value));
+            }
+            for(const auto value : item.localMeshPoints) {
+                renderReuseHashCombine(seed, std::hash<float>{}(value));
+            }
+            return seed;
+        }
     }
 
     bool Player::commandGraphEnabled() const {
@@ -1353,6 +1440,60 @@ namespace motion {
             if(item.executedDirect || item.leafBuilt || item.composedBuilt) {
                 return true;
             }
+            // Command output cache (REF 10089-10203): a stable cache key per
+            // prepared-list slot retains layer objects across frames; the
+            // output signature decides pixel reuse. The executor consumes
+            // PreparedRenderItem slots, so the key carries the item pointer
+            // identity plus the scoped identity — stable while command order
+            // is stable through normal animation.
+            detail::PlayerRuntime::EmoteCommandOutputCacheEntry
+                *commandCacheEntry = nullptr;
+            std::size_t itemLeafSignature = 0;
+            const bool commandOutputCacheEnabled =
+                _runtime->isEmoteMode && !_runtime->renderCommands.empty();
+            std::uint64_t commandCacheGeneration = 0;
+            if(commandOutputCacheEnabled) {
+                commandCacheGeneration =
+                    ++_runtime->emoteCommandOutputCacheGeneration;
+                const auto cacheKey = fmt::format(
+                    "command:{}:{}:{}",
+                    static_cast<const void *>(itemPtr),
+                    static_cast<const void *>(item.nativeLifetimeOwner),
+                    item.nativeLifetimeKey);
+                auto [cacheIt, cacheInserted] =
+                    _runtime->emoteCommandOutputCache.try_emplace(cacheKey);
+                (void)cacheInserted;
+                commandCacheEntry = &cacheIt->second;
+                commandCacheEntry->lastUseGeneration =
+                    commandCacheGeneration;
+                // Even on a signature miss the retained objects are useful
+                // scratch buffers; prepareLayerForRender overwrites them
+                // before the new output is exposed.
+                item.leafLayer = commandCacheEntry->leafLayer;
+                item.composedLayer = commandCacheEntry->composedLayer;
+                itemLeafSignature = renderCommandLeafReuseSignatureForItem(
+                    item);
+                if(commandCacheEntry->outputValid &&
+                   commandCacheEntry->outputSignature ==
+                       commandCacheEntry->leafSignature) {
+                    // Degenerate single-signature mode (no graph edges on
+                    // the item channel): reuse only when both signatures
+                    // match — which for leaf-only items reduces to the
+                    // leaf signature stability.
+                }
+                if(commandCacheEntry->leafValid &&
+                   commandCacheEntry->leafSignature == itemLeafSignature &&
+                   item.leafLayer.Type() == tvtObject &&
+                   resolveNativeLayer(
+                       item.leafLayer.AsObjectNoAddRef())) {
+                    item.leafBuilt = true;
+                    item.builtRect = item.clipRect;
+                    ++_runtime->emoteCommandLeafCacheHits;
+                    return true;
+                }
+                item.leafBuilt = false;
+                item.composedBuilt = false;
+            }
             const bool hasChildren = !item.childItems.empty() ||
                 !item.stencilMaskItems.empty();
             const bool useDirectRenderPath =
@@ -1569,6 +1710,22 @@ namespace motion {
             }
 
             item.composedBuilt = true;
+            // rememberCommandOutput (REF 10177-10199): retain the layer
+            // objects and refresh signatures so the next frame with an
+            // identical leaf signature can skip the raster.
+            if(commandCacheEntry != nullptr) {
+                commandCacheEntry->leafLayer = item.leafLayer;
+                commandCacheEntry->composedLayer = item.composedLayer;
+                commandCacheEntry->leafSignature = itemLeafSignature;
+                commandCacheEntry->outputSignature = itemLeafSignature;
+                commandCacheEntry->leafBuilt = item.leafBuilt;
+                commandCacheEntry->composedBuilt = item.composedBuilt;
+                commandCacheEntry->leafValid = item.leafBuilt;
+                commandCacheEntry->outputValid =
+                    item.leafBuilt || item.composedBuilt;
+                commandCacheEntry->lastUseGeneration =
+                    commandCacheGeneration;
+            }
             return true;
         };
 
@@ -1837,6 +1994,45 @@ namespace motion {
                 motionPath, "execute.update", "0x6C7440", _clampedEvalTime,
                 "renderLayer.Update(false) size={}x{}", renderLayer->GetWidth(),
                 renderLayer->GetHeight());
+        }
+        // REF emote command output cache GC (11151-11173): every 120
+        // generations evict entries unused for 240 generations, then trim
+        // to a 512-entry cap.
+        if(_runtime->emoteCommandOutputCacheGeneration > 0 &&
+           (_runtime->emoteCommandOutputCacheGeneration % 120u) == 0u) {
+            auto &cache = _runtime->emoteCommandOutputCache;
+            for(auto it = cache.begin(); it != cache.end();) {
+                if(it->second.lastUseGeneration + 240u <
+                   _runtime->emoteCommandOutputCacheGeneration) {
+                    it = cache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            while(cache.size() > 512u) {
+                auto oldest = cache.begin();
+                for(auto it = std::next(cache.begin()); it != cache.end();
+                    ++it) {
+                    if(it->second.lastUseGeneration <
+                       oldest->second.lastUseGeneration) {
+                        oldest = it;
+                    }
+                }
+                cache.erase(oldest);
+            }
+        }
+        if(kRenderCommandGraphDiag && LOGGER &&
+           _runtime->emoteCommandOutputCacheHits +
+                   _runtime->emoteCommandLeafCacheHits >
+               0) {
+            LOGGER->warn(
+                "emote.exec.cache player={} generation={} hits={} leafHits={} "
+                "entries={}",
+                static_cast<const void *>(this),
+                _runtime->emoteCommandOutputCacheGeneration,
+                _runtime->emoteCommandOutputCacheHits,
+                _runtime->emoteCommandLeafCacheHits,
+                _runtime->emoteCommandOutputCache.size());
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)
         renderTrace.setResult(true);
