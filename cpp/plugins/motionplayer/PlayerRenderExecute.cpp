@@ -1450,7 +1450,13 @@ namespace motion {
                 *commandCacheEntry = nullptr;
             std::size_t itemLeafSignature = 0;
             const bool commandOutputCacheEnabled =
-                _runtime->isEmoteMode && !_runtime->renderCommands.empty();
+                _runtime->isEmoteMode && !_runtime->renderCommands.empty() &&
+                // TEMP A/B probe: is the frozen-frame symptom cache-driven?
+                [] {
+                    const char *env =
+                        std::getenv("KRKR_EMOTE_DISABLE_OUTPUT_CACHE");
+                    return !(env && env[0] != '\0' && env[0] != '0');
+                }();
             std::uint64_t commandCacheGeneration = 0;
             if(commandOutputCacheEnabled) {
                 commandCacheGeneration =

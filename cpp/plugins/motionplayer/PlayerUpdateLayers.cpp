@@ -47,6 +47,12 @@ namespace motion {
         for(auto &evalData : _runtime->perNodeEvalData) {
             evalData.dirtyFlag = 0;
         }
+        // REF layerStateGeneration bump (PlayerUpdateLayers.cpp 4359): the
+        // emote-like branch must bump too — every prepare-consuming cache
+        // (nested-child reuse gate, command output signature) keys on this
+        // counter. Placing the bump only in the non-emote branch froze all
+        // emote renders at their first frame.
+        ++_runtime->layerStateGeneration;
         finishProgressTransaction();
     }
 
@@ -175,10 +181,9 @@ namespace motion {
         for(auto &evalData : _runtime->perNodeEvalData) {
             evalData.dirtyFlag = 0;
         }
-
-        // REF layerStateGeneration bump (PlayerUpdateLayers.cpp 4359): every
-        // layer-state advance invalidates the nested-child prepared-item
-        // reuse gate for the next prepare pass.
+        // REF layerStateGeneration bump: the non-emote branch needs it too —
+        // vanilla PSBs report emoteMode=0 yet consume the same reuse gate
+        // and command-output signature.
         ++_runtime->layerStateGeneration;
         finishProgressTransaction();
     }

@@ -718,9 +718,6 @@ namespace motion {
             "target={} canvas={}x{} route={}",
             static_cast<const void *>(renderTargetObject), canvasWidth,
             canvasHeight, traceFunc ? traceFunc : "0x6DE738");
-
-        // Player_ResolveSLATarget @ 0x6D5948 owns PrivateMotionGLL sizing;
-        // Player_RenderMotionFrame @ 0x6DE738 only emits render commands.
         if(commandGraphEnabled()) {
             buildRenderCommandGraph(canvasWidth, canvasHeight);
         } else {
@@ -1909,6 +1906,7 @@ namespace motion {
                 }
                 return true;
             }();
+            bool legacySlaPathTaken = false;
             bool drawn = false;
             if(legacySlaPath) {
                 drawn = renderAccurateSlaLike_0x6C9CA8(
@@ -1920,32 +1918,54 @@ namespace motion {
                 // user-facing targetLayerObject, which may be a ltBinder
                 // without a main image (Not drawable layer type). The
                 // non-accurate branch renders through the same renderTarget
-                // via renderMotionFrameToTarget.
+                // via renderMotionFrameToTarget, whose first step is the
+                // transparent clear (REF 11283): without it every frame
+                // paints over the previous frame's pixels — the full-body
+                // ghosting/retention seen in reproduction.
                 iTJSDispatch2 *slaRenderTarget =
                     resolveSeparateLayerRenderTarget(sla, canvasWidth,
                                                      canvasHeight);
                 if(!slaRenderTarget) {
-                    slaRenderTarget = targetLayerObject;
+                    // No private render target: there is nothing safe to
+                    // clear-and-draw into (falling back to targetLayerObject
+                    // would wipe the user-facing ltBinder layer). The legacy
+                    // per-part path owns this shape.
+                    drawn = renderAccurateSlaLike_0x6C9CA8(
+                        sla, slaObject, targetLayerObject, canvasWidth,
+                        canvasHeight);
+                    legacySlaPathTaken = true;
+                    {
+                    if(!prepareLayerForRender(slaRenderTarget, canvasWidth,
+                                              canvasHeight, 0x00000000)) {
+                        detail::logoChainTraceSummary(
+                            motionPath, "renderToSeparateLayerAdaptor",
+                            _clampedEvalTime, "fail=slaGraphClear");
+                        return false;
+                    }
+                    if(commandGraphEnabled()) {
+                        buildRenderCommandGraph(canvasWidth, canvasHeight);
+                    } else {
+                        buildRenderCommands(canvasWidth, canvasHeight);
+                    }
+                    drawn = executeLayerRenderCommands(slaRenderTarget, true);
+                    {
+                        }
+                    }
                 }
-                if(commandGraphEnabled()) {
-                    buildRenderCommandGraph(canvasWidth, canvasHeight);
-                } else {
-                    buildRenderCommands(canvasWidth, canvasHeight);
+            }
+                if(!drawn) {
+                    detail::logoChainTraceSummary(
+                        motionPath, "renderToSeparateLayerAdaptor",
+                        _clampedEvalTime, "fail=renderAccurateSlaLike_0x6C9CA8");
+                    return false;
                 }
-                drawn = executeLayerRenderCommands(slaRenderTarget, true);
-            }
-            if(!drawn) {
-                detail::logoChainTraceSummary(
-                    motionPath, "renderToSeparateLayerAdaptor",
-                    _clampedEvalTime, "fail=renderAccurateSlaLike_0x6C9CA8");
-                return false;
-            }
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.begin", "0x6C9CA8", _clampedEvalTime,
                 "target={} canvas={}x{} path={}",
                 static_cast<const void *>(targetLayerObject), canvasWidth,
-                canvasHeight, legacySlaPath ? "legacy-per-part"
-                                            : "command-graph");
+                canvasHeight,
+                (legacySlaPath || legacySlaPathTaken) ? "legacy-per-part"
+                                                      : "command-graph");
             updateAccurateSLAAfterDraw(targetLayerObject);
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.end", "0x6CE938", _clampedEvalTime,
