@@ -19,7 +19,26 @@ else
   exit 64
 fi
 
-log_dir="$(mktemp -d "${TMPDIR:-/tmp}/krkr-plugin-quality.XXXXXX")" || exit 70
+# Session logs and macos build trees live under the host project's .work
+# directory when YOGHOURT_WORK_BUILD_ROOT is provided (the bootstrap
+# gateway); otherwise walk up from this fork checkout to the nearest
+# project .work so locked-source checkouts (under .work/build/sources/)
+# and developer worktrees (Vendor/krkr2) resolve identically.
+work_root_build="${YOGHOURT_WORK_BUILD_ROOT:-}"
+if [[ -z "$work_root_build" ]]; then
+  local candidate="${repo_root:A}"
+  while [[ "$candidate" != "/" ]]; do
+    if [[ -d "$candidate/.work" ]]; then
+      work_root_build="$candidate/.work/build"
+      break
+    fi
+    candidate="${candidate:h}"
+  done
+fi
+work_root_build="${work_root_build:-$repo_root/out}"
+log_dir="${YOGHOURT_QUALITY_LOG_DIR:-${work_root_build:h}/logs/quality-gate}"
+mkdir -p -- "$log_dir"
+(setopt NULL_GLOB; rm -f -- "$log_dir"/*.log)
 print "quality_gate_logs=$log_dir"
 
 run_logged() {
@@ -74,12 +93,16 @@ fi
 spatial_dir="${YOGHOURT_SPATIAL_PRESENTER_DIR:-${repo_root:h:h}/RuntimeSupport/SpatialPresenter}"
 relay_dir="${YOGHOURT_SURFACE_RELAY_DIR:-${repo_root:h:h}/RuntimeSupport/SurfaceRelay}"
 for configuration in debug release; do
-  if [[ "$configuration" == debug ]]; then preset="MacOS Debug Config"; else preset="MacOS Release Config"; fi
-  build_dir="$repo_root/out/macos/$configuration"
-  run_logged "$configuration-configure" cmake --preset "$preset" \
-    -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" -DYOGHOURT_SURFACE_RELAY_DIR="$relay_dir" \
-    -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF \
-    ${VCPKG_TARGET_TRIPLET:+-DVCPKG_TARGET_TRIPLET="$VCPKG_TARGET_TRIPLET"}
+  build_dir="$work_root_build/krkr2-gate/$configuration"
+  run_logged "$configuration-configure" env VCPKG_ROOT="${VCPKG_ROOT:-}" \
+    cmake -S "$repo_root" -B "$build_dir" -G Ninja \
+      -DMACOS=ON \
+      -DVCPKG_TARGET_TRIPLET="${VCPKG_TARGET_TRIPLET:-arm64-osx-static}" \
+      -DCMAKE_BUILD_TYPE="${configuration}" \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+      -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" \
+      -DYOGHOURT_SURFACE_RELAY_DIR="$relay_dir" \
+      -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
   run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 "${targets[@]}"
   run_logged "$configuration-ctest" ctest --test-dir "$build_dir" -L plugin --output-on-failure
