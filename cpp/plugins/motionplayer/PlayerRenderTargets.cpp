@@ -776,600 +776,6 @@ namespace motion {
         return true;
     }
 
-    bool Player::renderAccurateSlaLike_0x6C9CA8(
-        SeparateLayerAdaptor *sla, iTJSDispatch2 *slaObject,
-        iTJSDispatch2 *targetLayerObject, tjs_int canvasWidth,
-        tjs_int canvasHeight) {
-        if(!sla || !slaObject || !targetLayerObject || canvasWidth <= 0 ||
-           canvasHeight <= 0 || !_runtime || !_runtime->activeMotion ||
-           !_runtime->sourceCacheNative) {
-            return false;
-        }
-
-        const auto motionPath = _runtime->activeMotion->path;
-
-        const auto renderStart = std::chrono::steady_clock::now();
-        if(commandGraphEnabled()) {
-            buildRenderCommandGraph(canvasWidth, canvasHeight);
-        } else {
-            buildRenderCommands(canvasWidth, canvasHeight);
-        }
-
-        iTJSDispatch2 *layerTreeOwner = resolveMainWindowOwnerObject();
-        if(!layerTreeOwner) {
-            layerTreeOwner = targetLayerObject;
-        }
-
-        struct AccurateSlaStateScope {
-            SeparateLayerAdaptor *sla = nullptr;
-            explicit AccurateSlaStateScope(SeparateLayerAdaptor *value) :
-                sla(value) {
-                if(sla) {
-                    sla->beginAccurateRenderPassLike_0x6C9CA8();
-                }
-            }
-            ~AccurateSlaStateScope() {
-                if(sla) {
-                    sla->endAccurateRenderPassLike_0x6C9CA8();
-                }
-            }
-        } stateScope(sla);
-
-        struct AccurateSlaItemLayer {
-            iTJSDispatch2 *object = nullptr;
-            bool createdOrChanged = true;
-        };
-
-        auto ensureAccurateSlaItemLayer =
-            [&](PreparedRenderItem &item,
-                tTVPLayerType layerType,
-                const RenderClipRect &clip) -> AccurateSlaItemLayer {
-            const tjs_int stateLayerId = item.layerId;
-            if(stateLayerId == 0) {
-                return { ensureReusableLayerObject(
-                             item.leafLayer, layerTreeOwner, targetLayerObject,
-                             layerType, false),
-                         true };
-            }
-
-            NativeSLAPayloadLike_0x6DCD0C payload;
-            payload.type = static_cast<tjs_int>(layerType);
-            payload.visible = true;
-            payload.key = detail::widen(item.sourceKey);
-            payload.flags = item.blendMode;
-            const auto clipWidth = clip.right - clip.left;
-            const auto clipHeight = clip.bottom - clip.top;
-            payload.affine = {
-                static_cast<float>(clipWidth),
-                static_cast<float>(clipHeight),
-                static_cast<float>(item.meshType),
-                static_cast<float>(item.meshDivX),
-                static_cast<float>(item.meshDivY), 0.0f, 0.0f, 0.0f
-            };
-            payload.origin = { static_cast<float>(clipWidth),
-                               static_cast<float>(clipHeight) };
-            const float offsetX = -0.5f - static_cast<float>(clip.left);
-            const float offsetY = -0.5f - static_cast<float>(clip.top);
-            const bool meshAsAffine = item.meshType == 1 &&
-                item.meshDivX <= 2 && item.meshDivY <= 2;
-            if(item.meshType == 0 || meshAsAffine) {
-                payload.vertices = {
-                    item.corners[0] + offsetX,
-                    item.corners[1] + offsetY,
-                    item.corners[2] + offsetX,
-                    item.corners[3] + offsetY,
-                    item.corners[6] + offsetX,
-                    item.corners[7] + offsetY,
-                };
-            } else {
-                payload.vertices.reserve(item.meshPoints.size());
-                for(std::size_t pointIndex = 0;
-                    pointIndex + 1 < item.meshPoints.size();
-                    pointIndex += 2) {
-                    payload.vertices.push_back(
-                        item.meshPoints[pointIndex] + offsetX);
-                    payload.vertices.push_back(
-                        item.meshPoints[pointIndex + 1] + offsetY);
-                }
-            }
-            for(std::size_t colorIndex = 0;
-                colorIndex < item.packedColors.size(); ++colorIndex) {
-                const auto color = item.packedColors[colorIndex];
-                payload.color[colorIndex * 2] =
-                    static_cast<float>(color & 0xffffu);
-                payload.color[colorIndex * 2 + 1] =
-                    static_cast<float>((color >> 16u) & 0xffffu);
-            }
-            bool createdOrChanged = false;
-            // layerId is allocated per node from this player tree's shared
-            // ResourceManager. Nested motion/particle child players inherit
-            // the parent's RM, so layerIds are unique and stable across the
-            // whole merged prepared list. nodeIndex is NOT: merged child
-            // items carry indices into the child player's node deque, which
-            // collide with parent node indices. Two different parts that
-            // shared a nodeIndex therefore evicted each other's SLA layer
-            // node every frame — the wrong raster stayed composited and the
-            // part order jumped during animations (layer mix-ups).
-            // stateLayerId == 0 was already routed to the reusable layer
-            // above, so the ordinal is always a nonzero RM-allocated id.
-            const auto cacheOrdinal = static_cast<tjs_uint32>(stateLayerId);
-            tTJSVariant layerVariant = sla->resolveRenderLayerNodeLike_0x6C6B48(
-                cacheOrdinal, payload, slaObject, createdOrChanged);
-
-            auto *layerObject = tryResolveLayerDispatch(layerVariant);
-            if(!layerObject) {
-                return {};
-            }
-
-            item.rawFlag20 = true;
-            persistNativeRenderItemFieldLifetimeLike_0x6C4E28(item);
-            item.leafLayer = layerVariant;
-            return { layerObject, createdOrChanged };
-        };
-
-        int renderedItems = 0;
-        int changedItems = 0;
-        int skippedGate = 0;
-        int skippedClip = 0;
-        int skippedLayer = 0;
-        int skippedSource = 0;
-        int skippedSize = 0;
-        int skippedCopy = 0;
-
-        // Phase-3 SLA mask materialization: authored stencil-mask inputs
-        // (face_eye_mask_l/r and friends) carry opacity=0, so the main gate
-        // below skips them and their leaf layer never receives a raster —
-        // which made every downstream mask application consume an empty
-        // image. Materialize each referenced mask item here with the same
-        // clip/raster flow as ordinary parts, but keep its layer invisible
-        // (SetVisible(false)) so it never appears as a colour part. The
-        // alpha burn in the main loop reads these rasters.
-        for(auto &maskEntry : _runtime->preparedRenderItems) {
-            if(!maskEntry.stencilMaskReferenced || maskEntry.sourceKey.empty()) {
-                continue;
-            }
-            if(maskEntry.opacity != 0 && !maskEntry.skipFlag0 &&
-               !maskEntry.rawFlag16) {
-                // Visible parts with mask references go through the main
-                // loop and get their raster there.
-                continue;
-            }
-            RenderClipRect maskClip;
-            if(!computeAccurateSlaClipLike_0x6C9CA8(
-                   maskEntry, static_cast<int>(canvasWidth),
-                   static_cast<int>(canvasHeight), maskClip)) {
-                continue;
-            }
-            auto maskItemResult = ensureAccurateSlaItemLayer(
-                maskEntry, ltAlpha, maskClip);
-            auto *maskLayerObject = maskItemResult.object;
-            auto *maskItemLayer = resolveNativeLayer(maskLayerObject);
-            if(!maskLayerObject || !maskItemLayer) {
-                continue;
-            }
-            tTJSVariant sourceObject =
-                _runtime->sourceCacheNative->loadRenderSourceByName(
-                    detail::widen(maskEntry.sourceKey), maskEntry.srcRef,
-                    maskEntry.blendMode, maskEntry.packedColors,
-                    layerTreeOwner, targetLayerObject,
-                    maskEntry.sourceMotion);
-            auto *sourceLayerObject =
-                sourceObject.Type() == tvtObject
-                    ? sourceObject.AsObjectNoAddRef()
-                    : nullptr;
-            auto *sourceLayer = resolveNativeLayer(sourceLayerObject);
-            auto *sourceImage =
-                sourceLayer ? sourceLayer->GetMainImage() : nullptr;
-            if(!sourceImage || sourceImage->GetWidth() <= 0 ||
-               sourceImage->GetHeight() <= 0 ||
-               !setLayerSizeLike_0x6CE19C(maskLayerObject,
-                                          maskClip.right - maskClip.left,
-                                          maskClip.bottom - maskClip.top)) {
-                continue;
-            }
-            const tTVPRect maskSourceRect(
-                0, 0, static_cast<tjs_int>(sourceImage->GetWidth()),
-                static_cast<tjs_int>(sourceImage->GetHeight()));
-            const float maskOffsetX =
-                -0.5f - static_cast<float>(maskClip.left);
-            const float maskOffsetY =
-                -0.5f - static_cast<float>(maskClip.top);
-            const bool maskMeshAsAffine = maskEntry.meshType == 1 &&
-                maskEntry.meshDivX <= 2 && maskEntry.meshDivY <= 2;
-            bool maskCopied = false;
-            if(maskEntry.meshType == 0 || maskMeshAsAffine) {
-                const auto localPts = buildAffineTrianglePoints(
-                    maskEntry.corners, maskOffsetX, maskOffsetY);
-                maskItemLayer->AffineCopy(localPts.data(), sourceImage,
-                                          maskSourceRect, stFastLinear, true);
-                maskCopied = true;
-            } else if((maskEntry.meshType == 1 ||
-                       maskEntry.meshType == 2) &&
-                      maskEntry.meshDivX >= 2 && maskEntry.meshDivY >= 2 &&
-                      !maskEntry.meshPoints.empty()) {
-                auto localMeshPoints = buildMeshPoints(
-                    maskEntry.meshPoints, maskOffsetX, maskOffsetY);
-                maskItemLayer->MeshCopy(localMeshPoints.data(),
-                                        maskEntry.meshDivX,
-                                        maskEntry.meshDivY, sourceImage,
-                                        maskSourceRect, stFastLinear, true);
-                maskCopied = true;
-            }
-            if(maskCopied) {
-                maskItemLayer->SetVisible(false);
-                ++changedItems;
-            }
-        }
-
-        for(auto *itemPtr : _runtime->preparedRenderItemsTopLevel) {
-            if(!itemPtr) {
-                continue;
-            }
-            if(!shouldRenderAccurateSlaItemLike_0x6C9CA8(*itemPtr)) {
-                ++skippedGate;
-                continue;
-            }
-            auto &item = *itemPtr;
-
-            RenderClipRect clip;
-            if(!computeAccurateSlaClipLike_0x6C9CA8(
-                   item, static_cast<int>(canvasWidth),
-                   static_cast<int>(canvasHeight), clip)) {
-                ++skippedClip;
-                if(skippedClip <= 6 && _runtime && !_runtime->slaFirstRenderLogged) {
-                    if(auto logger = spdlog::get("plugin")) {
-                        logger->warn(
-                            "sla.accurate.clip.skip path={} item={} "
-                            "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] "
-                            "viewport={} corners={} source={}",
-                            motionPath, item.nodeIndex, item.paintBox[0],
-                            item.paintBox[1], item.paintBox[2], item.paintBox[3],
-                            item.hasViewport ? 1 : 0, item.corners.size(),
-                            item.sourceKey);
-                    }
-                }
-                continue;
-            }
-
-            const int clipWidth = clip.right - clip.left;
-            const int clipHeight = clip.bottom - clip.top;
-            const auto layerType =
-                accurateSlaLayerTypeLike_0x6C9CA8(item.blendMode);
-            const auto itemLayerResult =
-                ensureAccurateSlaItemLayer(item, layerType, clip);
-            auto *itemLayerObject = itemLayerResult.object;
-            auto *itemLayer = resolveNativeLayer(itemLayerObject);
-            if(!itemLayerObject || !itemLayer) {
-                ++skippedLayer;
-                continue;
-            }
-
-            const auto rejectRaster = [&]() {
-                itemLayer->SetVisible(false);
-                itemLayer->SetHasImage(false);
-            };
-
-            // A prior payload may have failed after reusing an existing
-            // Layer. Without an image, force another load attempt instead of
-            // treating the equal payload as a valid cached raster and making
-            // a stale part visible again.
-            const bool needsRaster = itemLayerResult.createdOrChanged ||
-                !itemLayer->GetHasImage() || !itemLayer->GetMainImage();
-
-            if(needsRaster) {
-                ++changedItems;
-                tTJSVariant sourceObject =
-                    _runtime->sourceCacheNative->loadRenderSourceByName(
-                        detail::widen(item.sourceKey), item.srcRef,
-                        item.blendMode, item.packedColors, layerTreeOwner,
-                        targetLayerObject, item.sourceMotion);
-                if(sourceObject.Type() != tvtObject ||
-                   !sourceObject.AsObjectNoAddRef()) {
-                    ++skippedSource;
-                    rejectRaster();
-                    continue;
-                }
-                auto *sourceLayerObject = sourceObject.AsObjectNoAddRef();
-                auto *sourceLayer = resolveNativeLayer(sourceLayerObject);
-                auto *sourceImage =
-                    sourceLayer ? sourceLayer->GetMainImage() : nullptr;
-                if(!sourceImage || sourceImage->GetWidth() <= 0 ||
-                   sourceImage->GetHeight() <= 0 ||
-                   !setLayerSizeLike_0x6CE19C(itemLayerObject, clipWidth,
-                                              clipHeight)) {
-                    ++skippedSize;
-                    rejectRaster();
-                    continue;
-                }
-
-                const tTVPRect sourceRect(
-                    0, 0, static_cast<tjs_int>(sourceImage->GetWidth()),
-                    static_cast<tjs_int>(sourceImage->GetHeight()));
-                const float offsetX = -0.5f - static_cast<float>(clip.left);
-                const float offsetY = -0.5f - static_cast<float>(clip.top);
-                bool copied = false;
-                const bool meshAsAffine = item.meshType == 1 &&
-                    item.meshDivX <= 2 && item.meshDivY <= 2;
-                if(item.meshType == 0 || meshAsAffine) {
-                    const auto localPts = buildAffineTrianglePoints(
-                        item.corners, offsetX, offsetY);
-                    itemLayer->AffineCopy(localPts.data(), sourceImage,
-                                          sourceRect, stFastLinear, true);
-                    copied = true;
-                } else if((item.meshType == 1 || item.meshType == 2) &&
-                          item.meshDivX >= 2 && item.meshDivY >= 2 &&
-                          !item.meshPoints.empty()) {
-                    auto localMeshPoints =
-                        buildMeshPoints(item.meshPoints, offsetX, offsetY);
-                    itemLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
-                                        item.meshDivY, sourceImage, sourceRect,
-                                        stFastLinear, true);
-                    copied = true;
-                }
-                if(!copied) {
-                    ++skippedCopy;
-                    rejectRaster();
-                    continue;
-                }
-            }
-
-            itemLayer->SetPosition(clip.left, clip.top);
-            itemLayer->SetType(layerType);
-            itemLayer->SetVisible(true);
-            itemLayer->SetOpacity(std::clamp(item.opacity, 0, 255));
-            ++renderedItems;
-
-            // Scoped stencil-mask application (phase-3 port): the accurate
-            // path renders each part as a standalone Layer tree member and
-            // historically applied no authored mask at all — the missing
-            // eyewhite/eyelid shape. When this item belongs to a stencil
-            // group's colour children (parentItem->stencilComposite&4) or
-            // is itself an authored mask input, burn the group's mask
-            // layers into this item's raster with the same alpha semantics
-            // the command-graph executor uses (threshold 64, mask mode
-            // from _maskMode).
-            if(item.parentItem != nullptr &&
-               !item.parentItem->stencilMaskItems.empty()) {
-                auto *groupItem = item.parentItem;
-                std::vector<MotionCompositeMaskSurface> maskSurfaces;
-                maskSurfaces.reserve(groupItem->stencilMaskItems.size());
-                for(auto *maskPtr : groupItem->stencilMaskItems) {
-                    if(!maskPtr || maskPtr == &item || !maskPtr->rawFlag21) {
-                        continue;
-                    }
-                    auto *maskLayerObject =
-                        maskPtr->composedLayer.Type() == tvtObject
-                            ? maskPtr->composedLayer.AsObjectNoAddRef()
-                            : (maskPtr->leafLayer.Type() == tvtObject
-                                   ? maskPtr->leafLayer.AsObjectNoAddRef()
-                                   : nullptr);
-                    auto *maskLayer = resolveNativeLayer(maskLayerObject);
-                    if(!maskLayerObject || !maskLayer ||
-                       !maskLayer->GetMainImage()) {
-                        continue;
-                    }
-                    const int maskWidth =
-                        maskPtr->clipRect[2] - maskPtr->clipRect[0];
-                    const int maskHeight =
-                        maskPtr->clipRect[3] - maskPtr->clipRect[1];
-                    if(maskWidth <= 0 || maskHeight <= 0) {
-                        continue;
-                    }
-                    maskSurfaces.push_back(
-                        { maskLayerObject, maskPtr->clipRect[0],
-                          maskPtr->clipRect[1], maskWidth, maskHeight,
-                          maskPtr->stencilComposite, maskPtr->nodeIndex });
-                }
-                const int compositeMaskOperation =
-                    groupItem->stencilComposite & 3;
-                if((groupItem->stencilComposite & 4) != 0 &&
-                   (compositeMaskOperation == 1 ||
-                    compositeMaskOperation == 2)) {
-                    applyMotionCompositeMasksLike_0x6AF104(
-                        itemLayerObject, clip.left, clip.top, clipWidth,
-                        clipHeight, maskSurfaces, 64, _maskMode,
-                        groupItem->stencilComposite, motionPath,
-                        _clampedEvalTime, item.nodeIndex);
-                } else {
-                    for(const auto &surface : maskSurfaces) {
-                        applyMotionAlphaMaskLike_0x6AF104(
-                            itemLayerObject, surface.worldLeft - clip.left,
-                            surface.worldTop - clip.top, surface.layerObject, 0,
-                            0, surface.width, surface.height, 64, _maskMode,
-                            surface.itemFlags & 3, motionPath, _clampedEvalTime,
-                            item.nodeIndex, surface.nodeIndex);
-                    }
-                }
-            } else if(item.stencilMaskReferenced && item.parentItem == nullptr) {
-                // Authored mask input with a scope-split group (body
-                // stencil groups 6/16/24): the group clips its colour
-                // children to this item's alpha. Nothing to apply here —
-                // the group's children consume it — but the item must NOT
-                // render as a visible colour layer. park it invisible; its
-                // alpha lives on in the group mask composition below.
-                itemLayer->SetVisible(false);
-                itemLayer->SetHasImage(false);
-                --renderedItems;
-            }
-
-#if defined(KRKR2_WASMTIME_HEADLESS)
-            detail::motionTraceRecordPostDrawLayerCandidate(
-                this, itemLayerObject,
-                "Player::renderAccurateSla_0x6C9CA8.item.afterCopy");
-#endif
-            detail::logoChainTraceLogf(
-                motionPath, "sla.accurate.item", "0x6C9CA8", _clampedEvalTime,
-                "nodeIndex={} layerId={} clip=[{},{},{},{}] meshType={} "
-                "type={} opacity={} source={}",
-                item.nodeIndex, item.layerId, clip.left, clip.top, clip.right,
-                clip.bottom, item.meshType, static_cast<int>(layerType),
-                item.opacity, item.sourceKey);
-        }
-
-        detail::logoChainTraceLogf(
-            motionPath, "sla.accurate.rendered", "0x6C9CA8", _clampedEvalTime,
-            "targetLayer={} canvas={}x{} renderedItems={}",
-            static_cast<const void *>(targetLayerObject), canvasWidth,
-            canvasHeight, renderedItems);
-        // Rate-limited performance signal for real-game sampling. Only the
-        // slowest frames produce output, so a healthy scene stays quiet while
-        // a frozen entry or an animated dialogue scene reports its cost with
-        // enough breakdown to attribute it (raster vs geometry vs layers).
-        const double frameMs =
-            std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - renderStart)
-                .count();
-
-        // KRKR_EMOTE_ITEM_DUMP=1 → per-item dump on first render;
-        // =2 → throttled per-item dump every 250ms (interpolation studies).
-        static const int itemDumpMode = [] {
-            const char *env = std::getenv("KRKR_EMOTE_ITEM_DUMP");
-            if(!env || env[0] == '\0' || env[0] == '0') {
-                return 0;
-            }
-            return env[0] == '2' ? 2 : 1;
-        }();
-
-        const bool firstRender =
-            _runtime && !_runtime->slaFirstRenderLogged;
-        if(firstRender) {
-            _runtime->slaFirstRenderLogged = true;
-        }
-        bool dumpItemsNow = false;
-        if(itemDumpMode == 2 && _runtime) {
-            static auto lastDump =
-                std::chrono::steady_clock::time_point();
-            const auto now = std::chrono::steady_clock::now();
-            if(std::chrono::duration_cast<std::chrono::milliseconds>(
-                   now - lastDump)
-                   .count() >= 250) {
-                lastDump = now;
-                dumpItemsNow = true;
-            }
-        }
-        if(firstRender || dumpItemsNow) {
-            auto pluginLogger = spdlog::get("plugin");
-            if(pluginLogger) {
-                if(firstRender) {
-                    pluginLogger->info(
-                        "sla.accurate.first path={} frameMs={:.1f} "
-                        "items={} rendered={} changed={} canvas={}x{} "
-                        "skip=[gate={},clip={},layer={},source={},size={},"
-                        "copy={}]",
-                        motionPath, frameMs,
-                        _runtime->preparedRenderItemsTopLevel.size(),
-                        renderedItems, changedItems, canvasWidth, canvasHeight,
-                        skippedGate, skippedClip, skippedLayer, skippedSource,
-                        skippedSize, skippedCopy);
-                }
-                // One-shot/throttled per-item dump for part-visibility and
-                // interpolation diagnosis. logoChainTraceLogf is path-gated
-                // to logo files, so real character scenes had no way to show
-                // which prepared items were gate-skipped versus rendered.
-                // Iterates the same list as the draw loop above so the counts
-                // reconcile with items=/rendered=/skip=[gate=...] in
-                // sla.accurate.first.
-                for(const auto *itemPtr :
-                    _runtime->preparedRenderItemsTopLevel) {
-                    if(!itemPtr) {
-                        continue;
-                    }
-                    const auto &item = *itemPtr;
-                    std::string label;
-                    if(item.nodeIndex >= 0 &&
-                       static_cast<size_t>(item.nodeIndex) <
-                           _runtime->nodes.size()) {
-                        label = _runtime->nodes[static_cast<size_t>(
-                                                    item.nodeIndex)]
-                                    .layerName;
-                    }
-                    double bodyUd = 0.0;
-                    if(const auto it = _variableValues.find("body_UD");
-                       it != _variableValues.end()) {
-                        bodyUd = it->second;
-                    }
-                    int maskCount = static_cast<int>(item.stencilMaskItems.size());
-                    bool isMaskRef = item.stencilMaskReferenced;
-                    pluginLogger->info(
-                        "sla.accurate.item.dump body_UD={:.2f} node={} "
-                        "label='{}' layerId={} source='{}' opacity={} "
-                        "skip0={} flag16={} maskMode={} player={} "
-                        "parent={} visAnc={} maskN={} maskRef={} "
-                        "paintBox=[{:.1f},{:.1f},"
-                        "{:.1f},{:.1f}]",
-                        bodyUd, item.nodeIndex,
-                        label.empty() ? "<none>" : label, item.layerId,
-                        item.sourceKey, item.opacity,
-                        item.skipFlag0 ? 1 : 0, item.rawFlag16 ? 1 : 0,
-                        _maskMode, static_cast<const void *>(this),
-                        item.parentItem != nullptr ? 1 : 0,
-                        item.visibleAncestorIndex,
-                        maskCount, isMaskRef ? 1 : 0,
-                        item.paintBox[0], item.paintBox[1],
-                        item.paintBox[2], item.paintBox[3]);
-                }
-            }
-        }
-        if(frameMs > 100.0) {
-            static auto lastSlowLog = std::chrono::steady_clock::now();
-            const auto now = std::chrono::steady_clock::now();
-            if(now - lastSlowLog > std::chrono::seconds(2)) {
-                lastSlowLog = now;
-                if(auto logger = spdlog::get("plugin")) {
-                    logger->warn(
-                        "sla.accurate.slow path={} frameMs={:.1f} "
-                        "items={} rendered={} changed={} canvas={}x{}",
-                        motionPath, frameMs,
-                        _runtime->preparedRenderItemsTopLevel.size(),
-                        renderedItems, changedItems, canvasWidth, canvasHeight);
-                }
-            }
-        }
-
-        // Rolling aggregate so animated scenes report average/max cost
-        // instead of isolated spikes.
-        if(_runtime) {
-            const double nowSeconds = std::chrono::duration<double>(
-                                         std::chrono::steady_clock::now()
-                                             .time_since_epoch())
-                                         .count();
-            if(_runtime->slaStatsWindowStart == 0.0) {
-                _runtime->slaStatsWindowStart = nowSeconds;
-            }
-            ++_runtime->slaStatsFrames;
-            _runtime->slaStatsMsSum += frameMs;
-            _runtime->slaStatsMsMax = std::max(_runtime->slaStatsMsMax, frameMs);
-            _runtime->slaStatsRendered += renderedItems;
-            _runtime->slaStatsChanged += changedItems;
-            if(nowSeconds - _runtime->slaStatsWindowStart >= 3.0) {
-                const double windowMs =
-                    (nowSeconds - _runtime->slaStatsWindowStart) * 1000.0;
-                const int frames = _runtime->slaStatsFrames;
-                if(frames > 0) {
-                    if(auto logger = spdlog::get("plugin")) {
-                        logger->info(
-                            "sla.accurate.stats path={} windowMs={:.0f} "
-                            "frames={} avgMs={:.1f} maxMs={:.1f} "
-                            "avgRendered={:.1f} avgChanged={:.1f} canvas={}x{}",
-                            motionPath, windowMs, frames,
-                            _runtime->slaStatsMsSum / frames,
-                            _runtime->slaStatsMsMax,
-                            _runtime->slaStatsRendered / frames,
-                            _runtime->slaStatsChanged / frames, canvasWidth,
-                            canvasHeight);
-                    }
-                }
-                _runtime->slaStatsWindowStart = nowSeconds;
-                _runtime->slaStatsFrames = 0;
-                _runtime->slaStatsMsSum = 0.0;
-                _runtime->slaStatsMsMax = 0.0;
-                _runtime->slaStatsRendered = 0.0;
-                _runtime->slaStatsChanged = 0.0;
-            }
-        }
-        return true;
-    }
-
     bool Player::renderToD3DAdaptor(D3DAdaptor *adaptor) {
         if(!adaptor || adaptor->getWidth() <= 0 || adaptor->getHeight() <= 0) {
             return false;
@@ -1788,22 +1194,15 @@ namespace motion {
             detail::shouldUseContinuousEmoteMask(emoteLike, _maskMode);
         iTJSDispatch2 *targetLayerObject =
             tryResolveLayerDispatch(sla->getTargetLayer());
-        const bool accurateSla = isAccurateSlaRenderEnabled() ||
-            (continuousMask && targetLayerObject != nullptr);
-        iTJSDispatch2 *renderTarget = nullptr;
-        if(accurateSla) {
-            if(targetLayerObject) {
-                queryLayerCanvasSize(targetLayerObject, canvasWidth,
-                                     canvasHeight);
-                renderTarget = targetLayerObject;
-            }
-        } else {
-            renderTarget = resolveSeparateLayerRenderTarget(sla, canvasWidth,
-                                                            canvasHeight);
-            if(!targetLayerObject) {
-                targetLayerObject =
-                    tryResolveLayerDispatch(sla->getTargetLayer());
-            }
+        const bool accurateSla = isAccurateSlaRenderEnabled() || emoteLike;
+        // Both SLA modes need the private Motion GLL target. Accurate mode
+        // used to bypass this because its deleted legacy path painted part
+        // Layers directly under targetLayerObject; the REF executor instead
+        // always renders into SLA+40 and only publishes it afterwards.
+        iTJSDispatch2 *renderTarget =
+            resolveSeparateLayerRenderTarget(sla, canvasWidth, canvasHeight);
+        if(!targetLayerObject) {
+            targetLayerObject = tryResolveLayerDispatch(sla->getTargetLayer());
         }
         if(!renderTarget) {
             detail::logoChainTraceSummary(
@@ -1919,92 +1318,53 @@ namespace motion {
             // entirely, so every render-chain fix landed on a path the
             // commercial game never draws through.
             //
-            // The executor path is currently NOT viable as a default: it
-            // costs 300-700ms per frame in a Debug software raster on a
-            // 1280x720 canvas (per-frame full rebuild, no output cache —
-            // that is phase-4 territory), which overheats and stalls the
-            // game. The legacy per-part path stays the default; the
-            // executor path enables per run through KRKR_EMOTE_SLA_GRAPH=1
-            // so a reproduction can A/B the render-chain behavior.
-            static const bool legacySlaPath = [] {
-                const char *env = std::getenv("KRKR_EMOTE_SLA_GRAPH");
-                if(env && env[0] != '\0' && env[0] != '0') {
-                    return false;
-                }
-                return true;
-            }();
-            bool legacySlaPathTaken = false;
-            bool graphSlaPathTaken = false;
-            bool drawn = false;
-            iTJSDispatch2 *accurateUpdateTarget = targetLayerObject;
-            if(legacySlaPath) {
-                drawn = renderAccurateSlaLike_0x6C9CA8(
-                    sla, slaObject, targetLayerObject, canvasWidth,
-                    canvasHeight);
-            } else {
-                // 0x6C9CA8 equivalent: build the render commands and draw
-                // into the SLA private target (an alpha layer) — never the
-                // user-facing targetLayerObject, which may be a ltBinder
-                // without a main image (Not drawable layer type). The
-                // non-accurate branch renders through the same renderTarget
-                // via renderMotionFrameToTarget, whose first step is the
-                // transparent clear (REF 11283): without it every frame
-                // paints over the previous frame's pixels — the full-body
-                // ghosting/retention seen in reproduction.
-                iTJSDispatch2 *slaRenderTarget =
-                    resolveSeparateLayerRenderTarget(sla, canvasWidth,
-                                                     canvasHeight);
-                if(!slaRenderTarget) {
-                    // No private render target: there is nothing safe to
-                    // clear-and-draw into (falling back to targetLayerObject
-                    // would wipe the user-facing ltBinder layer). The legacy
-                    // per-part path owns this shape. Discard any partially
-                    // created private target/list state before rebuilding the
-                    // legacy per-part layer tree.
-                    sla->clear();
-                    drawn = renderAccurateSlaLike_0x6C9CA8(
-                        sla, slaObject, targetLayerObject, canvasWidth,
-                        canvasHeight);
-                    legacySlaPathTaken = true;
-                } else {
-                    if(!prepareLayerForRender(slaRenderTarget, canvasWidth,
-                                              canvasHeight, 0x00000000)) {
-                        detail::logoChainTraceSummary(
-                            motionPath, "renderToSeparateLayerAdaptor",
-                            _clampedEvalTime, "fail=slaGraphClear");
-                        return false;
-                    }
-                    if(commandGraphEnabled()) {
-                        buildRenderCommandGraph(canvasWidth, canvasHeight);
-                    } else {
-                        buildRenderCommands(canvasWidth, canvasHeight);
-                    }
-                    drawn = executeLayerRenderCommands(slaRenderTarget, true);
-                    accurateUpdateTarget = slaRenderTarget;
-                    graphSlaPathTaken = drawn;
-                }
-            }
-            if(!drawn) {
+            // 0x6C9CA8 equivalent (REF 13433-13440): accurate mode draws
+            // through the command-graph executor into the SLA private
+            // target (an alpha layer) — never the user-facing
+            // targetLayerObject, which may be a ltBinder without a main
+            // image. The first step is the transparent clear (REF 11283):
+            // without it every frame paints over the previous frame's
+            // pixels — full-body ghosting. The REF after-draw step is just
+            // a target Update.
+            iTJSDispatch2 *slaRenderTarget = renderTarget;
+            if(!slaRenderTarget) {
                 detail::logoChainTraceSummary(
                     motionPath, "renderToSeparateLayerAdaptor",
-                    _clampedEvalTime, "fail=renderAccurateSlaLike_0x6C9CA8");
+                    _clampedEvalTime, "fail=slaPrivateTarget");
                 return false;
             }
-            detail::logoChainTraceLogf(
-                motionPath, "sla.accurate.begin", "0x6C9CA8", _clampedEvalTime,
-                "target={} canvas={}x{} path={}",
-                static_cast<const void *>(targetLayerObject), canvasWidth,
-                canvasHeight,
-                (legacySlaPath || legacySlaPathTaken) ? "legacy-per-part"
-                                                      : "command-graph");
-            if(graphSlaPathTaken) {
-                auto *renderLayer = resolveNativeLayer(accurateUpdateTarget);
+            auto *privateLayer =
+                resolvePrivateMotionGLLNativeLike_0x6DE24C(slaRenderTarget);
+            if(!privateLayer || canvasWidth <= 0 || canvasHeight <= 0) {
+                detail::logoChainTraceSummary(
+                    motionPath, "renderToSeparateLayerAdaptor",
+                    _clampedEvalTime, "fail=slaGraphClear");
+                return false;
+            }
+            privateLayer->SetHasImage(true);
+            privateLayer->SetImageSize(static_cast<tjs_uint>(canvasWidth),
+                                       static_cast<tjs_uint>(canvasHeight));
+            privateLayer->SetSize(canvasWidth, canvasHeight);
+            privateLayer->SetClip(0, 0, canvasWidth, canvasHeight);
+            privateLayer->FillRect(tTVPRect(0, 0, canvasWidth, canvasHeight),
+                                   0x00000000);
+            if(commandGraphEnabled()) {
+                buildRenderCommandGraph(canvasWidth, canvasHeight);
+            } else {
+                buildRenderCommands(canvasWidth, canvasHeight);
+            }
+            if(!executeLayerRenderCommands(slaRenderTarget, true)) {
+                detail::logoChainTraceSummary(
+                    motionPath, "renderToSeparateLayerAdaptor",
+                    _clampedEvalTime, "fail=executeLayerRenderCommands");
+                return false;
+            }
+            {
+                auto *renderLayer = resolveNativeLayer(slaRenderTarget);
                 if(!renderLayer) {
                     return false;
                 }
                 renderLayer->Update(false);
-            } else {
-                updateAccurateSLAAfterDraw(accurateUpdateTarget);
             }
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.end", "0x6CE938", _clampedEvalTime,

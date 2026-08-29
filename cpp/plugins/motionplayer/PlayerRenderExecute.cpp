@@ -972,7 +972,7 @@ namespace motion {
     }
 
     bool Player::executeLayerRenderCommands(iTJSDispatch2 *renderLayerObject,
-                                            bool skipUpdate) {
+                                             bool skipUpdate) {
         if(!renderLayerObject || !_runtime || !_runtime->activeMotion) {
             return false;
         }
@@ -1759,6 +1759,31 @@ namespace motion {
                 continue;
             }
             auto &item = *itemPtr;
+            {
+                static const bool geoDiag = [] {
+                    const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
+                    return env && env[0] != '\0' && env[0] != '0';
+                }();
+                if(geoDiag && item.corners.size() >= 8) {
+                    float sx = 0, sy = 0;
+                    for(size_t ci = 0; ci + 1 < item.corners.size(); ci += 2) {
+                        sx += item.corners[ci];
+                        sy += item.corners[ci + 1];
+                    }
+                    if(auto logger = LOGGER) {
+                        logger->warn(
+                            "emote.geo node={} src='{}' cornersSum=({:.2f},"
+                            "{:.2f}) meshPts={} localMesh={} parent={} "
+                            "direct={} leaf={}",
+                            item.nodeIndex, item.sourceKey, sx, sy,
+                            item.meshPoints.size(),
+                            item.localMeshPoints.size(),
+                            item.parentItem != nullptr ? 1 : 0,
+                            item.executedDirect ? 1 : 0,
+                            item.leafBuilt ? 1 : 0);
+                    }
+                }
+            }
 
             const auto blendMode =
                 resolveBlendOperationModeLike_0x6C7440(item.blendMode);

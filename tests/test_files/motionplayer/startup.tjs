@@ -40,27 +40,6 @@ function canvasRasterSamples(source, x0, y0, x1, y1) {
     out.visible = true;
     return hash;
 }
-function visibleRasterLayerCount(parent) {
-    var count = 0;
-    for (var i = 0; i < parent.children.count; i++) {
-        var layer = parent.children[i];
-        // Native GLLayer objects expose no TJS layer properties; probe
-        // defensively before touching layer attributes.
-        if (typeof layer.classname != "String")
-            continue;
-        if (layer.classname == "__Private_Motion_GLLayer")
-            continue;
-        try {
-            if (layer.visible && layer.opacity > 0 &&
-                layer.imageWidth > 0 && layer.imageHeight > 0)
-                count++;
-        } catch(e) {
-            continue;
-        }
-    }
-    return count;
-}
-
 Plugins.link("motionplayer.dll");
 Plugins.link("emoteplayer.dll");
 
