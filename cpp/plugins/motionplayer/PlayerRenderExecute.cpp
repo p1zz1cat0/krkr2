@@ -1431,6 +1431,57 @@ namespace motion {
             return true;
         };
 
+        const bool commandOutputCacheEnabled = _runtime->isEmoteMode &&
+            !_runtime->renderCommands.empty() &&
+            [] {
+                const char *env = std::getenv("KRKR_EMOTE_DISABLE_OUTPUT_CACHE");
+                return !(env && env[0] != '\0' && env[0] != '0');
+            }();
+        const std::uint64_t commandCacheGeneration = commandOutputCacheEnabled
+            ? ++_runtime->emoteCommandOutputCacheGeneration
+            : 0;
+        auto renderItemOutputSignature =
+            [&](auto &&self, const PreparedRenderItem *item,
+                std::unordered_set<const PreparedRenderItem *> &visiting)
+            -> std::size_t {
+            if(!item) {
+                return 0;
+            }
+            if(!visiting.insert(item).second) {
+                return 0x9e3779b9u;
+            }
+            std::size_t seed = renderCommandLeafReuseSignatureForItem(*item);
+            renderReuseHashCombine(seed, std::hash<int>{}(item->opacity));
+            renderReuseHashCombine(seed,
+                                   std::hash<int>{}(item->stencilComposite));
+            renderReuseHashCombine(seed, std::hash<bool>{}(item->skipFlag0));
+            renderReuseHashCombine(seed, std::hash<bool>{}(item->rawFlag16));
+            renderReuseHashCombine(seed,
+                                   std::hash<bool>{}(item->groupOnly));
+            renderReuseHashCombine(seed,
+                                   std::hash<bool>{}(item->parentItem != nullptr));
+            if(item->parentItem) {
+                renderReuseHashCombine(
+                    seed, std::hash<const void *>{}(
+                              static_cast<const void *>(
+                                  item->parentItem->nativeLifetimeOwner)));
+                renderReuseHashCombine(
+                    seed, std::hash<int>{}(item->parentItem->nativeLifetimeKey));
+            }
+            renderReuseHashCombine(seed,
+                                   std::hash<std::size_t>{}(item->childItems.size()));
+            renderReuseHashCombine(
+                seed, std::hash<std::size_t>{}(item->stencilMaskItems.size()));
+            for(const auto *child : item->childItems) {
+                renderReuseHashCombine(seed, self(self, child, visiting));
+            }
+            for(const auto *mask : item->stencilMaskItems) {
+                renderReuseHashCombine(seed, self(self, mask, visiting));
+            }
+            visiting.erase(item);
+            return seed;
+        };
+
         auto buildItemOutput = [&](auto &&self,
                                    PreparedRenderItem *itemPtr) -> bool {
             if(!itemPtr) {
@@ -1440,30 +1491,18 @@ namespace motion {
             if(item.executedDirect || item.leafBuilt || item.composedBuilt) {
                 return true;
             }
-            // Command output cache (REF 10089-10203): a stable cache key per
-            // prepared-list slot retains layer objects across frames; the
-            // output signature decides pixel reuse. The executor consumes
-            // PreparedRenderItem slots, so the key carries the item pointer
-            // identity plus the scoped identity — stable while command order
-            // is stable through normal animation.
+            const bool hasChildren = !item.childItems.empty() ||
+                !item.stencilMaskItems.empty();
+            // Command output cache (REF 10089-10203): identify a render item
+            // by its owning runtime and local node index. Prepared-item
+            // addresses are not stable across vector rebuilds/reallocation.
             detail::PlayerRuntime::EmoteCommandOutputCacheEntry
                 *commandCacheEntry = nullptr;
             std::size_t itemLeafSignature = 0;
-            const bool commandOutputCacheEnabled =
-                _runtime->isEmoteMode && !_runtime->renderCommands.empty() &&
-                // TEMP A/B probe: is the frozen-frame symptom cache-driven?
-                [] {
-                    const char *env =
-                        std::getenv("KRKR_EMOTE_DISABLE_OUTPUT_CACHE");
-                    return !(env && env[0] != '\0' && env[0] != '0');
-                }();
-            std::uint64_t commandCacheGeneration = 0;
+            std::size_t itemOutputSignature = 0;
             if(commandOutputCacheEnabled) {
-                commandCacheGeneration =
-                    ++_runtime->emoteCommandOutputCacheGeneration;
                 const auto cacheKey = fmt::format(
-                    "command:{}:{}:{}",
-                    static_cast<const void *>(itemPtr),
+                    "command:{}:{}",
                     static_cast<const void *>(item.nativeLifetimeOwner),
                     item.nativeLifetimeKey);
                 auto [cacheIt, cacheInserted] =
@@ -1479,13 +1518,32 @@ namespace motion {
                 item.composedLayer = commandCacheEntry->composedLayer;
                 itemLeafSignature = renderCommandLeafReuseSignatureForItem(
                     item);
+                if(hasChildren) {
+                    std::unordered_set<const PreparedRenderItem *> visiting;
+                    itemOutputSignature =
+                        renderItemOutputSignature(renderItemOutputSignature,
+                                                  &item, visiting);
+                } else {
+                    itemOutputSignature = itemLeafSignature;
+                }
                 if(commandCacheEntry->outputValid &&
-                   commandCacheEntry->outputSignature ==
-                       commandCacheEntry->leafSignature) {
-                    // Degenerate single-signature mode (no graph edges on
-                    // the item channel): reuse only when both signatures
-                    // match — which for leaf-only items reduces to the
-                    // leaf signature stability.
+                   commandCacheEntry->outputSignature == itemOutputSignature) {
+                    iTJSDispatch2 *cachedOutput =
+                        commandCacheEntry->composedBuilt &&
+                                commandCacheEntry->composedLayer.Type() == tvtObject
+                            ? commandCacheEntry->composedLayer.AsObjectNoAddRef()
+                            : (commandCacheEntry->leafBuilt &&
+                                       commandCacheEntry->leafLayer.Type() == tvtObject
+                                   ? commandCacheEntry->leafLayer.AsObjectNoAddRef()
+                                   : nullptr);
+                    if(cachedOutput && resolveNativeLayer(cachedOutput)) {
+                        item.leafBuilt = commandCacheEntry->leafBuilt;
+                        item.composedBuilt = commandCacheEntry->composedBuilt;
+                        item.builtRect = item.clipRect;
+                        ++_runtime->emoteCommandOutputCacheHits;
+                        return true;
+                    }
+                    commandCacheEntry->outputValid = false;
                 }
                 if(commandCacheEntry->leafValid &&
                    commandCacheEntry->leafSignature == itemLeafSignature &&
@@ -1495,13 +1553,14 @@ namespace motion {
                     item.leafBuilt = true;
                     item.builtRect = item.clipRect;
                     ++_runtime->emoteCommandLeafCacheHits;
-                    return true;
+                    if(!hasChildren) {
+                        return true;
+                    }
+                } else {
+                    item.leafBuilt = false;
                 }
-                item.leafBuilt = false;
-                item.composedBuilt = false;
             }
-            const bool hasChildren = !item.childItems.empty() ||
-                !item.stencilMaskItems.empty();
+            item.composedBuilt = false;
             const bool useDirectRenderPath =
                 shouldUseDirectRenderPathLike_0x6C7440(item, _clearEnabled) &&
                 !hasChildren && item.parentItem == nullptr && !item.skipFlag0 &&
@@ -1742,7 +1801,7 @@ namespace motion {
                 commandCacheEntry->leafLayer = item.leafLayer;
                 commandCacheEntry->composedLayer = item.composedLayer;
                 commandCacheEntry->leafSignature = itemLeafSignature;
-                commandCacheEntry->outputSignature = itemLeafSignature;
+                commandCacheEntry->outputSignature = itemOutputSignature;
                 commandCacheEntry->leafBuilt = item.leafBuilt;
                 commandCacheEntry->composedBuilt = item.composedBuilt;
                 commandCacheEntry->leafValid = item.leafBuilt;
