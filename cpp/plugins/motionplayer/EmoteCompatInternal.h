@@ -148,6 +148,26 @@ namespace motion {
             }
         }
 
+        inline std::uint8_t unionMotionMaskAlpha(
+            std::uint8_t accumulatedAlpha, std::uint8_t sourceAlpha,
+            int maskMode, int threshold) {
+            if(maskMode == 0) {
+                return sourceAlpha >= threshold ? 255 : accumulatedAlpha;
+            }
+            const int accumulated = static_cast<int>(accumulatedAlpha);
+            const int source = static_cast<int>(sourceAlpha);
+            return static_cast<std::uint8_t>(
+                accumulated + (((255 - accumulated) * source) / 255));
+        }
+
+        inline std::uint8_t applyMotionCompositeMaskAlpha(
+            std::uint8_t destinationAlpha, std::uint8_t unionAlpha,
+            int compositeFlags, int maskMode, int threshold) {
+            return applyMotionMaskAlpha(destinationAlpha, unionAlpha,
+                                        compositeFlags & 3, maskMode,
+                                        threshold);
+        }
+
         inline std::string renderSourceCacheIdentity(
             const std::string &motionPath, const std::string &sourceKey) {
             return motionPath + '\n' + sourceKey;

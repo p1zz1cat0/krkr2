@@ -728,6 +728,92 @@ namespace motion::internal::render_detail {
         return true;
     }
 
+    bool applyMotionCompositeMasksLike_0x6AF104(
+        iTJSDispatch2 *dstLayerObject, int dstWorldLeft, int dstWorldTop,
+        int width, int height,
+        const std::vector<MotionCompositeMaskSurface> &surfaces, int threshold,
+        int playerStencilType, int compositeFlags,
+        const std::string &motionPath, double frameTime, int dstNodeIndex) {
+        auto *dstLayer = resolveNativeLayer(dstLayerObject);
+        if(!dstLayer || !dstLayer->GetHasImage() ||
+           !dstLayer->GetMainImage() || surfaces.empty() ||
+           ((compositeFlags & 3) != 1 && (compositeFlags & 3) != 2)) {
+            return false;
+        }
+
+        struct ResolvedSurface {
+            const tTVPBaseTexture *bitmap = nullptr;
+            int worldLeft = 0;
+            int worldTop = 0;
+            int width = 0;
+            int height = 0;
+        };
+        std::vector<ResolvedSurface> resolved;
+        resolved.reserve(surfaces.size());
+        for(const auto &surface : surfaces) {
+            auto *layer = resolveNativeLayer(surface.layerObject);
+            auto *bitmap = layer ? layer->GetMainImage() : nullptr;
+            if(!layer || !layer->GetHasImage() || !bitmap ||
+               surface.width <= 0 || surface.height <= 0) {
+                continue;
+            }
+            resolved.push_back({ bitmap, surface.worldLeft, surface.worldTop,
+                                 std::min(surface.width,
+                                          static_cast<int>(bitmap->GetWidth())),
+                                 std::min(surface.height,
+                                          static_cast<int>(bitmap->GetHeight())) });
+        }
+        if(resolved.empty()) {
+            return false;
+        }
+
+        auto *dstBitmap = dstLayer->GetMainImage();
+        width = std::min(width, static_cast<int>(dstBitmap->GetWidth()));
+        height = std::min(height, static_cast<int>(dstBitmap->GetHeight()));
+        if(width <= 0 || height <= 0) {
+            return false;
+        }
+
+        for(int y = 0; y < height; ++y) {
+            auto *dstRow = static_cast<std::uint8_t *>(
+                dstBitmap->GetScanLineForWrite(y));
+            const int worldY = dstWorldTop + y;
+            for(int x = 0; x < width; ++x) {
+                const int worldX = dstWorldLeft + x;
+                std::uint8_t unionAlpha = 0;
+                for(const auto &surface : resolved) {
+                    const int sourceX = worldX - surface.worldLeft;
+                    const int sourceY = worldY - surface.worldTop;
+                    if(sourceX < 0 || sourceY < 0 ||
+                       sourceX >= surface.width || sourceY >= surface.height) {
+                        continue;
+                    }
+                    const auto *sourceRow =
+                        static_cast<const std::uint8_t *>(
+                            surface.bitmap->GetScanLine(sourceY));
+                    unionAlpha = detail::unionMotionMaskAlpha(
+                        unionAlpha, sourceRow[sourceX * 4 + 3],
+                        playerStencilType, threshold);
+                    if(unionAlpha == 255) {
+                        break;
+                    }
+                }
+                auto &dstAlpha = dstRow[x * 4 + 3];
+                dstAlpha = detail::applyMotionCompositeMaskAlpha(
+                    dstAlpha, unionAlpha, compositeFlags, playerStencilType,
+                    threshold);
+            }
+        }
+
+        detail::logoChainTraceLogf(
+            motionPath, "execute.compositeMask", "0x6AF104", frameTime,
+            "dstNode={} flags={} operation={} surfaces={} world=[{},{},{},{}]",
+            dstNodeIndex, compositeFlags, compositeFlags & 3, resolved.size(),
+            dstWorldLeft, dstWorldTop, dstWorldLeft + width,
+            dstWorldTop + height);
+        return true;
+    }
+
 #if defined(KRKR2_WASMTIME_HEADLESS)
     struct FirstPixelProbe {
         bool ok = false;

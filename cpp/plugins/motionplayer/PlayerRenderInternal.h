@@ -87,6 +87,23 @@ namespace motion::internal::render_detail {
         int height, int threshold, int playerStencilType, int itemFlags,
         const std::string &motionPath, double frameTime, int dstNodeIndex,
         int srcNodeIndex);
+
+    struct MotionCompositeMaskSurface {
+        iTJSDispatch2 *layerObject = nullptr;
+        int worldLeft = 0;
+        int worldTop = 0;
+        int width = 0;
+        int height = 0;
+        int itemFlags = 0;
+        int nodeIndex = -1;
+    };
+
+    bool applyMotionCompositeMasksLike_0x6AF104(
+        iTJSDispatch2 *dstLayerObject, int dstWorldLeft, int dstWorldTop,
+        int width, int height,
+        const std::vector<MotionCompositeMaskSurface> &surfaces, int threshold,
+        int playerStencilType, int compositeFlags,
+        const std::string &motionPath, double frameTime, int dstNodeIndex);
     void emitDirectExecuteDiagnostics(
         motion::Player *player, const char *samplePoint, const char *probePhase,
         const char *branch, const char *executionMethod,

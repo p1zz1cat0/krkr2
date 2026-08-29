@@ -162,6 +162,22 @@ TEST_CASE("Mask alpha mode preserves soft facial part edges") {
           255);
 }
 
+TEST_CASE("Composite mask unions sources before cropping the colour group") {
+    constexpr int threshold = 64;
+
+    auto unionAlpha = motion::detail::unionMotionMaskAlpha(0, 64, 1, threshold);
+    unionAlpha =
+        motion::detail::unionMotionMaskAlpha(unionAlpha, 128, 1, threshold);
+    CHECK(unionAlpha == 159);
+    CHECK(motion::detail::applyMotionCompositeMaskAlpha(
+              200, unionAlpha, 5, 1, threshold) == 124);
+
+    CHECK(motion::detail::applyMotionCompositeMaskAlpha(
+              200, 0, 5, 0, threshold) == 0);
+    CHECK(motion::detail::applyMotionCompositeMaskAlpha(
+              200, 255, 5, 0, threshold) == 200);
+}
+
 TEST_CASE("Top-level zero dt does not initialize post-Core physics") {
     motion::physics::BustControl bust(bustConfig());
     const auto zeroOutput =

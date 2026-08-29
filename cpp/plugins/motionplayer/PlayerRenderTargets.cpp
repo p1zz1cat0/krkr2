@@ -1131,6 +1131,8 @@ namespace motion {
             if(item.parentItem != nullptr &&
                !item.parentItem->stencilMaskItems.empty()) {
                 auto *groupItem = item.parentItem;
+                std::vector<MotionCompositeMaskSurface> maskSurfaces;
+                maskSurfaces.reserve(groupItem->stencilMaskItems.size());
                 for(auto *maskPtr : groupItem->stencilMaskItems) {
                     if(!maskPtr || maskPtr == &item || !maskPtr->rawFlag21) {
                         continue;
@@ -1146,12 +1148,37 @@ namespace motion {
                        !maskLayer->GetMainImage()) {
                         continue;
                     }
-                    applyMotionAlphaMaskLike_0x6AF104(
-                        itemLayerObject, 0, 0, maskLayerObject, 0, 0,
-                        maskLayer->GetWidth(), maskLayer->GetHeight(), 64,
-                        _maskMode, groupItem->stencilComposite, motionPath,
-                        _clampedEvalTime, groupItem->nodeIndex,
-                        item.nodeIndex);
+                    const int maskWidth =
+                        maskPtr->clipRect[2] - maskPtr->clipRect[0];
+                    const int maskHeight =
+                        maskPtr->clipRect[3] - maskPtr->clipRect[1];
+                    if(maskWidth <= 0 || maskHeight <= 0) {
+                        continue;
+                    }
+                    maskSurfaces.push_back(
+                        { maskLayerObject, maskPtr->clipRect[0],
+                          maskPtr->clipRect[1], maskWidth, maskHeight,
+                          maskPtr->stencilComposite, maskPtr->nodeIndex });
+                }
+                const int compositeMaskOperation =
+                    groupItem->stencilComposite & 3;
+                if((groupItem->stencilComposite & 4) != 0 &&
+                   (compositeMaskOperation == 1 ||
+                    compositeMaskOperation == 2)) {
+                    applyMotionCompositeMasksLike_0x6AF104(
+                        itemLayerObject, clip.left, clip.top, clipWidth,
+                        clipHeight, maskSurfaces, 64, _maskMode,
+                        groupItem->stencilComposite, motionPath,
+                        _clampedEvalTime, item.nodeIndex);
+                } else {
+                    for(const auto &surface : maskSurfaces) {
+                        applyMotionAlphaMaskLike_0x6AF104(
+                            itemLayerObject, surface.worldLeft - clip.left,
+                            surface.worldTop - clip.top, surface.layerObject, 0,
+                            0, surface.width, surface.height, 64, _maskMode,
+                            surface.itemFlags & 3, motionPath, _clampedEvalTime,
+                            item.nodeIndex, surface.nodeIndex);
+                    }
                 }
             } else if(item.stencilMaskReferenced && item.parentItem == nullptr) {
                 // Authored mask input with a scope-split group (body
@@ -1907,7 +1934,9 @@ namespace motion {
                 return true;
             }();
             bool legacySlaPathTaken = false;
+            bool graphSlaPathTaken = false;
             bool drawn = false;
+            iTJSDispatch2 *accurateUpdateTarget = targetLayerObject;
             if(legacySlaPath) {
                 drawn = renderAccurateSlaLike_0x6C9CA8(
                     sla, slaObject, targetLayerObject, canvasWidth,
@@ -1929,12 +1958,15 @@ namespace motion {
                     // No private render target: there is nothing safe to
                     // clear-and-draw into (falling back to targetLayerObject
                     // would wipe the user-facing ltBinder layer). The legacy
-                    // per-part path owns this shape.
+                    // per-part path owns this shape. Discard any partially
+                    // created private target/list state before rebuilding the
+                    // legacy per-part layer tree.
+                    sla->clear();
                     drawn = renderAccurateSlaLike_0x6C9CA8(
                         sla, slaObject, targetLayerObject, canvasWidth,
                         canvasHeight);
                     legacySlaPathTaken = true;
-                    {
+                } else {
                     if(!prepareLayerForRender(slaRenderTarget, canvasWidth,
                                               canvasHeight, 0x00000000)) {
                         detail::logoChainTraceSummary(
@@ -1948,17 +1980,16 @@ namespace motion {
                         buildRenderCommands(canvasWidth, canvasHeight);
                     }
                     drawn = executeLayerRenderCommands(slaRenderTarget, true);
-                    {
-                        }
-                    }
+                    accurateUpdateTarget = slaRenderTarget;
+                    graphSlaPathTaken = drawn;
                 }
             }
-                if(!drawn) {
-                    detail::logoChainTraceSummary(
-                        motionPath, "renderToSeparateLayerAdaptor",
-                        _clampedEvalTime, "fail=renderAccurateSlaLike_0x6C9CA8");
-                    return false;
-                }
+            if(!drawn) {
+                detail::logoChainTraceSummary(
+                    motionPath, "renderToSeparateLayerAdaptor",
+                    _clampedEvalTime, "fail=renderAccurateSlaLike_0x6C9CA8");
+                return false;
+            }
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.begin", "0x6C9CA8", _clampedEvalTime,
                 "target={} canvas={}x{} path={}",
@@ -1966,7 +1997,15 @@ namespace motion {
                 canvasHeight,
                 (legacySlaPath || legacySlaPathTaken) ? "legacy-per-part"
                                                       : "command-graph");
-            updateAccurateSLAAfterDraw(targetLayerObject);
+            if(graphSlaPathTaken) {
+                auto *renderLayer = resolveNativeLayer(accurateUpdateTarget);
+                if(!renderLayer) {
+                    return false;
+                }
+                renderLayer->Update(false);
+            } else {
+                updateAccurateSLAAfterDraw(accurateUpdateTarget);
+            }
             detail::logoChainTraceLogf(
                 motionPath, "sla.accurate.end", "0x6CE938", _clampedEvalTime,
                 "target={}", static_cast<const void *>(targetLayerObject));

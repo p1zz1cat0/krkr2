@@ -1684,11 +1684,12 @@ namespace motion {
                     childBlendMode, childOpacity);
             }
 
-            // Aether's command graph keeps authored mask inputs separate from
-            // ordinary colour descendants. Apply each resolved mask after the
-            // group has been composed; applying sequentially preserves the
-            // native alpha operation for one or multiple mask layers without
-            // exposing the mask bitmap as a top-level colour draw.
+            // A type-12 composite first unions its authored mask surfaces with
+            // op-5, then applies that union to the colour group with flags&3.
+            // Applying the group's full value (normally 0x5) directly to the
+            // colour output would add alpha instead of cropping it.
+            std::vector<MotionCompositeMaskSurface> compositeMaskSurfaces;
+            compositeMaskSurfaces.reserve(item.stencilMaskItems.size());
             for(auto *maskPtr : item.stencilMaskItems) {
                 if(!maskPtr || !maskPtr->rawFlag21 || maskPtr->rawFlag16) {
                     continue;
@@ -1706,13 +1707,31 @@ namespace motion {
                 if(maskWidth <= 0 || maskHeight <= 0) {
                     continue;
                 }
-                applyMotionAlphaMaskLike_0x6AF104(
-                    composedLayerObject,
-                    maskPtr->builtRect[0] - item.clipRect[0],
-                    maskPtr->builtRect[1] - item.clipRect[1],
-                    maskLayerObject, 0, 0, maskWidth, maskHeight, 64,
+                compositeMaskSurfaces.push_back(
+                    { maskLayerObject, maskPtr->builtRect[0],
+                      maskPtr->builtRect[1], maskWidth, maskHeight,
+                      maskPtr->stencilComposite, maskPtr->nodeIndex });
+            }
+            const int compositeMaskOperation = item.stencilComposite & 3;
+            if((item.stencilComposite & 4) != 0 &&
+               (compositeMaskOperation == 1 ||
+                compositeMaskOperation == 2)) {
+                applyMotionCompositeMasksLike_0x6AF104(
+                    composedLayerObject, item.clipRect[0], item.clipRect[1],
+                    clipWidth, clipHeight, compositeMaskSurfaces, 64,
                     playerStencilType, item.stencilComposite, motionPath,
-                    _clampedEvalTime, item.nodeIndex, maskPtr->nodeIndex);
+                    _clampedEvalTime, item.nodeIndex);
+            } else {
+                for(const auto &surface : compositeMaskSurfaces) {
+                    applyMotionAlphaMaskLike_0x6AF104(
+                        composedLayerObject,
+                        surface.worldLeft - item.clipRect[0],
+                        surface.worldTop - item.clipRect[1],
+                        surface.layerObject, 0, 0, surface.width,
+                        surface.height, 64, playerStencilType,
+                        surface.itemFlags & 3, motionPath, _clampedEvalTime,
+                        item.nodeIndex, surface.nodeIndex);
+                }
             }
 
             item.composedBuilt = true;
