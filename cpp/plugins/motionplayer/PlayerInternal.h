@@ -228,6 +228,9 @@ namespace motion {
                        ResourceManager *resourceManager = nullptr) {
             ++runtime.motionGeneration;
             runtime.activeMotion = snapshot;
+            runtime.logicalScreen = snapshot
+                ? snapshot->screenSize
+                : detail::ScreenSize{};
             runtime.timelines.clear();
             runtime.hasLastPreparedDrawBounds = false;
             // Reset persistent node tree so it gets rebuilt for new motion
@@ -1629,7 +1632,8 @@ namespace motion {
 
         bool evaluateTimelineLike_0x699AE4(detail::MotionNode &node,
                                            bool dirtyArg, double currentTime,
-                                           bool isEmoteMode);
+                                           bool isEmoteMode,
+                                           const detail::ScreenSize &screen);
 
 
         // -----------------------------------------------------------------

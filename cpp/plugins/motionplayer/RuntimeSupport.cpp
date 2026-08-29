@@ -1461,6 +1461,29 @@ namespace motion::detail {
         snapshot->file = file;
         snapshot->root = root;
         snapshot->moduleValue = root->toTJSVal();
+        // E-mote logical world boundary (sdl3-ref emotefile::_screenSize).
+        // Absent for plain motion PSBs → stays zero-sized; consumers must
+        // treat width==0 as "no logical screen, use layer canvas".
+        if(const auto screen =
+               navigateDictionaryPath(snapshot->root, "screenSize")) {
+            snapshot->screenSize.originX =
+                dictionaryNumber(screen, { "originX" }).value_or(0.0);
+            snapshot->screenSize.originY =
+                dictionaryNumber(screen, { "originY" }).value_or(0.0);
+            snapshot->screenSize.width =
+                dictionaryNumber(screen, { "width" }).value_or(0.0);
+            snapshot->screenSize.height =
+                dictionaryNumber(screen, { "height" }).value_or(0.0);
+            if(snapshot->screenSize.width > 0.0 &&
+               snapshot->screenSize.height > 0.0) {
+                LOGGER->info(
+                    "emote.screenSize path={} origin=({:.1f},{:.1f}) size="
+                    "({:.1f}x{:.1f})",
+                    snapshot->path, snapshot->screenSize.originX,
+                    snapshot->screenSize.originY, snapshot->screenSize.width,
+                    snapshot->screenSize.height);
+            }
+        }
         if(logoChainTraceEnabled(snapshot)) {
             resetLogoChainTraceSession(snapshot->path);
             logoChainTraceLogf(snapshot->path, "snapshot.load", "PSB parse",

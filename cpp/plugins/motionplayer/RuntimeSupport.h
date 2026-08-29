@@ -233,10 +233,23 @@ namespace motion::detail {
         std::string param2;
     };
 
+    // PSB root "screenSize" — the E-mote logical world boundary.  Aligned to
+    // sdl3-ref emotefile::_screenSize / EmotePlayer::ResetDrawArea: the
+    // progress limit area and render basis, NOT the Kirikiri layer size.
+    // coord NaN→-origin / Inf→(width|height)-origin sentinels are resolved
+    // against this boundary (MOTIONPLAYER_TEXTURE_WORLD_COORDS.md §3.3).
+    struct ScreenSize {
+        double originX = 0.0;
+        double originY = 0.0;
+        double width = 0.0;
+        double height = 0.0;
+    };
+
     struct MotionSnapshot {
         std::string path;
         std::shared_ptr<PSB::PSBFile> file;
         std::shared_ptr<const PSB::PSBDictionary> root;
+        ScreenSize screenSize;
         std::unordered_map<std::string, std::shared_ptr<const PSB::PSBResource>>
             resourcesByPath;
         tTJSVariant moduleValue;
@@ -304,6 +317,10 @@ namespace motion::detail {
         motion::SourceCache *sourceCacheNative = nullptr;
         tTJSVariant sourceCacheObject;
         std::shared_ptr<MotionSnapshot> activeMotion;
+        // Active motion's logical world boundary (PSB root screenSize).
+        // Zeroed when no motion is active; consumed by frame evaluation
+        // (coord NaN/Inf sentinel fix) and upcoming render alignment.
+        ScreenSize logicalScreen;
         // Incremented for every motion activation/deactivation. Controller
         // candidates bind to this generation so a failed init after a motion
         // switch cannot drive the new node tree with stale state.
