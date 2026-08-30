@@ -47,6 +47,14 @@ namespace motion {
                                                 tTJSVariant **p,
                                                 iTJSDispatch2 *obj);
 
+        // R01（REF emotefile::setFun）：load 前把当前 decrypt closure 交给
+        // PSBFile#setDecryptCallback；此前只存不消费，加密 PSB 按无 callback
+        // 加载，接口看似成功但内容不可用。
+        [[nodiscard]] static tTJSVariantClosure
+        getEmotePSBDecryptFunc() {
+            return _decryptFunc;
+        }
+
     private:
         struct State {
             std::unordered_map<std::string, tTJSVariant> loadedModules;

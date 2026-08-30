@@ -187,9 +187,14 @@ namespace motion::detail {
         }
         normalized = std::clamp(normalized, 0.0, 1.0);
 
-        const double timelineEnd = clip.totalFrames > 0.0
-            ? std::max(0.0, clip.totalFrames - 1.0)
-            : std::max(0.0, parameter.division);
+        // F01（REF transToTick）：tick 轴 = 参数表 division，而不是
+        // clip.totalFrames−1。totalFrames 的 lastTime 是“最后帧时间”，
+        // 两者只在素材恰好对齐时相等；以 totalFrames 优先会在
+        // lastTime 未写/长 clip 上把参数轴拉偏。无 division 时再回退
+        // totalFrames−1 保底。
+        const double timelineEnd = parameter.division > 0.0
+            ? parameter.division
+            : std::max(0.0, clip.totalFrames - 1.0);
         return normalized * timelineEnd;
     }
 
@@ -679,6 +684,7 @@ namespace motion::detail {
         bool emoteDiagLogged = false;
         bool emoteFirstEvalDiagLogged = false;
         std::string emoteDiagMotionPath;
+        std::string emoteDiagLoggedClip;
         std::string cachedParameterMotionPath;
     };
 

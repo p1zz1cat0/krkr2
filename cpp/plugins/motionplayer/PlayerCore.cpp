@@ -809,36 +809,15 @@ namespace motion {
         };
 
         auto &motion = *_runtime->activeMotion;
-        const detail::MotionClip *preferred = nullptr;
-        const detail::MotionClip *largest = nullptr;
-        size_t largestCount = 0;
-
-        for(const auto &motionClip : motion.clipList) {
-            if(!motionClip.motionObject) {
-                continue;
-            }
-            const auto paramList = std::dynamic_pointer_cast<PSB::PSBList>(
-                (*motionClip.motionObject)["parameter"]);
-            const size_t count = paramList ? paramList->size() : 0;
-            if(count > largestCount) {
-                largestCount = count;
-                largest = &motionClip;
-            }
-            if(motionClip.label == "頭部変形基礎" ||
-               motionClip.label == "全体構造") {
-                if(count > 0) {
-                    preferred = &motionClip;
-                }
-            }
-        }
-
+        // F02（REF emotemotion::parameter 单轨）：参数表属于当前正在播放的
+        // clip（selectActiveClip 的 motionObject["parameter"]），不做
+        // 「頭部変形基礎/全体構造」名字优先或「参数数最多」启发——素材改名或
+        // 另一个 clip 参数更多时会被静默绑定错表。root 仅作最终保底。
         const detail::MotionClip *clip = selectActiveClip();
-        if(preferred) {
-            loadFromObject(preferred->motionObject);
-        } else if(largest) {
-            loadFromObject(largest->motionObject);
-        } else if(clip && clip->motionObject) {
+        if(clip && clip->motionObject) {
             loadFromObject(clip->motionObject);
+        } else if(motion.root) {
+            loadFromObject(motion.root);
         }
 
         if(_runtime->parameterEntries.empty()) {
@@ -882,16 +861,14 @@ namespace motion {
             return;
         }
         const auto *clip = _runtime->activeClip;
-        if(clip && clip->label != "全体構造" && clip->label != "頭部変形基礎" &&
-           _runtime->nodes.size() < 40) {
-            return;
-        }
         if(_runtime->emoteDiagLogged &&
-           _runtime->emoteDiagMotionPath == _runtime->activeMotion->path) {
+           _runtime->emoteDiagMotionPath == _runtime->activeMotion->path &&
+           clip != nullptr && clip->label == _runtime->emoteDiagLoggedClip) {
             return;
         }
         _runtime->emoteDiagLogged = true;
         _runtime->emoteDiagMotionPath = _runtime->activeMotion->path;
+        _runtime->emoteDiagLoggedClip = clip ? clip->label : std::string();
         int paramNodeCount = 0;
         int sourcedCount = 0;
         int stencilZeroCount = 0;

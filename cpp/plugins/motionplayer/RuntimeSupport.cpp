@@ -3,6 +3,7 @@
 //
 
 #include "RuntimeSupport.h"
+#include "ResourceManager.h"
 
 #include <algorithm>
 #include <cctype>
@@ -1303,6 +1304,11 @@ namespace motion::detail {
                                                   const tjs_int decryptSeed) {
             auto file = std::make_shared<PSB::PSBFile>();
             file->setSeed(decryptSeed);
+            // R01（REF EmotePlayer/ResourceManager → emotefile::setFun →
+            // PSBFile::setDecryptCallback）：保存的 decrypt closure 必须随
+            // 每次 load 生效，否则加密 PSB 按无回调路径加载。
+            file->setDecryptCallback(
+                ::motion::ResourceManager::getEmotePSBDecryptFunc());
             if(!file->loadPSBFile(path)) {
                 LOGGER->error("motion load file: {} failed",
                               path.AsStdString());

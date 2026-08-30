@@ -7,6 +7,11 @@
 using namespace motion::internal;
 
 namespace {
+    static const bool eyeDiagRequested = [] {
+        const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
+        return env && env[0] != '\0' && env[0] != '0';
+    }();
+
     float variableEaseWeightLike_0x671228(double ease) {
         if(ease > 0.0) {
             return static_cast<float>(ease + 1.0);
@@ -65,24 +70,17 @@ namespace {
         std::vector<motion::detail::MotionParameterEntry> &entries,
         const ParameterLabelParts &parts, int mode, double rawValue,
         bool directControllerFrame) {
+        // F01（REF emotemotion::getTickByIdx 单轨契约）：参数化入口只有一个
+        // —— transToTick（division × (raw−rangeBegin)/(rangeEnd−rangeBegin)）。
+        // directControllerFrame（按 controller type 4..6 直接使用 raw 帧号）
+        // 是历史 WIP 特判，删。selector/离散参数走保留的 discretization。
+        (void)directControllerFrame;
         for(auto &entry : entries) {
             if(!parameterIdMatchesLabelLike_0x6D0BF4(entry, parts)) {
                 continue;
             }
-            if(directControllerFrame) {
-                // eye/eyebrow/mouth controls address authored frame times
-                // directly (same contract as the load-time seed in
-                // syncParameterEntriesFromVariablesLike_sdl3). Normalizing
-                // here shifted every per-frame write by -rangeBegin and the
-                // accumulate republish compounded it, running facial ticks
-                // to their range maximum within a few frames.
-                const double lo = std::min(entry.rangeBegin, entry.rangeEnd);
-                const double hi = std::max(entry.rangeBegin, entry.rangeEnd);
-                entry.value = std::clamp(rawValue, lo, hi);
-            } else {
-                entry.value =
-                    normalizeParameterValueLike_0x6B1718(entry, rawValue);
-            }
+            entry.value =
+                normalizeParameterValueLike_0x6B1718(entry, rawValue);
             entry.mode = mode;
         }
     }
@@ -286,14 +284,29 @@ namespace motion {
             return false;
         };
 
-        // Nested Players model sub-motions from one E-mote tree. Prefer a live
-        // value owned by the outer wrapper so intermediate seeded-zero scratch
-        // maps cannot shadow it, but retain child-owned parameters when the
-        // wrapper does not define that label.
+        // sdl3 REF 对齐：emotefile::setVariable 写文件级全局表 _varList，
+        // 任何 motion 树（含 motion 引用的子树）参数化都直读它——没有
+        // child 传播链。此处以顶层 wrapper 的全局表（_variableValues +
+        // _evalResultValues）扮演 _varList：即使子 Player 刚被重播清空了
+        // inheritedVariableInputs，参数化也能读到当前值（face 参数不再
+        // 掉到 0）。传播链保留为二线 fallback。
         const Player *controllerOwner = this;
         while(controllerOwner->_parentPlayer) {
             controllerOwner = controllerOwner->_parentPlayer;
         }
+        if(controllerOwner->_runtime) {
+            double value = 0.0;
+            if(findValue(controllerOwner->_variableValues, value) ||
+               findValue(controllerOwner->_evalResultValues, value)) {
+                return value;
+            }
+        }
+
+        // 原有 search 顺序（自查 → 链式），保持独立子场景行为不变。
+        // Nested Players model sub-motions from one E-mote tree. Prefer a live
+        // value owned by the outer wrapper so intermediate seeded-zero scratch
+        // maps cannot shadow it, but retain child-owned parameters when the
+        // wrapper does not define that label.
         if(controllerOwner->_runtime &&
            detail::isEmoteLikeMotion(*controllerOwner->_runtime)) {
             double value = 0.0;
@@ -317,10 +330,6 @@ namespace motion {
                                   ? std::string{"self"}
                                   : std::string{"wrapper"});
                 }
-            }
-            if(findValue(controllerOwner->_variableValues, value) ||
-               findValue(controllerOwner->_evalResultValues, value)) {
-                return value;
             }
             for(const Player *player = this; player != controllerOwner;
                 player = player->_parentPlayer) {
@@ -382,6 +391,14 @@ namespace motion {
             }
             it->second = value;
             child->_emoteDirty = true;
+            if(eyeDiagRequested && label.rfind("face_", 0) == 0) {
+                if(auto L = spdlog::get("plugin")) {
+                    L->info(
+                        "emote.prop label={} value={:.2f} childNodes={}",
+                        label, value,
+                        static_cast<int>(child->_runtime->nodes.size()));
+                }
+            }
         };
 
         for(auto &node : _runtime->nodes) {
@@ -389,6 +406,9 @@ namespace motion {
                 if(auto *child = node.getChildPlayer()) {
                     propagateInherited(child);
                     child->bindParameterValueLike_0x6C4668(label, mode, value);
+                    if(child->_runtime) {
+                        child->syncParameterEntriesFromVariablesLike_sdl3();
+                    }
                 }
             } else if(node.nodeType == 4) {
                 for(int i = 0; i < node.getParticleCount(); ++i) {
@@ -396,6 +416,9 @@ namespace motion {
                         propagateInherited(child);
                         child->bindParameterValueLike_0x6C4668(label, mode,
                                                                value);
+                        if(child->_runtime) {
+                            child->syncParameterEntriesFromVariablesLike_sdl3();
+                        }
                     }
                 }
             }
@@ -411,34 +434,33 @@ namespace motion {
                 continue;
             }
             const double raw = initialParameterRawValueLike_0x6B1ABC(entry.id);
-            // eye/eyebrow/mouth controls address their authored frame times
-            // directly.  They are not generic range-normalized parameters:
-            // for example face_eye_open=0 must select eye frame 0 even though
-            // its generic parameter range is -10..50 (which would otherwise
-            // turn the neutral eye into interpolated frame 10).
-            bool directControllerFrame = false;
-            for(const Player *player = this; player != nullptr;
-                player = player->_parentPlayer) {
-                const auto *motion = player->_runtime
-                    ? player->_runtime->activeMotion.get()
-                    : nullptr;
-                if(!motion) {
-                    continue;
-                }
-                const auto binding = motion->controllerBindings.find(entry.id);
-                if(binding != motion->controllerBindings.end() &&
-                   binding->second.type >= 4 && binding->second.type <= 6) {
-                    directControllerFrame = true;
-                    break;
+            if(eyeDiagRequested) {
+                static std::unordered_set<std::string> syncPerfLogged;
+                const std::string perfKey =
+                    entry.id + "@" + std::to_string(_runtime->nodes.size());
+                if(syncPerfLogged.insert(perfKey).second) {
+                    std::string inputKeys;
+                    for(const auto &[key, val] :
+                        _runtime->inheritedVariableInputs) {
+                        inputKeys += key;
+                        inputKeys += "=";
+                        inputKeys += fmt::format("{:.2f} ", val);
+                    }
+                    if(auto L = spdlog::get("plugin")) {
+                        L->info(
+                            "emote.syncperf label={} raw={:.3f} ownVars={} "
+                            "ownEval={} inputs=[{}]",
+                            entry.id, raw,
+                            static_cast<int>(_variableValues.size()),
+                            static_cast<int>(_evalResultValues.size()),
+                            inputKeys);
+                    }
                 }
             }
-            if(directControllerFrame) {
-                const double lo = std::min(entry.rangeBegin, entry.rangeEnd);
-                const double hi = std::max(entry.rangeBegin, entry.rangeEnd);
-                entry.value = std::clamp(raw, lo, hi);
-            } else {
-                entry.value = normalizeParameterValueLike_0x6B1718(entry, raw);
-            }
+            // F01（REF emotemotion::getTickByIdx 单轨契约）：不区分
+            // direct-controller 帧号，所有参数化统一 transToTick。
+            // 原 directControllerFrame clamp 分支为历史 WIP，删除。
+            entry.value = normalizeParameterValueLike_0x6B1718(entry, raw);
             entry.mode = 1;
         }
         for(auto &node : _runtime->nodes) {

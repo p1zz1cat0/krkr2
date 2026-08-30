@@ -3,6 +3,15 @@
 //
 #include "PlayerUpdateLayersInternal.h"
 
+#include <cmath>
+
+namespace {
+    const bool eyeEvalProbe = [] {
+        const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
+        return env && env[0] != '\0' && env[0] != '0';
+    }();
+} // namespace
+
 namespace motion::internal {
 
     namespace {
@@ -482,13 +491,40 @@ namespace motion::internal {
 
     MOTIONPLAYER_NOINLINE bool
     evaluateTimelineLike_0x699AE4(detail::MotionNode &node, bool dirtyArg,
-                                  double currentTime, bool isEmoteMode) {
+                                  double currentTime, bool isEmoteMode,
+                                  const detail::ScreenSize &logicalScreen) {
         const bool dirty = dirtyArg || node.flags != 0;
         auto &active = node.activeSlot();
         auto &other = node.otherSlot();
 
         currentTime =
             frameSelectionTimeLike_0x6B7E44(node, currentTime, isEmoteMode);
+
+        // sdl3-ref EmoteNode::progress（REF 436-443）：coord 特殊值动态
+        // 修正——NaN→-lim.origin、Inf→(lim.width|height)-lim.origin，用于
+        // 贴边类关键帧。lim 在本架构以 PSB root screenSize 逻辑边界扮演
+        // （MOTIONPLAYER_TEXTURE_WORLD_COORDS.md §3.3）；无 screenSize 的
+        // motion（宽度为 0）不修正，保持原值。
+        if(logicalScreen.width > 0.0 && logicalScreen.height > 0.0) {
+            const auto fixCoord = [&logicalScreen](double &x, double &y) {
+                if(std::isnan(x)) {
+                    x = -logicalScreen.originX;
+                }
+                if(std::isnan(y)) {
+                    y = -logicalScreen.originY;
+                }
+                if(std::isinf(x)) {
+                    x = logicalScreen.width - logicalScreen.originX;
+                }
+                if(std::isinf(y)) {
+                    y = logicalScreen.height - logicalScreen.originY;
+                }
+            };
+            fixCoord(active.x, active.y);
+            if(other.frameIndex >= 0) {
+                fixCoord(other.x, other.y);
+            }
+        }
 
         if(active.done) {
             return dirty;
@@ -813,6 +849,14 @@ namespace motion {
             // players.
             for(const auto &[label, value] : _variableValues) {
                 bindParameterValueLike_0x6C4668(label, 0, value);
+                if(eyeEvalProbe && label.rfind("face_", 0) == 0) {
+                    if(auto L = spdlog::get("plugin")) {
+                        L->info(
+                            "emote.bind label={} value={:.2f} localNodes={}",
+                            label, value,
+                            static_cast<int>(_runtime->nodes.size()));
+                    }
+                }
             }
             // 参考 sdl3 emotemotion::getTickByIdx（不编译）：每帧从变量表刷新
             // parameter entry，驱动 parameterize 节点（口/眼等）帧选择。
@@ -854,6 +898,9 @@ namespace motion {
                     if(!entry.id.empty() && entry.rangeScale != 0.0) {
                         const double raw =
                             initialParameterRawValueLike_0x6B1ABC(entry.id);
+                        // F01（REF getTickByIdx 单轨契约）：无
+                        // direct-controller 帧号特判；统一
+                        // parameterizedClipTime（transToTick + division 轴）。
                         nodeEvalTime = detail::parameterizedClipTime(
                             *clip, entry, raw);
                     }
@@ -908,6 +955,43 @@ namespace motion {
 
             auto state = advanceNodeFrameSelectionLike_0x6926B4(
                 node, nodeEvalTime, emoteLike, layerList);
+            if(eyeEvalProbe &&
+               (node.layerName == "mabuta" || node.layerName == "eye_R" ||
+                node.layerName == "eye_L" || node.layerName == "shirome" ||
+                node.layerName.find("目影") != std::string::npos ||
+                node.layerName.find("瞳") != std::string::npos ||
+                node.layerName.find("目") != std::string::npos ||
+                node.layerName.find("眉") != std::string::npos ||
+                node.layerName.find("口") != std::string::npos ||
+                node.layerName.find("mabuta") != std::string::npos ||
+                node.layerName.find("shirome") != std::string::npos)) {
+                if(auto L = spdlog::get("plugin")) {
+                    double raw = 0.0;
+                    const auto *probeClip = selectActiveClip();
+                    if(probeClip && probeClip->defaultParameterIndex >= 0 &&
+                       static_cast<size_t>(probeClip->defaultParameterIndex) <
+                           _runtime->parameterEntries.size()) {
+                        raw = initialParameterRawValueLike_0x6B1ABC(
+                            _runtime->parameterEntries[static_cast<size_t>(
+                                probeClip->defaultParameterIndex)].id);
+                    }
+                    L->info(
+                        "emote.eye-eval label={} evalTime={:.3f} raw={:.3f} "
+                        "src={} frame={} activeTime={:.3f} nextTime={:.3f} "
+                        "param={} clip={} dpi={} entries={}",
+                        node.layerName, nodeEvalTime, raw,
+                        state.src.empty() ? "<none>" : state.src.c_str(),
+                        state.debugActiveIndex, state.debugFrameATime,
+                        state.debugFrameBTime, node.parameterizeIndex,
+                        probeClip
+                            ? probeClip->label
+                            : std::string("<null>"),
+                        probeClip
+                            ? probeClip->defaultParameterIndex
+                            : -999,
+                        static_cast<int>(_runtime->parameterEntries.size()));
+                }
+            }
             if(detail::logoChainTraceEnabled(_runtime->activeMotion) &&
                state.debugEvaluated) {
                 detail::logoChainTraceLogf(
@@ -981,7 +1065,8 @@ namespace motion {
             }
             const bool timelineUpdated = [&]() {
                 const bool __updated = evaluateTimelineLike_0x699AE4(
-                    node, timelineDirtyArg, nodeEvalTime, emoteLike);
+                    node, timelineDirtyArg, nodeEvalTime, emoteLike,
+                    _runtime->logicalScreen);
                 if(evalProbe && node.parameterEntry &&
                    node.parameterEntry->id == "body_UD") {
                     if(auto L = spdlog::get("plugin")) {
