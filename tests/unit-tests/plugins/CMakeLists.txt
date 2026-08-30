@@ -11,6 +11,7 @@ set(SOURCES
         extNagano-dll.cpp
         plugin-safety-dll.cpp
         motionplayer-physics.cpp
+        motionplayer-param.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")

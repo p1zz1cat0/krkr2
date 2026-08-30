@@ -148,11 +148,11 @@ namespace motion::detail {
     };
 
     // Map an authored parameter value onto the motion timeline's frame axis
-    // (aligned to Aether REF RuntimeSupport.h parameterizedClipTime).  The
-    // timeline end is the clip's authored frame count, not the parameter
-    // division: E-mote eye clips span a 61-frame axis over a [-10,50]
-    // parameter range, and using division would select the wrong frame and
-    // leave the iris exposed during blinks.
+    // (REF transToTick: division × (raw − rangeBegin)/(rangeEnd − rangeBegin)).
+    // The tick axis is the parameter division; clip.totalFrames−1 is only the
+    // fallback when the entry has no division.  The result is a timeline-domain
+    // time: frame selection (frameSelectionTimeLike_0x6B7E44) and child
+    // crossfade parentTime both compare it against authored frame times.
     inline double parameterizedClipTime(const MotionClip &clip,
                                         const MotionParameterEntry &parameter,
                                         double value) {
@@ -192,6 +192,8 @@ namespace motion::detail {
         // 两者只在素材恰好对齐时相等；以 totalFrames 优先会在
         // lastTime 未写/长 clip 上把参数轴拉偏。无 division 时再回退
         // totalFrames−1 保底。
+        // 与 REF 的偏差：REF transToTick 不做 clamp，这里归一化后保留
+        // [0,1]，超范围写入落到端点帧，防止越界 tick 进入选帧。
         const double timelineEnd = parameter.division > 0.0
             ? parameter.division
             : std::max(0.0, clip.totalFrames - 1.0);
@@ -686,6 +688,11 @@ namespace motion::detail {
         std::string emoteDiagMotionPath;
         std::string emoteDiagLoggedClip;
         std::string cachedParameterMotionPath;
+        // F02: parameter-table ownership is (motion path, active clip).
+        // Cached separately so replaying another clip of the same motion
+        // file rebuilds the table instead of reusing the previous clip's
+        // id/division/range axis.
+        std::string cachedParameterClipLabel;
     };
 
     // e-mote3 PSB type=0 但含 variableList；行为对齐 sdl3 _varList.size()>0

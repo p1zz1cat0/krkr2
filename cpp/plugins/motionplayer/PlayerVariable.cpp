@@ -68,13 +68,10 @@ namespace {
 
     void bindParameterEntriesLike_0x6C4668(
         std::vector<motion::detail::MotionParameterEntry> &entries,
-        const ParameterLabelParts &parts, int mode, double rawValue,
-        bool directControllerFrame) {
+        const ParameterLabelParts &parts, int mode, double rawValue) {
         // F01（REF emotemotion::getTickByIdx 单轨契约）：参数化入口只有一个
-        // —— transToTick（division × (raw−rangeBegin)/(rangeEnd−rangeBegin)）。
-        // directControllerFrame（按 controller type 4..6 直接使用 raw 帧号）
-        // 是历史 WIP 特判，删。selector/离散参数走保留的 discretization。
-        (void)directControllerFrame;
+        // —— transToTick（division × (raw−rangeBegin)/(rangeEnd−rangeBegin)），
+        // selector/离散参数走保留的 discretization。
         for(auto &entry : entries) {
             if(!parameterIdMatchesLabelLike_0x6D0BF4(entry, parts)) {
                 continue;
@@ -360,24 +357,8 @@ namespace motion {
         }
 
         const auto parts = splitParameterLabelLike_0x6D0BF4(label);
-        bool directControllerFrame = false;
-        for(const Player *player = this; player != nullptr;
-            player = player->_parentPlayer) {
-            const auto *motion = player->_runtime
-                ? player->_runtime->activeMotion.get()
-                : nullptr;
-            if(!motion) {
-                continue;
-            }
-            const auto binding = motion->controllerBindings.find(label);
-            if(binding != motion->controllerBindings.end() &&
-               binding->second.type >= 4 && binding->second.type <= 6) {
-                directControllerFrame = true;
-                break;
-            }
-        }
         bindParameterEntriesLike_0x6C4668(_runtime->parameterEntries, parts,
-                                          mode, value, directControllerFrame);
+                                          mode, value);
 
         const auto propagateInherited = [&](Player *child) {
             if(!child || !child->_runtime) {

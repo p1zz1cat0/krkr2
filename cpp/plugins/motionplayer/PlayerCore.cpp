@@ -674,14 +674,22 @@ namespace motion {
         _runtime->defaultParameterEntryPtr = nullptr;
         _runtime->defaultParameterEntryIndex = -1;
 
+        // F02：参数表归属当前播放的 clip。同一 motion 文件内切换 clip 时
+        // 也必须重建，否则旧 clip 的 id/division/range 轴会继续驱动新 clip
+        // 的参数化节点。
+        const std::string activeClipLabel =
+            clip ? clip->label : std::string{};
         const bool motionChanged = !_runtime->activeMotion ||
             _runtime->cachedParameterMotionPath != _runtime->activeMotion->path;
-        if(motionChanged) {
+        const bool clipChanged = !motionChanged &&
+            _runtime->cachedParameterClipLabel != activeClipLabel;
+        if(motionChanged || clipChanged) {
             _runtime->parameterEntries.clear();
             _runtime->parameterEntryById.clear();
             _runtime->cachedParameterMotionPath = _runtime->activeMotion
                 ? _runtime->activeMotion->path
                 : std::string{};
+            _runtime->cachedParameterClipLabel = activeClipLabel;
             _runtime->emoteDiagLogged = false;
             _runtime->emoteFirstEvalDiagLogged = false;
         }
