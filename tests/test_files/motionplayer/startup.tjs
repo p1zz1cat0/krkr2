@@ -209,6 +209,30 @@ twin.draw(twinAdaptor);
 check(twin.countPlayingTimelines() >= 1,
     "A06 twin keeps its own playing timelines after draw");
 
+// R02/A07/A08: lifecycle ABI batch.
+// R02: REF scripts call ResourceManager.unloadAll(); the alias must exist.
+check(manager.unloadAll != void, "R02 unloadAll alias exists");
+// Re-load what the rest of the fixture needs (unloadAll cleared the cache).
+manager.load("../emote/e-mote3.0バニラパジャマa.psb");
+
+// A07: create() must reset wrapper request state, not just the module.
+player.setCoord(50, 60);
+player.create();
+var a07state = player.serialize();
+pluginAssertEqual("A07 create resets wrapper coord", 0, a07state.currCoordx);
+
+// A08: setTimeline(label, loop) must honor the loop argument. The fixture's
+// "挨拶" timeline is non-loop (authored); forcing loop=true must keep it
+// playing past its authored end.
+player.play("挨拶", Motion.PlayFlagForce);
+player.setTimeline("挨拶", true);
+for (var a08frame = 0; a08frame < 120; a08frame++) {
+    player.progress(1000.0 / 60.0);
+}
+check(player.getTimelinePlaying("挨拶"),
+    "A08 setTimeline loop keeps the timeline playing past its end");
+player.stopTimeline("");
+
 // Render-path coverage: draw twice through the recommended
 // SeparateLayerAdaptor route. The fixture contains nested motion players
 // (382 type-3 nodes), so this exercises the merged child-item path whose

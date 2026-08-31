@@ -371,6 +371,10 @@ namespace motion {
         tjs_int getTimelineTotalFrameCount(ttstr label);
         void playTimeline(ttstr label, tjs_int flags);
         void stopTimeline(ttstr label);
+        // A08: set the explicit loop override for a timeline (consumed by
+        // frame wrap / skipToSync via TimelineState.loop). Unknown labels are
+        // ignored here; playTimeline logs its own lookup failure.
+        void setTimelineLoop(ttstr label, bool loop);
         void setTimelineBlendRatio(ttstr label, double ratio);
         // Full-arity form matching the M2 contract:
         // (name, ratio, time, easing, stopWhenBlendDone). time is in frames

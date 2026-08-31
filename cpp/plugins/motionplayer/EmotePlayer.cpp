@@ -188,7 +188,19 @@ namespace motion {
 
     // Aligned to libkrkr2.so sub_52FD84: create() is actually "destroy/reset"
     void EmotePlayer::create() {
+        // A07（台账/Aether 对照同一候选）：reset 必须清干净 wrapper 请求态，
+        // 否则旧 _storageKey/_clipLabel 会参与下一次 play() 的 fallback
+        // 选择（MultiCache/motionKey 命中旧路径）。
         _module.Clear();
+        _storageKey.Clear();
+        _clipLabel.Clear();
+        _mirrorRequested = false;
+        _mirrorChanged = false;
+        _color = 0;
+        _rot = 0.0;
+        _coordX = 0.0;
+        _coordY = 0.0;
+        _progress = 0.0;
         _player.loadFromSnapshot(nullptr);
         _modified = true;
     }
@@ -780,7 +792,11 @@ namespace motion {
     }
 
     void EmotePlayer::setTimeline(ttstr label, bool loop) {
-        // Player doesn't have an exact equivalent; use playTimeline + loop flag
+        // A08：参数此前被静默忽略（只 playTimeline(label, 0)）。loop 现在
+        // 生效：覆盖该 timeline 的 loop 判定（TimelineState.loop 控制
+        // skipToSync/帧推进的 wrap 行为），并按 REF TimelinePlayFlag 语义
+        // 用非并行 flag 启动（替换当前播放集合）。
+        _player.setTimelineLoop(label, loop);
         _player.playTimeline(label, 0);
     }
 
@@ -922,6 +938,17 @@ namespace motion {
                         "EmotePlayer::play mode=MultiCache: linked {} attached "
                         "snapshot(s)",
                         primarySnapshot->attachedSnapshots.size());
+                } else {
+                    // R04：候选存在但 chara/motion 全部未命中请求（分辨率
+                    // 变体、空请求、同 chara 多 motion 的组合）。当前行为
+                    // 是保留精确匹配 + lastLoaded/generation 偏好的修复版
+                    // 选择器，不做 REF「第一个可解析即选」的回退；miss 时
+                    // 必须可观测，落到下面的 fallback 路径并留下证据。
+                    LOGGER->warn(
+                        "EmotePlayer::play mode=MultiCache: no candidate "
+                        "matches requested chara='{}' motion='{}' over {} "
+                        "cached module(s); falling back",
+                        requestedChara, requestedMotion, cached.size());
                 }
             }
         }

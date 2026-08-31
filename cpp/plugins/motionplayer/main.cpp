@@ -428,6 +428,7 @@ NCB_REGISTER_SUBCLASS(ResourceManager) {
     NCB_METHOD(loadSource);
     NCB_METHOD(unload);
     NCB_METHOD(clearCache);
+    NCB_METHOD(unloadAll); // R02: REF API alias of clearCache
     NCB_METHOD(findSource);
     NCB_METHOD(requireLayerId);
     NCB_METHOD(releaseLayerId);

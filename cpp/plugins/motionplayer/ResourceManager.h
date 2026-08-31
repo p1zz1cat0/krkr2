@@ -55,6 +55,12 @@ namespace motion {
             return _decryptFunc;
         }
 
+        // R02（REF ResourceManager::unloadAll）：REF 脚本按此名释放全部
+        // 缓存；本实现能力由 clearCache 提供，注册同名 alias 保证 REF API
+        // 调用不因成员缺失失败。注意语义差：clearCache 额外清全局
+        // snapshot registry（REF 的 per-manager emotefile 缓存无此层）。
+        void unloadAll() const { clearCache(); }
+
     private:
         struct State {
             std::unordered_map<std::string, tTJSVariant> loadedModules;

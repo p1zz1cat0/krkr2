@@ -127,6 +127,30 @@ namespace motion {
             _runtime->activeMotion->diffTimelineLabels));
     }
 
+    // A08: explicit loop override behind EmotePlayer::setTimeline(label,
+    // loop). TimelineState.loop gates the wrap decisions in frame progress
+    // and skipToSync; primed values (snapshot.loopTimelines /
+    // timelineControlByLabel) are re-applied on motion reload, so this
+    // override is per-play-session by construction.
+    void Player::setTimelineLoop(ttstr label, bool loop) {
+        ensureMotionLoaded();
+        if(!_runtime || label.IsEmpty()) {
+            return;
+        }
+        if(_runtime->timelines.empty() && _runtime->activeMotion) {
+            detail::primeTimelineStates(_runtime->timelines,
+                                        *_runtime->activeMotion);
+        }
+        const auto key = detail::narrow(label);
+        auto it = _runtime->timelines.find(key);
+        if(it == _runtime->timelines.end()) {
+            LOGGER->debug("Player::setTimelineLoop: unknown timeline label={}",
+                          label.AsStdString());
+            return;
+        }
+        it->second.loop = loop;
+    }
+
     bool Player::getLoopTimeline(ttstr label) {
         ensureMotionLoaded();
         if(!_runtime->activeMotion) {

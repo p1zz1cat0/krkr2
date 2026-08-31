@@ -559,9 +559,15 @@ namespace motion {
                 state.currentTime += dt;
                 if(state.totalFrames > 0.0 &&
                    state.currentTime >= state.totalFrames) {
+                    // A08：显式 loop 覆盖（setTimelineLoop）优先于 authored
+                    // loopTime——loop=true 时从 0 回卷，即使素材没有写
+                    // loopTime；loop=false 时不改变 authored 回卷行为。
+                    const double effectiveLoopTime = state.loop
+                        ? (state.loopTime >= 0.0 ? state.loopTime : 0.0)
+                        : state.loopTime;
                     if(!detail::wrapTimelineCurrentTime(state.currentTime,
                                                         state.totalFrames,
-                                                        state.loopTime)) {
+                                                        effectiveLoopTime)) {
                         state.playing = false;
                         keepPlaying = false;
                     }
@@ -642,8 +648,15 @@ namespace motion {
                     const bool blendAnimatorPending =
                         state.blendAnimator.active ||
                         !state.blendAnimator.queue.empty();
-                    if(lastTime <= state.currentTime ||
-                       (state.blendAutoStop && !blendAnimatorPending)) {
+                    // A08：显式 loop 覆盖（setTimelineLoop）让无 authored
+                    // loop 区间的 timeline 到 lastTime 后从 0 回卷，而不是
+                    // 停播；loop=false 维持原停播行为。
+                    if(state.loop && lastTime <= state.currentTime) {
+                        state.currentTime = 0.0;
+                        resetTimelineControlStateLike_0x671A50(state, *binding,
+                                                               0.0);
+                    } else if(lastTime <= state.currentTime ||
+                              (state.blendAutoStop && !blendAnimatorPending)) {
                         state.currentTime = lastTime;
                         state.playing = false;
                         keepPlaying = false;
