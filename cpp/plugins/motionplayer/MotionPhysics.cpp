@@ -428,11 +428,31 @@ namespace motion::physics {
             return std::nullopt;
         }
 
-        if(suppressed_ && atBegin(currentVariableValue)) {
-            suppressed_ = false;
-            phase_ = Phase::Idle;
-            current_ = config_.beginFrame;
-            resetCountdown(random);
+        // F04/F05 对拍修复（抑制解除去抖）：外部写者（创作时间轴轨）驱动
+        // 时，值只在过 0 交叉的瞬间驻留 begin；原实现单帧驻留即解除抑制，
+        // EyeControl 抢写 beginFrame 与轨乒乓（商业素材上表现为抖动与
+        // 半睁卡住）。现在要求值连续 stableFramesNeeded 帧驻留 begin 才
+        // 解除——轨的 authored 长零段（idle）会自然满足，过零交叉不会。
+        // REF 对应语义：updateEyeControl 先于 updateTimelineControl 执行、
+        // 轨无条件后写覆盖（EmoteFileCore.cpp 536/701，progress 调用序
+        // 507-508），创作轨最终赢；本抑制机制是其上的增强，去抖使其不与
+        // REF 结果冲突。
+        constexpr int kStableFramesNeeded = 8;
+        if(std::abs(currentVariableValue - stableValue_) > 0.000001) {
+            stableValue_ = currentVariableValue;
+            stableFrames_ = 0;
+        } else if(stableFrames_ < kStableFramesNeeded) {
+            ++stableFrames_;
+        }
+
+        if(suppressed_) {
+            if(atBegin(currentVariableValue) &&
+               stableFrames_ >= kStableFramesNeeded) {
+                suppressed_ = false;
+                phase_ = Phase::Idle;
+                current_ = config_.beginFrame;
+                resetCountdown(random);
+            }
         }
 
         if(hasPublished_ &&
@@ -441,10 +461,16 @@ namespace motion::physics {
                 suppressed_ = true;
                 phase_ = Phase::Idle;
                 current_ = currentVariableValue;
-            } else {
+            } else if(stableFrames_ >= kStableFramesNeeded) {
                 suppressed_ = false;
                 current_ = config_.beginFrame;
                 resetCountdown(random);
+            } else {
+                // 值在 begin 附近但驻留不足：视为外部写者仍在驱动，进入
+                // 抑制等待（不再抢写）。
+                suppressed_ = true;
+                phase_ = Phase::Idle;
+                current_ = currentVariableValue;
             }
         } else if(!hasPublished_ && !atBegin(currentVariableValue)) {
             suppressed_ = true;

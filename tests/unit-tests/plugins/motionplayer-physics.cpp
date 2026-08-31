@@ -325,19 +325,35 @@ TEST_CASE("Eye supports reverse ranges and manual suppression") {
     REQUIRE(eye.step(1.0, 10.0, [] { return 0.0; }).value() ==
             Catch::Approx(5.0));
     CHECK_FALSE(eye.step(1.0, 7.0, [] { return 0.0; }).has_value());
+    // F04/F05 debounce: a single frame at begin does not unsuppress — the
+    // external writer must hold begin for kStableFramesNeeded frames first.
+    CHECK_FALSE(eye.step(0.0, 10.0, [] { return 0.0; }).has_value());
+    for(int stable = 1; stable < 8; ++stable) {
+        CHECK_FALSE(eye.step(0.0, 10.0, [] { return 0.0; }).has_value());
+    }
     REQUIRE(eye.step(0.0, 10.0, [] { return 0.0; }).value() ==
             Catch::Approx(10.0));
 }
 
-TEST_CASE("Emote bounded child merge keeps head and face motions") {
+TEST_CASE("Emote bounded child merge is structural (C01)") {
+    // C01: merge decision is nodeType==3 only — source prefixes and the
+    // Japanese label allowlist were heuristic debt removed in 34a0e03.
+    // Unnamed legal attachments merge; non-type-3 nodes never do.
     CHECK(motion::detail::shouldMergeEmoteBoundedChild(
         3, "motion/face_parts/鼻(左右切り替え)", ""));
     CHECK(motion::detail::shouldMergeEmoteBoundedChild(3, "", "■目L"));
-    CHECK_FALSE(motion::detail::shouldMergeEmoteBoundedChild(
+    CHECK(motion::detail::shouldMergeEmoteBoundedChild(
         3, "motion/particle/dust", "dust"));
+    CHECK(motion::detail::shouldMergeEmoteBoundedChild(
+        3, "motion/tail_parts/ohagi", "しっぽ"));
     CHECK_FALSE(
         motion::detail::shouldMergeEmoteBoundedChild(0, "motion/face_parts/目L",
                                                     "■目L"));
+    CHECK_FALSE(
+        motion::detail::shouldMergeEmoteBoundedChild(2, "motion/face_parts/目L",
+                                                    "■目L"));
+    CHECK_FALSE(motion::detail::shouldMergeEmoteBoundedChild(
+        4, "motion/face_parts/目L", "■目L"));
 }
 
 TEST_CASE("Emote mesh division keeps authored face density") {
@@ -356,9 +372,11 @@ TEST_CASE("Emote mesh division keeps authored face density") {
     CHECK(face.divY >= 2);
     CHECK(face.divX + face.divY == 22);
 
+    // G01: the extra cap of 20 is gone (34a0e03); authored 40 maps to
+    // divX+divY-2 == 40, clamped only at the REF hard cap 50.
     const auto capped = motion::detail::planEmoteMeshDivision(
         40, 1.0, true, false, true, 100.0, 100.0);
-    CHECK(capped.divX + capped.divY == 22);
+    CHECK(capped.divX + capped.divY == 42);
 }
 
 TEST_CASE("Face clip labels accept parenthesized variants") {
