@@ -6,6 +6,7 @@
 #include "PrivateMotionGLL.h"
 #include "SourceCache.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_set>
@@ -207,13 +208,12 @@ namespace motion {
     }
 
     namespace {
-        // KRKR_EMOTE_COMMAND_GRAPH selects the REF render command graph port
-        // (buildRenderCommandGraph below) over the legacy PreparedItem
-        // two-stage path. Default stays off until the graph path passes a
-        // commercial reproduction verdict.
+        // The legacy per-part accurate-SLA path has been removed, so E-mote
+        // must use the REF render-command graph by default. Set
+        // KRKR_EMOTE_COMMAND_GRAPH=0 only for an explicit diagnostic rollback.
         const bool kRenderCommandGraphEnabled = [] {
             const char *env = std::getenv("KRKR_EMOTE_COMMAND_GRAPH");
-            return env && env[0] != '\0' && env[0] != '0';
+            return !(env && env[0] != '\0' && env[0] == '0');
         }();
         const bool kRenderCommandGraphDiag = [] {
             const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
@@ -333,6 +333,8 @@ namespace motion {
 
         using ScopedRenderCommand =
             detail::PlayerRuntime::ScopedRenderCommand;
+        using PreparedRenderItem =
+            detail::PlayerRuntime::PreparedRenderItem;
         auto &commands = _runtime->renderCommands;
         commands.clear();
         _runtime->preparedRenderItemsTopLevel.clear();
@@ -806,9 +808,109 @@ namespace motion {
             // mask items), so treat it as intentionally unwired.
             return commands.size() + 1;
         };
+        auto appendMaskWrapperDescendants =
+            [&](const void *ownerScope, int scopedNodeIndex,
+                size_t selfIndex, ScopedRenderCommand &groupCommand) {
+            const auto *ownerRuntime =
+                static_cast<const detail::PlayerRuntime *>(ownerScope);
+            if(ownerRuntime == nullptr || scopedNodeIndex < 0 ||
+               scopedNodeIndex >=
+                   static_cast<int>(ownerRuntime->nodes.size())) {
+                return;
+            }
+            if(ownerRuntime->nodes[static_cast<size_t>(scopedNodeIndex)]
+                   .nodeType != 3) {
+                return;
+            }
+            const int wrapperParentIndex =
+                ownerRuntime->nodes[static_cast<size_t>(scopedNodeIndex)]
+                    .parentIndex;
+            std::unordered_set<int> subtreeNodes;
+            for(size_t ni = 0; ni < ownerRuntime->nodes.size(); ++ni) {
+                int ancestor = ownerRuntime->nodes[ni].parentIndex;
+                for(int guard = 0;
+                    ancestor >= 0 &&
+                    ancestor < static_cast<int>(ownerRuntime->nodes.size()) &&
+                    guard < 256;
+                    ++guard) {
+                    if(ancestor == scopedNodeIndex) {
+                        subtreeNodes.insert(static_cast<int>(ni));
+                        break;
+                    }
+                    const int next = ownerRuntime
+                        ->nodes[static_cast<size_t>(ancestor)].parentIndex;
+                    if(next == ancestor) {
+                        break;
+                    }
+                    ancestor = next;
+                }
+            }
+            for(size_t ci = 0; ci < commands.size(); ++ci) {
+                if(ci == selfIndex) {
+                    continue;
+                }
+                bool inWrapperSubtree =
+                    commands[ci].renderScopeId == ownerScope &&
+                    subtreeNodes.count(commands[ci].scopedNodeIndex) != 0;
+                if(!inWrapperSubtree) {
+                    // Foreign child entries carry the outer wrapper in their
+                    // ancestor chain rather than sharing the owner's scope.
+                    // This is the cross-Player case that the merged numeric
+                    // namespace cannot resolve on its own.
+                    inWrapperSubtree = std::any_of(
+                        commands[ci].outerRenderAncestorChain.begin(),
+                        commands[ci].outerRenderAncestorChain.end(),
+                        [&](const auto &ancestor) {
+                            return ancestor.renderScopeId == ownerScope &&
+                                (ancestor.scopedNodeIndex == scopedNodeIndex ||
+                                 (wrapperParentIndex >= 0 &&
+                                  ancestor.scopedNodeIndex ==
+                                      wrapperParentIndex));
+                        });
+                }
+                if(!inWrapperSubtree) {
+                    continue;
+                }
+                if(std::find(groupCommand.childCommandIndices.begin(),
+                             groupCommand.childCommandIndices.end(),
+                             static_cast<int>(ci)) ==
+                   groupCommand.childCommandIndices.end()) {
+                    groupCommand.childCommandIndices.push_back(
+                        static_cast<int>(ci));
+                }
+                commands[ci].hasRenderParent = true;
+            }
+            if(kRenderCommandGraphDiag) {
+                if(auto logger = LOGGER) {
+                    logger->warn(
+                        "emote.cmdgraph.wrapperExpand wrapper={} "
+                        "subtreeNodes={} group={} children={}",
+                        scopedNodeIndex, subtreeNodes.size(),
+                        groupCommand.nodeIndex,
+                        groupCommand.childCommandIndices.size());
+                }
+            }
+        };
         for(size_t gi = 0; gi < commands.size(); ++gi) {
             auto &command = commands[gi];
             for(const auto &input : command.stencilMaskInputs) {
+                const void *fallbackScope =
+                    input.second != nullptr ? input.second
+                                            : command.renderScopeId;
+                // Body/face type-12 groups author their mask through the
+                // containing type-3 wrapper (the same node as
+                // visibleAncestor). That wrapper is intentionally omitted
+                // from the drawable command list, so binding only its first
+                // descendant loses the rest of the group. Expand the whole
+                // wrapper subtree before attempting single-mask wiring.
+                if(command.groupOnly &&
+                   (input.second == nullptr ||
+                    input.second == command.renderScopeId) &&
+                   input.first == command.item->visibleAncestorIndex) {
+                    appendMaskWrapperDescendants(fallbackScope, input.first,
+                                                 gi, command);
+                    continue;
+                }
                 size_t maskCommandIndex =
                     findCommandIndex(input.second, input.first, input.first);
                 if(maskCommandIndex >= commands.size() &&
@@ -827,12 +929,11 @@ namespace motion {
                     // the whole subtree either way. A return of size()+1
                     // marks an authored self-reference — intentionally
                     // unwired, not a binding failure.
-                    const void *fallbackScope =
-                        input.second != nullptr ? input.second
-                                                : command.renderScopeId;
                     maskCommandIndex = resolveMaskInputOrSubtreeRoot(
                         fallbackScope, input.first, gi);
                     if(maskCommandIndex == commands.size() + 1) {
+                        appendMaskWrapperDescendants(fallbackScope, input.first,
+                                                     gi, command);
                         continue;
                     }
                 }
@@ -845,6 +946,61 @@ namespace motion {
                     static_cast<int>(maskCommandIndex));
                 commands[maskCommandIndex].item->stencilMaskReferenced = true;
                 ++maskWiredCount;
+            }
+        }
+
+        // The prepared-item pass owns a few native aggregation edges that do
+        // not have an authored visibleAncestor (notably the self-seeded
+        // type-12 stencil groups 6/16/24).  REF keeps those edges in the
+        // command graph before deriving group geometry.  Project them here;
+        // otherwise the graph command exists but has no children to union,
+        // leaving an invalid clip and dropping the entire face/body group.
+        std::unordered_map<const PreparedRenderItem *, size_t>
+            commandIndexByItem;
+        commandIndexByItem.reserve(commands.size());
+        for(size_t ci = 0; ci < commands.size(); ++ci) {
+            commandIndexByItem.emplace(commands[ci].item, ci);
+        }
+        for(size_t ci = 0; ci < commands.size(); ++ci) {
+            auto &command = commands[ci];
+            auto appendPreparedEdge = [&](PreparedRenderItem *related,
+                                          bool maskEdge) {
+                if(!related) {
+                    return;
+                }
+                const auto it = commandIndexByItem.find(related);
+                if(it == commandIndexByItem.end() || it->second == ci) {
+                    return;
+                }
+                auto &indices = maskEdge ? command.stencilMaskCommandIndices
+                                         : command.childCommandIndices;
+                if(std::find(indices.begin(), indices.end(),
+                             static_cast<int>(it->second)) == indices.end()) {
+                    indices.push_back(static_cast<int>(it->second));
+                }
+                if(command.groupOnly) {
+                    commands[it->second].hasRenderParent = true;
+                }
+            };
+            for(auto *child : command.item->childItems) {
+                appendPreparedEdge(child, false);
+            }
+            for(auto *mask : command.item->stencilMaskItems) {
+                appendPreparedEdge(mask, true);
+            }
+            if(kRenderCommandGraphDiag && command.groupOnly &&
+               (command.nodeIndex == 6 || command.nodeIndex == 16 ||
+                command.nodeIndex == 24)) {
+                if(auto logger = LOGGER) {
+                    logger->warn(
+                        "emote.cmdgraph.edges node={} children={} masks={} "
+                        "rawFlag21={} visibleAncestor={} scope={}",
+                        command.nodeIndex, command.childCommandIndices.size(),
+                        command.stencilMaskCommandIndices.size(),
+                        command.item->rawFlag21 ? 1 : 0,
+                        command.item->visibleAncestorIndex,
+                        command.renderScopeId);
+                }
             }
         }
 
@@ -907,6 +1063,23 @@ namespace motion {
                 groupItem->rawFlag21 = true;
             }
         }
+        if(kRenderCommandGraphDiag && LOGGER) {
+            for(const auto &command : commands) {
+                if(!command.groupOnly ||
+                   !(command.nodeIndex == 6 || command.nodeIndex == 16 ||
+                     command.nodeIndex == 24)) {
+                    continue;
+                }
+                LOGGER->warn(
+                    "emote.cmdgraph.geometry node={} rawFlag21={} "
+                    "clip=[{},{},{},{}] children={} masks={}",
+                    command.nodeIndex, command.item->rawFlag21 ? 1 : 0,
+                    command.item->clipRect[0], command.item->clipRect[1],
+                    command.item->clipRect[2], command.item->clipRect[3],
+                    command.childCommandIndices.size(),
+                    command.stencilMaskCommandIndices.size());
+            }
+        }
 
         // Pass 6 — projection onto the PreparedRenderItem pointer channels
         // (parentItem/childItems/stencilMaskItems) that the proven executor
@@ -916,6 +1089,15 @@ namespace motion {
         // scoped mask bindings the legacy numeric namespace could not
         // resolve. Flags-6 modifier edges stay graph-only until the
         // executor learns the item+264 alpha carrier (phase 2).
+        const auto isPassThroughGroup =
+            [](const ScopedRenderCommand &command) {
+            return command.groupOnly && command.item != nullptr &&
+                !command.hasOwnSource && command.item->sourceKey.empty() &&
+                !command.childCommandIndices.empty() &&
+                command.stencilMaskCommandIndices.empty() &&
+                command.stencilModifierCommandIndices.empty() &&
+                command.opacity >= 255;
+        };
         auto appendUniqueItem =
             [](std::vector<detail::PlayerRuntime::PreparedRenderItem *> &list,
                detail::PlayerRuntime::PreparedRenderItem *item) {
@@ -927,14 +1109,16 @@ namespace motion {
             for(const int childIndex : command.childCommandIndices) {
                 auto *childItem = commands[childIndex].item;
                 appendUniqueItem(command.item->childItems, childItem);
-                if(childItem->parentItem == nullptr) {
+                if(!isPassThroughGroup(command) &&
+                   childItem->parentItem == nullptr) {
                     childItem->parentItem = command.item;
                 }
             }
             for(const int maskIndex : command.stencilMaskCommandIndices) {
                 auto *maskItem = commands[maskIndex].item;
                 appendUniqueItem(command.item->stencilMaskItems, maskItem);
-                if(maskItem->parentItem == nullptr) {
+                if(!isPassThroughGroup(command) &&
+                   maskItem->parentItem == nullptr) {
                     maskItem->parentItem = command.item;
                 }
             }
@@ -981,6 +1165,13 @@ namespace motion {
             this, renderLayerObject, skipUpdate);
 #endif
         const auto motionPath = _runtime->activeMotion->path;
+        const bool renderProfileEnabled = [] {
+            const char *env = std::getenv("KRKR_EMOTE_RENDER_PROFILE");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        const auto executeStart = renderProfileEnabled
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
 
         auto *renderLayer = resolveNativeLayer(renderLayerObject);
         if(!renderLayer) {
@@ -1071,7 +1262,9 @@ namespace motion {
         }
 
         struct ResolvedSourceObject {
-            tTJSVariant object;
+            std::shared_ptr<tTVPBaseBitmap> bitmap;
+            // Kept for the headless post-draw probes. Normal rendering no
+            // longer materializes a SourceCache Layer just to obtain pixels.
             iTJSDispatch2 *layerObject = nullptr;
             tTJSNI_BaseLayer *layer = nullptr;
             iTVPBaseBitmap *image = nullptr;
@@ -1086,40 +1279,84 @@ namespace motion {
                 return resolved;
             }
 
-            resolved.object =
-                _runtime->sourceCacheNative->loadRenderSourceByName(
+            resolved.bitmap =
+                _runtime->sourceCacheNative->loadRenderSourceBitmapByName(
                     detail::widen(item.sourceKey), item.srcRef, item.blendMode,
-                    item.packedColors, scratchOwner, scratchParent,
-                    item.sourceMotion);
-            if(resolved.object.Type() != tvtObject ||
-               !resolved.object.AsObjectNoAddRef()) {
+                    item.packedColors, item.sourceMotion);
+            if(!resolved.bitmap) {
                 return resolved;
             }
 
-            resolved.layerObject = resolved.object.AsObjectNoAddRef();
-            resolved.layer = resolveNativeLayer(resolved.layerObject);
-            resolved.image =
-                resolved.layer ? resolved.layer->GetMainImage() : nullptr;
-            if(resolved.image) {
-                resolved.width =
-                    static_cast<tjs_int>(resolved.image->GetWidth());
-                resolved.height =
-                    static_cast<tjs_int>(resolved.image->GetHeight());
-            }
+            resolved.image = resolved.bitmap.get();
+            resolved.width = static_cast<tjs_int>(resolved.bitmap->GetWidth());
+            resolved.height =
+                static_cast<tjs_int>(resolved.bitmap->GetHeight());
 
             detail::logoChainTraceLogf(
                 motionPath, "execute.source", "0x6C1B70/0x6A7BA8",
                 _clampedEvalTime,
-                "source={} sourceObject={} nativeLayer={} image={}x{}",
-                item.sourceKey, static_cast<const void *>(resolved.layerObject),
-                static_cast<const void *>(resolved.layer), resolved.width,
-                resolved.height);
+                "source={} bitmap={}x{}",
+                item.sourceKey, resolved.width, resolved.height);
             return resolved;
         };
 
         const int playerStencilType = _maskMode;
+        // REF keeps E-mote output on the linear sampler for both GPU and
+        // software render managers.  Nearest is visibly destructive on the
+        // small eye/lash source cells and turns fractional motion into hard
+        // one-pixel jumps.
+        const auto emoteStretchType = stLinear;
+        const auto axisAlignedRectBounds =
+            [](const std::array<float, 8> &corners, float xOffset,
+               float yOffset, tTVPRect &out) -> bool {
+            constexpr float epsilon = 0.02f;
+            if(std::fabs(corners[0] - corners[6]) > epsilon ||
+               std::fabs(corners[2] - corners[4]) > epsilon ||
+               std::fabs(corners[1] - corners[3]) > epsilon ||
+               std::fabs(corners[5] - corners[7]) > epsilon) {
+                return false;
+            }
+            const float left = std::min(corners[0], corners[2]) + xOffset;
+            const float right = std::max(corners[0], corners[2]) + xOffset;
+            const float top = std::min(corners[1], corners[5]) + yOffset;
+            const float bottom = std::max(corners[1], corners[5]) + yOffset;
+            out = { static_cast<int>(std::lround(left)),
+                    static_cast<int>(std::lround(top)),
+                    static_cast<int>(std::lround(right)),
+                    static_cast<int>(std::lround(bottom)) };
+            return out.left < out.right && out.top < out.bottom;
+        };
+        auto ensurePrivateOutputLayer =
+            [&](tTJSVariant &slot) -> iTJSDispatch2 * {
+            iTJSDispatch2 *layerObject =
+                slot.Type() == tvtObject ? slot.AsObjectNoAddRef() : nullptr;
+            if(!layerObject) {
+                // Construction still needs a tree owner, but command scratch
+                // surfaces must not remain attached to the primary layer.
+                layerObject = ensureReusableLayerObject(
+                    slot, scratchOwner, nullptr,
+                    static_cast<tTVPLayerType>(ltAlpha), false);
+            } else if(!configureReusableLayerObject(
+                          layerObject, nullptr,
+                          static_cast<tTVPLayerType>(ltAlpha), false, false)) {
+                return nullptr;
+            }
+            if(auto *layer = resolveNativeLayer(layerObject);
+               layer && layer->GetParent()) {
+                layer->SetParent(nullptr);
+            }
+            return layerObject;
+        };
         auto ensureLeafItemLayer =
             [&](PreparedRenderItem &item) -> iTJSDispatch2 * {
+            if(kRenderCommandGraphEnabled) {
+                // REF command buffers are private scratch surfaces. Keeping
+                // them under the user-facing primary layer makes every
+                // SetSize/Update invalidate the whole layer tree and turns a
+                // 60 Hz motion into an O(parts × tree) recomposite. Reuse
+                // the item slot under the current private SLA target instead.
+                return ensurePrivateOutputLayer(item.leafLayer);
+            }
             const tjs_int stateLayerId = item.layerId;
             if(stateLayerId == 0) {
                 return ensureReusableLayerObject(
@@ -1171,10 +1408,29 @@ namespace motion {
         };
         auto ensureComposedItemLayer =
             [&](PreparedRenderItem &item) -> iTJSDispatch2 * {
+            if(kRenderCommandGraphEnabled) {
+                return ensurePrivateOutputLayer(item.composedLayer);
+            }
             return ensureReusableLayerObject(
                 item.composedLayer, scratchOwner, scratchParent,
                 static_cast<tTVPLayerType>(ltAlpha), false);
         };
+        tTJSVariant graphScratchLayerSlot;
+        iTJSDispatch2 *graphScratchLayerObject = nullptr;
+        tTJSNI_BaseLayer *graphScratchLayer = nullptr;
+        if(kRenderCommandGraphEnabled) {
+            graphScratchLayerObject =
+                ensurePrivateOutputLayer(graphScratchLayerSlot);
+            graphScratchLayer = resolveNativeLayer(graphScratchLayerObject);
+            if(!graphScratchLayerObject || !graphScratchLayer ||
+               !prepareLayerForRender(
+                   graphScratchLayerObject,
+                   static_cast<int>(renderLayer->GetWidth()),
+                   static_cast<int>(renderLayer->GetHeight()), 0x00000000)) {
+                graphScratchLayerObject = nullptr;
+                graphScratchLayer = nullptr;
+            }
+        }
         auto renderItemSourceToLayer =
             [&](PreparedRenderItem &item, iTJSDispatch2 *targetLayerObject,
                 tTJSNI_BaseLayer *targetLayer, iTVPBaseBitmap *srcImage,
@@ -1221,10 +1477,17 @@ namespace motion {
             const bool meshAsAffine = item.meshType == 1 &&
                 item.meshDivX <= 2 && item.meshDivY <= 2;
             if(item.meshType == 0 || meshAsAffine) {
+                tTVPRect destinationRect;
+                if(axisAlignedRectBounds(item.localCorners, 0.5f, 0.5f,
+                                         destinationRect)) {
+                    targetLayer->StretchCopy(destinationRect, srcImage,
+                                              sourceRect, emoteStretchType);
+                    return true;
+                }
                 const auto localPts =
                     buildAffineTrianglePoints(item.localCorners, 0.0f, 0.0f);
                 targetLayer->AffineCopy(localPts.data(), srcImage, sourceRect,
-                                        stFastLinear, _clearEnabled);
+                                        emoteStretchType, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                 recordPostDrawCandidate(
                     targetLayerObject,
@@ -1240,7 +1503,7 @@ namespace motion {
                 if(item.meshType == 1 || item.meshType == 2) {
                     targetLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
                                           item.meshDivY, srcImage, sourceRect,
-                                          stFastLinear, _clearEnabled);
+                                          emoteStretchType, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                     recordPostDrawCandidate(
                         targetLayerObject,
@@ -1323,7 +1586,7 @@ namespace motion {
                 const auto localPts =
                     buildAffineTrianglePoints(item.corners, offsetX, offsetY);
                 candidateLayer->AffineCopy(localPts.data(), source.image,
-                                           sourceRect, stFastLinear, true);
+                                           sourceRect, emoteStretchType, true);
                 recordPostDrawCandidate(candidateLayerObject,
                                         "Player::executeLayerRenderCommands."
                                         "accurateSla.item.afterAffineCopy");
@@ -1338,7 +1601,7 @@ namespace motion {
             if(item.meshType == 1 || item.meshType == 2) {
                 candidateLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
                                          item.meshDivY, source.image,
-                                         sourceRect, stFastLinear, true);
+                                         sourceRect, emoteStretchType, true);
                 recordPostDrawCandidate(candidateLayerObject,
                                         "Player::executeLayerRenderCommands."
                                         "accurateSla.item.afterMeshCopy");
@@ -1349,11 +1612,13 @@ namespace motion {
 #endif
         auto chooseItemOutputLayerObject =
             [&](PreparedRenderItem &item) -> iTJSDispatch2 * {
-            const bool preferLeafLayer = (item.stencilComposite & 4) == 0;
-            if(!preferLeafLayer && item.composedLayer.Type() == tvtObject) {
+            // REF selects a composed output whenever the command actually
+            // has one. Gating this on stencilComposite drops ordinary wrapper
+            // groups whose children are colour-composited without a mask.
+            if(item.composedBuilt && item.composedLayer.Type() == tvtObject) {
                 return item.composedLayer.AsObjectNoAddRef();
             }
-            if(item.leafLayer.Type() == tvtObject) {
+            if(item.leafBuilt && item.leafLayer.Type() == tvtObject) {
                 return item.leafLayer.AsObjectNoAddRef();
             }
             if(item.composedLayer.Type() == tvtObject) {
@@ -1393,14 +1658,20 @@ namespace motion {
                 return true;
             }
 
+            auto *clipTarget = graphScratchLayer ? graphScratchLayer : renderLayer;
             outRect = {
                 0,
                 0,
-                renderLayer ? static_cast<int>(renderLayer->GetWidth()) : 0,
-                renderLayer ? static_cast<int>(renderLayer->GetHeight()) : 0,
+                clipTarget ? static_cast<int>(clipTarget->GetWidth()) : 0,
+                clipTarget ? static_cast<int>(clipTarget->GetHeight()) : 0,
             };
             return true;
         };
+        // The previous frame leaves the target clip reset. Avoid touching the
+        // primary layer here on the graph path: ResetClip invalidates its
+        // exposed-region tree and costs tens of milliseconds even when no
+        // command has a viewport clip.
+        bool targetLayerClipIsFull = kRenderCommandGraphEnabled;
         auto applyTargetLayerClipLike_0x6C7440 =
             [&](const PreparedRenderItem &item,
                 RenderClipRect &outRect) -> bool {
@@ -1413,15 +1684,18 @@ namespace motion {
             // libkrkr2.so Player_renderToCanvas_guess @ 0x6C77C4..0x6C78DC:
             // set target Layer clip before both direct and composed output. The
             // later operateAffine call still receives the full source rect.
+            auto *clipTarget = graphScratchLayer ? graphScratchLayer : renderLayer;
             if(hasViewportClip) {
-                renderLayer->SetClip(outRect.left, outRect.top,
-                                     outRect.right - outRect.left,
-                                     outRect.bottom - outRect.top);
-            } else {
-                renderLayer->ResetClip();
+                clipTarget->SetClip(outRect.left, outRect.top,
+                                    outRect.right - outRect.left,
+                                    outRect.bottom - outRect.top);
+                targetLayerClipIsFull = false;
+            } else if(!kRenderCommandGraphEnabled || !targetLayerClipIsFull) {
+                clipTarget->ResetClip();
+                targetLayerClipIsFull = true;
             }
 
-            const auto &actualClip = renderLayer->GetClip();
+            const auto &actualClip = clipTarget->GetClip();
             outRect = {
                 actualClip.left,
                 actualClip.top,
@@ -1431,7 +1705,8 @@ namespace motion {
             return true;
         };
 
-        const bool commandOutputCacheEnabled = _runtime->isEmoteMode &&
+        const bool commandOutputCacheEnabled =
+            detail::isEmoteLikeMotion(*_runtime) &&
             !_runtime->renderCommands.empty() &&
             [] {
                 const char *env = std::getenv("KRKR_EMOTE_DISABLE_OUTPUT_CACHE");
@@ -1580,16 +1855,15 @@ namespace motion {
 
             auto source = resolveSourceObjectLike_0x6C1B70(item);
             const bool hasSourceBitmap =
-                source.image && source.width > 0 && source.height > 0;
+                source.bitmap && source.width > 0 && source.height > 0;
             if(!hasSourceBitmap && item.childItems.empty()) {
                 detail::logoChainTraceCheck(
                     motionPath, "execute.source", "0x6C7440", _clampedEvalTime,
-                    "resolved source object should exist with positive image "
-                    "size",
-                    fmt::format("nodeIndex={} source={} object={} image={}x{}",
-                                item.nodeIndex, item.sourceKey,
-                                static_cast<const void *>(source.layerObject),
-                                source.width, source.height),
+                                "resolved source bitmap should exist with "
+                                "positive image size",
+                    fmt::format("nodeIndex={} source={} image={}x{}",
+                                item.nodeIndex, item.sourceKey, source.width,
+                                source.height),
                     false,
                     "sub_6C1B70 could not resolve a drawable source object");
                 return false;
@@ -1629,26 +1903,33 @@ namespace motion {
                 return false;
             }
 
-            iTJSDispatch2 *leafLayerObject = ensureLeafItemLayer(item);
-            auto *leafLayer = resolveNativeLayer(leafLayerObject);
-            if(!leafLayerObject || !leafLayer) {
-                detail::logoChainTraceCheck(
-                    motionPath, "execute.workLayer", "0x6C7440",
-                    _clampedEvalTime,
-                    "leaf layer should resolve for buffered item path",
-                    fmt::format("nodeIndex={} leafLayer={}", item.nodeIndex,
-                                static_cast<const void *>(leafLayer)),
-                    false,
-                    "sub_6C7440 could not allocate the per-item leaf layer");
-                return false;
-            }
+            if(hasSourceBitmap) {
+                iTJSDispatch2 *leafLayerObject = ensureLeafItemLayer(item);
+                auto *leafLayer = resolveNativeLayer(leafLayerObject);
+                if(!leafLayerObject || !leafLayer) {
+                    detail::logoChainTraceCheck(
+                        motionPath, "execute.workLayer", "0x6C7440",
+                        _clampedEvalTime,
+                        "leaf layer should resolve for buffered item path",
+                        fmt::format("nodeIndex={} leafLayer={}", item.nodeIndex,
+                                    static_cast<const void *>(leafLayer)),
+                        false,
+                        "sub_6C7440 could not allocate the per-item leaf layer");
+                    return false;
+                }
 
-            if(!renderItemSourceToLayer(item, leafLayerObject, leafLayer,
-                                        source.image, sourceRect,
-                                        "item.leaf.affineCopy")) {
-                return false;
+                if(!renderItemSourceToLayer(item, leafLayerObject, leafLayer,
+                                            source.image, sourceRect,
+                                            "item.leaf.affineCopy")) {
+                    return false;
+                }
+                item.leafBuilt = true;
+            } else {
+                // Type-12/wrapper commands often carry no source of their own;
+                // their output is the composition of child commands. Avoid
+                // allocating and clearing a throwaway blank leaf surface.
+                item.leafBuilt = false;
             }
-            item.leafBuilt = true;
             item.builtRect = item.clipRect;
 
             bool hasBuiltChildren = false;
@@ -1683,6 +1964,13 @@ namespace motion {
             }
             if(item.leafBuilt) {
                 const auto localRect = localRectFromItem(item);
+                auto *leafLayer = resolveNativeLayer(
+                    item.leafLayer.Type() == tvtObject
+                        ? item.leafLayer.AsObjectNoAddRef()
+                        : nullptr);
+                if(!leafLayer || !leafLayer->GetMainImage()) {
+                    return false;
+                }
                 composedLayer->CopyRect(0, 0, leafLayer->GetMainImage(),
                                         nullptr, localRect);
             }
@@ -1695,32 +1983,6 @@ namespace motion {
                 if(!child.rawFlag21 || child.rawFlag16) {
                     continue;
                 }
-                if((item.stencilComposite & 4) != 0 &&
-                   item.stencilMaskItems.empty()) {
-                    auto *childMaskLayerObject =
-                        child.leafLayer.Type() == tvtObject
-                        ? child.leafLayer.AsObjectNoAddRef()
-                        : nullptr;
-                    if(!childMaskLayerObject) {
-                        continue;
-                    }
-                    const int childWidth =
-                        child.builtRect[2] - child.builtRect[0];
-                    const int childHeight =
-                        child.builtRect[3] - child.builtRect[1];
-                    if(childWidth <= 0 || childHeight <= 0) {
-                        continue;
-                    }
-                    applyMotionAlphaMaskLike_0x6AF104(
-                        composedLayerObject,
-                        child.builtRect[0] - item.clipRect[0],
-                        child.builtRect[1] - item.clipRect[1],
-                        childMaskLayerObject, 0, 0, childWidth, childHeight, 64,
-                        playerStencilType, item.stencilComposite, motionPath,
-                        _clampedEvalTime, item.nodeIndex, child.nodeIndex);
-                    continue;
-                }
-
                 auto *childOutputLayerObject =
                     chooseItemOutputLayerObject(child);
                 auto *childOutputLayer =
@@ -1773,13 +2035,29 @@ namespace motion {
             }
             const int compositeMaskOperation = item.stencilComposite & 3;
             if((item.stencilComposite & 4) != 0 &&
+               !compositeMaskSurfaces.empty() &&
                (compositeMaskOperation == 1 ||
                 compositeMaskOperation == 2)) {
-                applyMotionCompositeMasksLike_0x6AF104(
-                    composedLayerObject, item.clipRect[0], item.clipRect[1],
-                    clipWidth, clipHeight, compositeMaskSurfaces, 64,
-                    playerStencilType, item.stencilComposite, motionPath,
-                    _clampedEvalTime, item.nodeIndex);
+                if(compositeMaskSurfaces.size() == 1) {
+                    // REF applies a single op-5 mask across the whole group,
+                    // not only across the mask bitmap's own rectangle. This
+                    // clears the iris/eyelid pixels outside the aperture and
+                    // is what keeps the upper lash on the eye boundary.
+                    const auto &surface = compositeMaskSurfaces.front();
+                    applyMotionAlphaMaskLike_0x6AF104(
+                        composedLayerObject, 0, 0, surface.layerObject,
+                        item.clipRect[0] - surface.worldLeft,
+                        item.clipRect[1] - surface.worldTop, clipWidth,
+                        clipHeight, 64, playerStencilType,
+                        compositeMaskOperation, motionPath, _clampedEvalTime,
+                        item.nodeIndex, surface.nodeIndex);
+                } else {
+                    applyMotionCompositeMasksLike_0x6AF104(
+                        composedLayerObject, item.clipRect[0], item.clipRect[1],
+                        clipWidth, clipHeight, compositeMaskSurfaces, 64,
+                        playerStencilType, item.stencilComposite, motionPath,
+                        _clampedEvalTime, item.nodeIndex);
+                }
             } else {
                 for(const auto &surface : compositeMaskSurfaces) {
                     applyMotionAlphaMaskLike_0x6AF104(
@@ -1813,36 +2091,81 @@ namespace motion {
             return true;
         };
 
-        for(auto *itemPtr : _runtime->preparedRenderItemsTopLevel) {
+        // The REF executor walks the render-command graph, not the legacy
+        // prepared top-level list. Synthetic type-12 stencil groups are
+        // intentionally emitted only in the auxiliary group list
+        // (topLevelList=false); using preparedRenderItemsTopLevel therefore
+        // drops the group and its children before buildItemOutput can
+        // compose them. That is the intermittent whole-face/body loss seen
+        // when an action switches a group between direct and masked output.
+        std::vector<PreparedRenderItem *> executionItems;
+        if(kRenderCommandGraphEnabled && !_runtime->renderCommands.empty()) {
+            executionItems.reserve(_runtime->renderCommands.size());
+            const auto isPassThroughGroup =
+                [](const auto &command) {
+                return command.groupOnly && command.item != nullptr &&
+                    !command.hasOwnSource &&
+                    command.item->sourceKey.empty() &&
+                    command.childCommandIndices.size() > 0 &&
+                    command.stencilMaskCommandIndices.empty() &&
+                    command.stencilModifierCommandIndices.empty() &&
+                    command.opacity >= 255;
+            };
+            std::vector<bool> consumedByParent(
+                _runtime->renderCommands.size(), false);
+            for(const auto &command : _runtime->renderCommands) {
+                if(isPassThroughGroup(command)) {
+                    continue;
+                }
+                for(const int childIndex : command.childCommandIndices) {
+                    if(childIndex >= 0 &&
+                       childIndex <
+                           static_cast<int>(consumedByParent.size())) {
+                        consumedByParent[static_cast<size_t>(childIndex)] =
+                            true;
+                    }
+                }
+                for(const int maskIndex : command.stencilMaskCommandIndices) {
+                    if(maskIndex >= 0 &&
+                       maskIndex < static_cast<int>(consumedByParent.size())) {
+                        consumedByParent[static_cast<size_t>(maskIndex)] =
+                            true;
+                    }
+                }
+            }
+            for(size_t commandIndex = 0;
+                commandIndex < _runtime->renderCommands.size();
+                ++commandIndex) {
+                const auto &command = _runtime->renderCommands[commandIndex];
+                if(!command.item || command.alphaMaskOnly ||
+                   isPassThroughGroup(command) ||
+                   (command.hasRenderParent &&
+                    consumedByParent[commandIndex])) {
+                    continue;
+                }
+                executionItems.push_back(command.item);
+            }
+        } else {
+            executionItems = _runtime->preparedRenderItemsTopLevel;
+        }
+        const auto cacheHitsBefore = _runtime->emoteCommandOutputCacheHits;
+        const auto leafCacheHitsBefore =
+            _runtime->emoteCommandLeafCacheHits;
+        std::size_t outputBuilt = 0;
+        std::size_t outputBuildFailed = 0;
+        std::size_t directOutputs = 0;
+        std::size_t bufferedOutputs = 0;
+        auto *drawTargetLayer = graphScratchLayer ? graphScratchLayer : renderLayer;
+        double outputBuildMs = 0.0;
+        double outputCopyMs = 0.0;
+        double outputClipMs = 0.0;
+        double presentationCopyMs = 0.0;
+
+        for(auto *itemPtr : executionItems) {
             if(!itemPtr) {
                 continue;
             }
             auto &item = *itemPtr;
-            {
-                static const bool geoDiag = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(geoDiag && item.corners.size() >= 8) {
-                    float sx = 0, sy = 0;
-                    for(size_t ci = 0; ci + 1 < item.corners.size(); ci += 2) {
-                        sx += item.corners[ci];
-                        sy += item.corners[ci + 1];
-                    }
-                    if(auto logger = LOGGER) {
-                        logger->warn(
-                            "emote.geo node={} src='{}' cornersSum=({:.2f},"
-                            "{:.2f}) meshPts={} localMesh={} parent={} "
-                            "direct={} leaf={}",
-                            item.nodeIndex, item.sourceKey, sx, sy,
-                            item.meshPoints.size(),
-                            item.localMeshPoints.size(),
-                            item.parentItem != nullptr ? 1 : 0,
-                            item.executedDirect ? 1 : 0,
-                            item.leafBuilt ? 1 : 0);
-                    }
-                }
-            }
 
             const auto blendMode =
                 resolveBlendOperationModeLike_0x6C7440(item.blendMode);
@@ -1863,8 +2186,21 @@ namespace motion {
                 continue;
             }
             RenderClipRect targetLayerClip;
+            const auto itemClipStart = renderProfileEnabled
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
             if(!applyTargetLayerClipLike_0x6C7440(item, targetLayerClip)) {
+                if(renderProfileEnabled) {
+                    outputClipMs += std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - itemClipStart)
+                        .count();
+                }
                 continue;
+            }
+            if(renderProfileEnabled) {
+                outputClipMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - itemClipStart)
+                    .count();
             }
             detail::logoChainTraceLogf(
                 motionPath, "execute.setClip", "0x6C7440", _clampedEvalTime,
@@ -1874,17 +2210,40 @@ namespace motion {
             if(_preview && item.skipFlag1) {
                 continue;
             }
-            if(item.parentItem) {
+            if(!kRenderCommandGraphEnabled && item.parentItem) {
                 continue;
             }
+            const auto itemBuildStart = renderProfileEnabled
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
             if(!buildItemOutput(buildItemOutput, &item)) {
+                if(renderProfileEnabled) {
+                    outputBuildMs += std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - itemBuildStart)
+                        .count();
+                }
+                ++outputBuildFailed;
                 continue;
+            }
+            if(renderProfileEnabled) {
+                outputBuildMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - itemBuildStart)
+                    .count();
+            }
+            ++outputBuilt;
+            if(item.executedDirect) {
+                ++directOutputs;
+            } else {
+                ++bufferedOutputs;
             }
 
+            const auto itemCopyStart = renderProfileEnabled
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
             try {
                 if(item.executedDirect) {
                     auto source = resolveSourceObjectLike_0x6C1B70(item);
-                    if(!source.image || source.width <= 0 ||
+                    if(!source.bitmap || source.width <= 0 ||
                        source.height <= 0) {
                         continue;
                     }
@@ -1903,27 +2262,18 @@ namespace motion {
                                 executionMethod, item, renderLayer,
                                 std::shared_ptr<tTVPBaseBitmap>{},
                                 sourceArgObject, sourceArgLayer, sourceArgClass,
-                                blendMode, opa, stFastLinear);
-                        };
+                                blendMode, opa, emoteStretchType);
+                    };
 #endif
                     const bool meshAsAffine = item.meshType == 1 &&
                         item.meshDivX <= 2 && item.meshDivY <= 2;
                     if(item.meshType == 0 || meshAsAffine) {
-                        if(!source.layerObject || !source.layer) {
-                            detail::logoChainTraceCheck(
-                                motionPath, "execute.directSourceLayer",
-                                "0x6948E8/0x6C7440", _clampedEvalTime,
-                                "direct affine source should be cached as "
-                                "Layer",
-                                fmt::format(
-                                    "nodeIndex={} source={} object={} layer={}",
-                                    item.nodeIndex, item.sourceKey,
-                                    static_cast<const void *>(
-                                        source.layerObject),
-                                    static_cast<const void *>(source.layer)),
-                                false,
-                                "sub_6C1B70 direct affine source object setup "
-                                "failed");
+                        tTVPRect destinationRect;
+                        if(axisAlignedRectBounds(item.corners, 0.0f, 0.0f,
+                                                 destinationRect)) {
+                            drawTargetLayer->OperateStretch(
+                                destinationRect, source.bitmap.get(), sourceRect,
+                                blendMode, opa, emoteStretchType);
                             continue;
                         }
 #if defined(KRKR2_WASMTIME_HEADLESS)
@@ -1934,26 +2284,11 @@ namespace motion {
                         TVPResetSoftwareAffineDiagnosticsForWasmtime();
                         emitDirectProbe("Player::executeLayerRenderCommands."
                                         "direct.beforeOperateAffine",
-                                        "before", "tjs-funcall-operateAffine",
-                                        source.layerObject, source.layer,
-                                        "Layer");
+                                        "before", "native-operateAffine");
 #endif
-                        const tjs_error operateResult =
-                            callLayerOperateAffineLike_0x6C7440(
-                                layerClassObject, renderLayerObject,
-                                worldPts.data(), source.object, sourceRect,
-                                blendMode, opa, stFastLinear);
-                        if(TJS_FAILED(operateResult)) {
-                            detail::logoChainTraceCheck(
-                                motionPath, "execute.directOperateAffine",
-                                "0x6C7440", _clampedEvalTime,
-                                "FuncCall(\"operateAffine\") should succeed",
-                                fmt::format("nodeIndex={} hr={}",
-                                            item.nodeIndex, operateResult),
-                                false,
-                                "sub_6C7440 direct affine dispatch failed");
-                            continue;
-                        }
+                        operateAffineBitmapWithoutLayerUpdate(
+                            drawTargetLayer, worldPts.data(), source.bitmap.get(),
+                            sourceRect, blendMode, opa, emoteStretchType);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                         if(detail::motionTraceIsAccurateSlaRenderActive()) {
                             if(!renderAccurateSlaPostDrawCandidateLike_0x6C9CA8(
@@ -1961,7 +2296,9 @@ namespace motion {
                                 recordPostDrawCandidate(
                                     directItemCoversRenderTarget(item)
                                         ? renderLayerObject
-                                        : source.layerObject,
+                                        : (source.layerObject
+                                               ? source.layerObject
+                                               : renderLayerObject),
                                     "Player::executeLayerRenderCommands.direct."
                                     "afterOperateAffine."
                                     "accurateSlaCandidateFallback");
@@ -1969,9 +2306,7 @@ namespace motion {
                         }
                         emitDirectProbe("Player::executeLayerRenderCommands."
                                         "direct.afterOperateAffine",
-                                        "after", "tjs-funcall-operateAffine",
-                                        source.layerObject, source.layer,
-                                        "Layer");
+                                        "after", "native-operateAffine");
 #endif
                     } else {
                         if(item.meshPoints.empty() || item.meshDivX < 2 ||
@@ -1988,10 +2323,10 @@ namespace motion {
                                 "beforeOperateMesh",
                                 "before");
 #endif
-                            renderLayer->OperateMesh(
+                            drawTargetLayer->OperateMesh(
                                 worldMeshPoints.data(), item.meshDivX,
                                 item.meshDivY, source.image, sourceRect,
-                                blendMode, opa, stFastLinear, _clearEnabled);
+                                blendMode, opa, emoteStretchType, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                             emitDirectProbe(
                                 "Player::executeLayerRenderCommands.direct."
@@ -2047,9 +2382,9 @@ namespace motion {
                 }
 
                 const auto localRect = localRectFromItem(item);
-                renderLayer->OperateRect(item.clipRect[0], item.clipRect[1],
-                                         outputLayer->GetMainImage(), localRect,
-                                         blendMode, opa);
+                drawTargetLayer->OperateRect(
+                    item.clipRect[0], item.clipRect[1],
+                    outputLayer->GetMainImage(), localRect, blendMode, opa);
                 detail::logoChainTraceLogf(
                     motionPath, "execute.copy", "0x6C7440", _clampedEvalTime,
                     "branch={} nodeIndex={} clipRect=[{},{},{},{}] "
@@ -2092,11 +2427,53 @@ namespace motion {
             } catch(const eTJS &) {
             } catch(...) {
             }
+            if(renderProfileEnabled) {
+                outputCopyMs += std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - itemCopyStart)
+                    .count();
+            }
         }
 
         // libkrkr2.so Player_renderToCanvas_guess @ 0x6C8FCC resets the target
         // Layer clip once the top-level render-item walk is complete.
-        renderLayer->ResetClip();
+        const auto finalClipResetStart = renderProfileEnabled
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
+        if(graphScratchLayer) {
+            const auto presentationCopyStart = renderProfileEnabled
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
+            const auto &targetClip = renderLayer->GetClip();
+            if(targetClip.left != 0 || targetClip.top != 0 ||
+               targetClip.right != static_cast<tjs_int>(renderLayer->GetWidth()) ||
+               targetClip.bottom != static_cast<tjs_int>(renderLayer->GetHeight())) {
+                renderLayer->ResetClip();
+            }
+            const tTVPRect scratchRect(
+                0, 0, static_cast<tjs_int>(graphScratchLayer->GetWidth()),
+                static_cast<tjs_int>(graphScratchLayer->GetHeight()));
+            renderLayer->OperateRect(0, 0, graphScratchLayer->GetMainImage(),
+                                     scratchRect, omAlpha, 255);
+            if(renderProfileEnabled) {
+                presentationCopyMs =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - presentationCopyStart)
+                        .count();
+            }
+            targetLayerClipIsFull = true;
+        }
+        if(!kRenderCommandGraphEnabled || !targetLayerClipIsFull) {
+            renderLayer->ResetClip();
+            targetLayerClipIsFull = true;
+        }
+        const double finalClipResetMs = renderProfileEnabled
+            ? std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - finalClipResetStart)
+                  .count()
+            : 0.0;
+        const auto updateStart = renderProfileEnabled
+            ? std::chrono::steady_clock::now()
+            : std::chrono::steady_clock::time_point{};
         if(!skipUpdate) {
             renderLayer->Update(false);
             detail::logoChainTraceLogf(
@@ -2104,6 +2481,11 @@ namespace motion {
                 "renderLayer.Update(false) size={}x{}", renderLayer->GetWidth(),
                 renderLayer->GetHeight());
         }
+        const double updateMs = renderProfileEnabled
+            ? std::chrono::duration<double, std::milli>(
+                  std::chrono::steady_clock::now() - updateStart)
+                  .count()
+            : 0.0;
         // REF emote command output cache GC (11151-11173): every 120
         // generations evict entries unused for 240 generations, then trim
         // to a 512-entry cap.
@@ -2141,6 +2523,24 @@ namespace motion {
                 _runtime->emoteCommandOutputCacheGeneration,
                 _runtime->emoteCommandOutputCacheHits,
                 _runtime->emoteCommandLeafCacheHits,
+                _runtime->emoteCommandOutputCache.size());
+        }
+        if(renderProfileEnabled && LOGGER) {
+            const double executeMs =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - executeStart)
+                    .count();
+            LOGGER->info(
+                "emote.render.profile path={} ms={:.3f} clipMs={:.3f} "
+                "buildMs={:.3f} copyMs={:.3f} presentationMs={:.3f} updateMs={:.3f} finalResetMs={:.3f} items={} built={} failed={} direct={} buffered={} scratch={} "
+                "cacheHits={} leafHits={} cacheEntries={}",
+                motionPath, executeMs, outputClipMs, outputBuildMs, outputCopyMs,
+                presentationCopyMs, updateMs, finalClipResetMs,
+                executionItems.size(), outputBuilt, outputBuildFailed,
+                directOutputs, bufferedOutputs,
+                graphScratchLayer ? 1 : 0,
+                _runtime->emoteCommandOutputCacheHits - cacheHitsBefore,
+                _runtime->emoteCommandLeafCacheHits - leafCacheHitsBefore,
                 _runtime->emoteCommandOutputCache.size());
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)

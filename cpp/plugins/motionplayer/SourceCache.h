@@ -80,6 +80,14 @@ namespace motion {
                                iTJSDispatch2 *parentLayerObject,
                                const std::shared_ptr<detail::MotionSnapshot>
                                    &sourceMotion);
+        // Render-command execution needs the immutable/tinted bitmap itself.
+        // Returning the cached backing bitmap avoids materializing a temporary
+        // SourceCache Layer for every leaf on every frame; the output scratch
+        // layers remain owned by the executor.
+        std::shared_ptr<tTVPBaseBitmap> loadRenderSourceBitmapByName(
+            const ttstr &name, const tTJSVariant &currentSource, int blendMode,
+            const std::array<std::uint32_t, 4> &packedColors,
+            const std::shared_ptr<detail::MotionSnapshot> &sourceMotion);
         iTVPTexture2D *loadRenderSourceTextureByName(
             const ttstr &name, const tTJSVariant &currentSource, int blendMode,
             const std::array<std::uint32_t, 4> &packedColors,

@@ -820,9 +820,11 @@ namespace motion {
                 entry.coordinateMode = node.coordinateMode;
                 entry.objTriPriority = node.objTriPriority;
                 entry.visibleAncestorIndex = node.visibleAncestorIndex;
+                const bool warpedQuad = node.meshWarpedQuad &&
+                    node.meshControlPoints.empty();
                 entry.meshType = node.meshWarpedQuad ? 2 : node.meshType;
-                entry.meshDivX = node.meshWarpedQuad ? 2 : node.meshDivX;
-                entry.meshDivY = node.meshWarpedQuad ? 2 : node.meshDivY;
+                entry.meshDivX = warpedQuad ? 2 : node.meshDivX;
+                entry.meshDivY = warpedQuad ? 2 : node.meshDivY;
             }
 
             // Local scope stamping (REF PlayerUpdateLayers.cpp 5215-5225).
@@ -865,7 +867,8 @@ namespace motion {
                 }
             }
 
-            if(hasOwnSource && node.meshWarpedQuad) {
+            if(hasOwnSource && node.meshWarpedQuad &&
+               node.meshControlPoints.empty()) {
                 const std::array<float, 8> corners = {
                     node.vertices[0], node.vertices[1], node.vertices[2],
                     node.vertices[3], node.vertices[4], node.vertices[5],

@@ -3597,6 +3597,41 @@ public:
                 OperateRect(method, target, rcdest, src, refrect);
                 return;
             }
+
+            // E-mote quads are submitted as two affine triangles.  Sending
+            // every parallelogram through OpenCV allocates a temporary image
+            // and runs a remap kernel even though the software scanner already
+            // implements the same affine operation.  Keep the fast scanner for
+            // genuine affine quads; perspective quads still use OpenCV below.
+            if(isSrcRect && checkQuadSquared(dstpt)) {
+                TAffuncFunc affineloop = GetStretchFunction(
+                    static_cast<tTVPRenderMethod_Software *>(method));
+                tjs_int taskNum = std::min<tjs_int>(TVPGetThreadNum(), 2);
+                TVPExecThreadTask(taskNum, [&](int n) {
+                    const int begin = 2 * n / taskNum;
+                    const int end = 2 * (n + 1) / taskNum;
+                    for(int i = begin; i < end; ++i) {
+                        const bool nrot = i & 1;
+                        const tTVPPointD *pt = srcpt + 3 * i;
+                        tTVPRect rc;
+                        if(nrot) { // RT, LB, RB
+                            rc.top = pt[0].y;
+                            rc.right = pt[0].x;
+                            rc.left = pt[1].x;
+                            rc.bottom = pt[1].y;
+                        } else { // LT, RT, LB
+                            rc.top = pt[1].y;
+                            rc.right = pt[1].x;
+                            rc.left = pt[2].x;
+                            rc.bottom = pt[2].y;
+                        }
+                        InternalAffineBlt(rcclip, rc, rc, src, dst,
+                                          dstpt + 3 * i, !nrot, affineloop);
+                    }
+                });
+                return;
+            }
+
             const uint8_t *sdata;
             int spitch = src->GetPitch();
             sdata = (const uint8_t *)src->GetPixelData();
@@ -3615,39 +3650,13 @@ public:
                 cv::Point2f(dstpt[2].x - rcclip.left, dstpt[2].y - rcclip.top),
             };
 
-            cv::Mat src_img;
-            if(isSrcRect) {
-                tTVPRect rcsrc(0x7FFFFFFF, 0x7FFFFFFF, -1, -1);
-                for(int i = 0; i < 4; ++i) {
-                    const cv::Point2f &pt = pts_src[i];
-                    tjs_int x = pt.x;
-                    if(x < rcsrc.left)
-                        rcsrc.left = x;
-                    if(++x > rcsrc.right)
-                        rcsrc.right = x;
-                    tjs_int y = pt.y;
-                    if(y < rcsrc.top)
-                        rcsrc.top = y;
-                    if(++y > rcsrc.bottom)
-                        rcsrc.bottom = y;
-                }
-                sdata += rcsrc.top * spitch + rcsrc.left * 4;
-                for(int i = 0; i < 4; ++i) {
-                    cv::Point2f &pt = pts_src[i];
-                    pt.x -= rcsrc.left;
-                    pt.y -= rcsrc.top;
-                }
-                tjs_int sw = src->GetWidth(), sh = src->GetHeight();
-                if(rcsrc.get_width() > sw)
-                    rcsrc.set_width(sw);
-                if(rcsrc.get_height() > sh)
-                    rcsrc.set_height(sh);
-                src_img = cv::Mat(rcsrc.get_height(), rcsrc.get_width(),
-                                  CV_8UC4, (void *)sdata, spitch);
-            } else {
-                src_img = cv::Mat(src->GetHeight(), src->GetWidth(), CV_8UC4,
+            // Keep the Mat backed by the complete texture.  The old ROI
+            // shortcut adjusted the data pointer and then clamped only the
+            // width/height; a non-zero source origin could expose rows past
+            // the allocation to OpenCV's remap kernel.  This is a header-only
+            // view and does not enlarge the destination work image.
+            const cv::Mat src_img(src->GetHeight(), src->GetWidth(), CV_8UC4,
                                   (void *)sdata, spitch);
-            }
 
             cv::Mat dst_img;
             cv::Size dst_size(rcclip.get_width(), rcclip.get_height());

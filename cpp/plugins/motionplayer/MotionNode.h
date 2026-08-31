@@ -99,7 +99,7 @@ namespace motion::detail {
         bool meshCombineEnabled =
             false; // node+1963: mesh combines with children
         int meshParentIndex = -1; // nearest node+0x636 mesh ancestor
-        bool meshWarpedQuad = false; // meshType=0 leaf needs 2x2 MeshCopy
+        bool meshWarpedQuad = false; // meshType=0 leaf uses an external mesh
         // libkrkr2.so seeds node+52 from PSB "stencilType" in
         // Player_initNodeFields (0x6B3C78) and later runtime stages only read
         // the field; they do not rebuild it from frame state.

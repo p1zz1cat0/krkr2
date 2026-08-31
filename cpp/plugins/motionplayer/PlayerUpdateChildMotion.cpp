@@ -9,6 +9,7 @@ namespace motion {
         const auto motionPath = _runtime->activeMotion
             ? _runtime->activeMotion->path
             : std::string{};
+        const bool emoteLike = detail::isEmoteLikeMotion(*_runtime);
         // Motion sub-node processing — aligned to sub_6BE0C0 (0x6BE0C0).
         // For each nodeType=3 (Motion) node, create/manage child Player
         // instance. Only runs when !isEmoteMode (0x6BE104).
@@ -87,9 +88,22 @@ namespace motion {
                     // Get motion source from clip slot (0x6BE364)
                     const auto &src = mn.activeSlot().src;
                     if(!src.empty()) {
-                        // Re-init gate: (v12 & 5) != 0 || mn.flags (0x6BE37C)
-                        if((v12 & 5) != 0 || (mn.flags & 0x01) ||
-                           needsBoundedChildBootstrap) {
+                        // Re-init gate: (v12 & 5) != 0 || mn.flags (0x6BE37C).
+                        // E-mote mode: only re-init on an actual slot/src
+                        // change (mn.flags) or the one-shot bootstrap. The
+                        // priorDraw (v12&5) trigger fires every frame for
+                        // face/head motion sub-nodes whose clip repeats the
+                        // same src; replaying every frame reloads the child
+                        // (setMotion clears inheritedVariableInputs) so the
+                        // parameter values are erased before Phase2 evaluates
+                        // them — faces stay frozen at frame 0 and the
+                        // repeated rebuild contributes the micro-jitter.
+                        const bool emoteLikeReinit = emoteLike
+                            ? ((mn.flags & 0x01) != 0 ||
+                               needsBoundedChildBootstrap)
+                            : ((v12 & 5) != 0 || (mn.flags & 0x01) != 0 ||
+                               needsBoundedChildBootstrap);
+                        if(emoteLikeReinit) {
                             mn.flags |= 0x01; // mark as initialized (0x6BE388)
 
                             // Binary does NOT flip activeSlotIndex here

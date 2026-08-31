@@ -4856,64 +4856,34 @@ void tTJSNI_BaseLayer::BezierPatchCopy(const tTVPPointD *points, tjs_int divx,
 //---------------------------------------------------------------------------
 void tTJSNI_BaseLayer::MeshCopy(const tTVPPointD *points, tjs_int divx,
                                 tjs_int divy, iTVPBaseBitmap *src,
-                                const tTVPRect &srcrect, tTVPBBStretchType type,
-                                bool clear) {
-    if(!points || !src || divx < 2 || divy < 2) {
+                                const tTVPRect &srcrect,
+                                tTVPBBStretchType type, bool clear) {
+    if(!points || !src || divx < 2 || divy < 2)
         return;
-    }
 
-    if(DrawFace != dfAlpha && DrawFace != dfAddAlpha && DrawFace != dfOpaque) {
+    if(DrawFace != dfAlpha && DrawFace != dfAddAlpha && DrawFace != dfOpaque)
         TVPThrowExceptionMessage(TVPNotDrawableFaceType, TJS_W("meshCopy"));
-    }
-    if(!MainImage) {
+    if(!MainImage)
         TVPThrowExceptionMessage(TVPNotDrawableLayerType);
-    }
 
-    if(clear) {
+    if(clear)
         FillRect(ClipRect, NeutralColor);
-    }
 
     const double srcLeft = static_cast<double>(srcrect.left);
     const double srcTop = static_cast<double>(srcrect.top);
     const double srcWidth = static_cast<double>(srcrect.right - srcrect.left);
     const double srcHeight = static_cast<double>(srcrect.bottom - srcrect.top);
 
-    bool anyUpdated = false;
-    tTVPRect totalUpdateRect;
-
-    auto appendUpdateRect = [&](const tTVPRect &rect) {
-        if(!anyUpdated) {
-            totalUpdateRect = rect;
-            anyUpdated = true;
-        } else {
-            totalUpdateRect.do_union(rect);
-        }
-    };
-
-    auto blitCell = [&](const tTVPPointD *cellPoints,
-                        const tTVPRect &cellRect) {
-        tTVPRect updateRect;
-        bool updated = false;
-        switch(DrawFace) {
-            case dfAlpha:
-            case dfAddAlpha:
-                updated = MainImage->AffineBlt(
-                    ClipRect, src, cellRect, cellPoints, bmCopy, 255,
-                    &updateRect, false, type, false, NeutralColor);
-                break;
-            case dfOpaque:
-                updated = MainImage->AffineBlt(
-                    ClipRect, src, cellRect, cellPoints, bmCopy, 255,
-                    &updateRect, HoldAlpha, type, false, NeutralColor);
-                break;
-            default:
-                break;
-        }
-        if(updated) {
-            ImageModified = true;
-            appendUpdateRect(updateRect);
-        }
-    };
+    // Build the complete triangle stream first.  The previous path called
+    // AffineBlt once per cell and supplied only TL/TR/BL, which discarded the
+    // real BR vertex and exposed seams between animated cells.  REF submits
+    // both triangles of each cell to OperateTriangles so the software
+    // renderer can rasterize the same quad in a clipped batch.
+    std::vector<tTVPPointD> destinationPoints;
+    std::vector<tTVPPointD> sourcePoints;
+    destinationPoints.reserve(
+        static_cast<size_t>(divx - 1) * static_cast<size_t>(divy - 1) * 6u);
+    sourcePoints.reserve(destinationPoints.capacity());
 
     for(tjs_int y = 0; y < divy - 1; ++y) {
         const double v0 =
@@ -4926,45 +4896,132 @@ void tTJSNI_BaseLayer::MeshCopy(const tTVPPointD *points, tjs_int divx,
             const double u1 =
                 static_cast<double>(x + 1) / static_cast<double>(divx - 1);
 
-            // 共享边 UV 连续：右/下边界与邻格左/上边界一致（统一 floor），
-            // 避免原 floor/ceil 混用在非整数边界处产生 1px 采样缝隙
-            // （脸部网格黑线）。退化时保底 1px 源尺寸，邻格共享边仍一致，
-            // 不产生重叠（alpha 不双倍混合）。
-            const tjs_int cellLeft = static_cast<tjs_int>(
-                std::floor(srcLeft + srcWidth * u0));
-            const tjs_int cellTop = static_cast<tjs_int>(
-                std::floor(srcTop + srcHeight * v0));
-            const tjs_int cellRight = std::max(
-                cellLeft + 1,
-                static_cast<tjs_int>(
-                    std::floor(srcLeft + srcWidth * u1)));
-            const tjs_int cellBottom = std::max(
-                cellTop + 1,
-                static_cast<tjs_int>(
-                    std::floor(srcTop + srcHeight * v1)));
-            tTVPRect cellRect(cellLeft, cellTop, cellRight, cellBottom);
-            if(cellRect.right <= cellRect.left ||
-               cellRect.bottom <= cellRect.top) {
+            const double sourceLeft = srcLeft + srcWidth * u0;
+            const double sourceTop = srcTop + srcHeight * v0;
+            const double sourceRight = srcLeft + srcWidth * u1;
+            const double sourceBottom = srcTop + srcHeight * v1;
+            if(sourceRight <= sourceLeft || sourceBottom <= sourceTop) {
                 continue;
             }
 
             const auto &p0 = points[y * divx + x];
             const auto &p1 = points[y * divx + x + 1];
             const auto &p2 = points[(y + 1) * divx + x];
-            // AffineBlt's three points describe one affine destination quad;
-            // they are not arbitrary triangle vertices.  Submitting a second
-            // reversed triplet remaps the same full source cell from the
-            // opposite corner and overwrites the first copy.  Thin E-mote
-            // mesh assets (mouth, nose and eyebrows) then collapse into dots
-            // and short lines.  The dense mesh already makes each cell close
-            // to affine, so approximate it once from TL/TR/BL; the implied BR
-            // converges to the sampled p3 as subdivision increases.
-            tTVPPointD affineCell[3] = { p0, p1, p2 };
-            blitCell(affineCell, cellRect);
+            const auto &p3 = points[(y + 1) * divx + x + 1];
+            destinationPoints.insert(destinationPoints.end(),
+                                     { p0, p1, p2, p1, p2, p3 });
+            sourcePoints.insert(sourcePoints.end(), {
+                { sourceLeft, sourceTop },
+                { sourceRight, sourceTop },
+                { sourceLeft, sourceBottom },
+                { sourceRight, sourceTop },
+                { sourceLeft, sourceBottom },
+                { sourceRight, sourceBottom }
+            });
         }
     }
 
+    if(destinationPoints.empty()) {
+        return;
+    }
+
+    auto *manager = MainImage->GetRenderManager();
+    if(!manager) {
+        return;
+    }
+    const auto stretchType =
+        static_cast<tTVPBBStretchType>(type & stTypeMask);
+    manager->SetParameterInt(manager->EnumParameterID("StretchType"),
+                             static_cast<int>(stretchType));
+    const bool holdDestinationAlpha = DrawFace == dfOpaque ? HoldAlpha : false;
+    auto *renderMethod = manager->GetRenderMethod(
+        255, holdDestinationAlpha, bmCopy);
+    if(!renderMethod) {
+        return;
+    }
+
+    auto *sourceTexture = src->GetTexture();
+    iTVPTexture2D *convertedSource = nullptr;
+    if(!sourceTexture) {
+        return;
+    }
+    if(manager != src->GetRenderManager()) {
+        const void *pixels = sourceTexture->GetScanLineForRead(0);
+        if(!pixels) {
+            return;
+        }
+        convertedSource = manager->CreateTexture2D(
+            pixels, sourceTexture->GetPitch(), src->GetWidth(),
+            src->GetHeight(), TVPTextureFormat::RGBA);
+        sourceTexture = convertedSource;
+    }
+    if(!sourceTexture) {
+        if(convertedSource) {
+            convertedSource->Release();
+        }
+        return;
+    }
+
+    constexpr size_t kTrianglesPerBatch = 64;
+    const size_t triangleCount = destinationPoints.size() / 3u;
+    bool anyUpdated = false;
+    tTVPRect totalUpdateRect;
+    for(size_t firstTriangle = 0; firstTriangle < triangleCount;
+        firstTriangle += kTrianglesPerBatch) {
+        const size_t batchTriangles = std::min(
+            kTrianglesPerBatch, triangleCount - firstTriangle);
+        const size_t firstPoint = firstTriangle * 3u;
+        const size_t batchPoints = batchTriangles * 3u;
+        double minX = destinationPoints[firstPoint].x;
+        double minY = destinationPoints[firstPoint].y;
+        double maxX = minX;
+        double maxY = minY;
+        for(size_t point = 1; point < batchPoints; ++point) {
+            const auto &value = destinationPoints[firstPoint + point];
+            minX = std::min(minX, value.x);
+            minY = std::min(minY, value.y);
+            maxX = std::max(maxX, value.x);
+            maxY = std::max(maxY, value.y);
+        }
+        tTVPRect batchClip(
+            std::max(ClipRect.left,
+                     static_cast<tjs_int>(std::floor(minX)) - 1),
+            std::max(ClipRect.top,
+                     static_cast<tjs_int>(std::floor(minY)) - 1),
+            std::min(ClipRect.right,
+                     static_cast<tjs_int>(std::ceil(maxX)) + 1),
+            std::min(ClipRect.bottom,
+                     static_cast<tjs_int>(std::ceil(maxY)) + 1));
+        if(batchClip.right <= batchClip.left ||
+           batchClip.bottom <= batchClip.top) {
+            continue;
+        }
+        auto *referenceTexture = MainImage->GetTexture();
+        auto *targetTexture = MainImage->GetTextureForRender(
+            renderMethod->IsBlendTarget(), &batchClip);
+        if(!targetTexture) {
+            continue;
+        }
+        tRenderTexQuadArray::Element sourceElement(
+            sourceTexture, sourcePoints.data() + firstPoint);
+        manager->OperateTriangles(
+            renderMethod, static_cast<int>(batchTriangles), targetTexture,
+            referenceTexture, batchClip,
+            destinationPoints.data() + firstPoint,
+            tRenderTexQuadArray(&sourceElement, 1));
+        if(!anyUpdated) {
+            totalUpdateRect = batchClip;
+            anyUpdated = true;
+        } else {
+            totalUpdateRect.do_union(batchClip);
+        }
+    }
+
+    if(convertedSource) {
+        convertedSource->Release();
+    }
     if(anyUpdated) {
+        ImageModified = true;
         totalUpdateRect.add_offsets(ImageLeft, ImageTop);
         Update(totalUpdateRect);
     }
@@ -5022,70 +5079,34 @@ void tTJSNI_BaseLayer::OperateMesh(const tTVPPointD *points, tjs_int divx,
                                    const tTVPRect &srcrect,
                                    tTVPBlendOperationMode mode, tjs_int opacity,
                                    tTVPBBStretchType type, bool clear) {
-    if(!points || !src || divx < 2 || divy < 2) {
+    if(!points || !src || divx < 2 || divy < 2)
         return;
-    }
 
     if(mode == omAuto)
         TVPThrowExceptionMessage(TVPCannotAcceptModeAuto);
 
     tTVPBBBltMethod met;
-    if(!GetBltMethodFromOperationModeAndDrawFace(met, mode)) {
+    if(!GetBltMethodFromOperationModeAndDrawFace(met, mode))
         TVPThrowExceptionMessage(TVPNotDrawableFaceType, TJS_W("operateMesh"));
-    }
 
-    if(DrawFace != dfAlpha && DrawFace != dfAddAlpha && DrawFace != dfOpaque) {
+    if(DrawFace != dfAlpha && DrawFace != dfAddAlpha && DrawFace != dfOpaque)
         TVPThrowExceptionMessage(TVPNotDrawableFaceType, TJS_W("operateMesh"));
-    }
-    if(!MainImage) {
+    if(!MainImage)
         TVPThrowExceptionMessage(TVPNotDrawableLayerType);
-    }
 
-    if(clear) {
+    if(clear)
         FillRect(ClipRect, NeutralColor);
-    }
 
     const double srcLeft = static_cast<double>(srcrect.left);
     const double srcTop = static_cast<double>(srcrect.top);
     const double srcWidth = static_cast<double>(srcrect.right - srcrect.left);
     const double srcHeight = static_cast<double>(srcrect.bottom - srcrect.top);
 
-    bool anyUpdated = false;
-    tTVPRect totalUpdateRect;
-
-    auto appendUpdateRect = [&](const tTVPRect &rect) {
-        if(!anyUpdated) {
-            totalUpdateRect = rect;
-            anyUpdated = true;
-        } else {
-            totalUpdateRect.do_union(rect);
-        }
-    };
-
-    auto blitCell = [&](const tTVPPointD *cellPoints,
-                        const tTVPRect &cellRect) {
-        tTVPRect updateRect;
-        bool updated = false;
-        switch(DrawFace) {
-            case dfAlpha:
-            case dfAddAlpha:
-                updated = MainImage->AffineBlt(
-                    ClipRect, src, cellRect, cellPoints, met, opacity,
-                    &updateRect, false, type, false, NeutralColor);
-                break;
-            case dfOpaque:
-                updated = MainImage->AffineBlt(
-                    ClipRect, src, cellRect, cellPoints, met, opacity,
-                    &updateRect, HoldAlpha, type, false, NeutralColor);
-                break;
-            default:
-                break;
-        }
-        if(updated) {
-            ImageModified = true;
-            appendUpdateRect(updateRect);
-        }
-    };
+    std::vector<tTVPPointD> destinationPoints;
+    std::vector<tTVPPointD> sourcePoints;
+    destinationPoints.reserve(
+        static_cast<size_t>(divx - 1) * static_cast<size_t>(divy - 1) * 6u);
+    sourcePoints.reserve(destinationPoints.capacity());
 
     for(tjs_int y = 0; y < divy - 1; ++y) {
         const double v0 =
@@ -5098,40 +5119,134 @@ void tTJSNI_BaseLayer::OperateMesh(const tTVPPointD *points, tjs_int divx,
             const double u1 =
                 static_cast<double>(x + 1) / static_cast<double>(divx - 1);
 
-            // 共享边 UV 连续：右/下边界与邻格左/上边界一致（统一 floor），
-            // 避免原 floor/ceil 混用在非整数边界处产生 1px 采样缝隙
-            // （脸部网格黑线）。退化时保底 1px 源尺寸，邻格共享边仍一致，
-            // 不产生重叠（alpha 不双倍混合）。
-            const tjs_int cellLeft = static_cast<tjs_int>(
-                std::floor(srcLeft + srcWidth * u0));
-            const tjs_int cellTop = static_cast<tjs_int>(
-                std::floor(srcTop + srcHeight * v0));
-            const tjs_int cellRight = std::max(
-                cellLeft + 1,
-                static_cast<tjs_int>(
-                    std::floor(srcLeft + srcWidth * u1)));
-            const tjs_int cellBottom = std::max(
-                cellTop + 1,
-                static_cast<tjs_int>(
-                    std::floor(srcTop + srcHeight * v1)));
-            tTVPRect cellRect(cellLeft, cellTop, cellRight, cellBottom);
-            if(cellRect.right <= cellRect.left ||
-               cellRect.bottom <= cellRect.top) {
+            // Keep source UVs continuous across cell boundaries.  The old
+            // integer rectangles made non-divisible source sizes overlap or
+            // leave a one-pixel seam at the common 0.5x presentation scale.
+            const double sourceLeft = srcLeft + srcWidth * u0;
+            const double sourceTop = srcTop + srcHeight * v0;
+            const double sourceRight = srcLeft + srcWidth * u1;
+            const double sourceBottom = srcTop + srcHeight * v1;
+            if(sourceRight <= sourceLeft || sourceBottom <= sourceTop) {
                 continue;
             }
 
             const auto &p0 = points[y * divx + x];
             const auto &p1 = points[y * divx + x + 1];
             const auto &p2 = points[(y + 1) * divx + x];
-            // AffineBlt maps a source rectangle to the affine quad implied by
-            // TL/TR/BL.  A second reversed call redraws the whole source cell
-            // with incorrect UVs instead of drawing only its lower triangle.
-            tTVPPointD affineCell[3] = { p0, p1, p2 };
-            blitCell(affineCell, cellRect);
+            const auto &p3 = points[(y + 1) * divx + x + 1];
+            destinationPoints.insert(destinationPoints.end(),
+                                     { p0, p1, p2, p1, p2, p3 });
+            sourcePoints.insert(sourcePoints.end(), {
+                { sourceLeft, sourceTop },
+                { sourceRight, sourceTop },
+                { sourceLeft, sourceBottom },
+                { sourceRight, sourceTop },
+                { sourceLeft, sourceBottom },
+                { sourceRight, sourceBottom }
+            });
         }
     }
 
+    if(destinationPoints.empty()) {
+        return;
+    }
+
+    auto *manager = MainImage->GetRenderManager();
+    if(!manager) {
+        return;
+    }
+    const auto stretchType =
+        static_cast<tTVPBBStretchType>(type & stTypeMask);
+    manager->SetParameterInt(manager->EnumParameterID("StretchType"),
+                             static_cast<int>(stretchType));
+    const bool holdDestinationAlpha = DrawFace == dfOpaque ? HoldAlpha : false;
+    auto *renderMethod = manager->GetRenderMethod(
+        opacity, holdDestinationAlpha, met);
+    if(!renderMethod) {
+        return;
+    }
+
+    auto *sourceTexture = src->GetTexture();
+    iTVPTexture2D *convertedSource = nullptr;
+    if(!sourceTexture) {
+        return;
+    }
+    if(manager != src->GetRenderManager()) {
+        const void *pixels = sourceTexture->GetScanLineForRead(0);
+        if(!pixels) {
+            return;
+        }
+        convertedSource = manager->CreateTexture2D(
+            pixels, sourceTexture->GetPitch(), src->GetWidth(),
+            src->GetHeight(), TVPTextureFormat::RGBA);
+        sourceTexture = convertedSource;
+    }
+    if(!sourceTexture) {
+        if(convertedSource) {
+            convertedSource->Release();
+        }
+        return;
+    }
+
+    constexpr size_t kTrianglesPerBatch = 64;
+    const size_t triangleCount = destinationPoints.size() / 3u;
+    bool anyUpdated = false;
+    tTVPRect totalUpdateRect;
+    for(size_t firstTriangle = 0; firstTriangle < triangleCount;
+        firstTriangle += kTrianglesPerBatch) {
+        const size_t batchTriangles = std::min(
+            kTrianglesPerBatch, triangleCount - firstTriangle);
+        const size_t firstPoint = firstTriangle * 3u;
+        const size_t batchPoints = batchTriangles * 3u;
+        double minX = destinationPoints[firstPoint].x;
+        double minY = destinationPoints[firstPoint].y;
+        double maxX = minX;
+        double maxY = minY;
+        for(size_t point = 1; point < batchPoints; ++point) {
+            const auto &value = destinationPoints[firstPoint + point];
+            minX = std::min(minX, value.x);
+            minY = std::min(minY, value.y);
+            maxX = std::max(maxX, value.x);
+            maxY = std::max(maxY, value.y);
+        }
+        tTVPRect batchClip(
+            std::max(ClipRect.left,
+                     static_cast<tjs_int>(std::floor(minX)) - 1),
+            std::max(ClipRect.top,
+                     static_cast<tjs_int>(std::floor(minY)) - 1),
+            std::min(ClipRect.right,
+                     static_cast<tjs_int>(std::ceil(maxX)) + 1),
+            std::min(ClipRect.bottom,
+                     static_cast<tjs_int>(std::ceil(maxY)) + 1));
+        if(batchClip.right <= batchClip.left ||
+           batchClip.bottom <= batchClip.top) {
+            continue;
+        }
+        auto *referenceTexture = MainImage->GetTexture();
+        auto *targetTexture = MainImage->GetTextureForRender(
+            renderMethod->IsBlendTarget(), &batchClip);
+        if(!targetTexture) {
+            continue;
+        }
+        tRenderTexQuadArray::Element sourceElement(
+            sourceTexture, sourcePoints.data() + firstPoint);
+        manager->OperateTriangles(
+            renderMethod, static_cast<int>(batchTriangles), targetTexture,
+            referenceTexture, batchClip,
+            destinationPoints.data() + firstPoint,
+            tRenderTexQuadArray(&sourceElement, 1));
+        if(!anyUpdated) {
+            totalUpdateRect = batchClip;
+            anyUpdated = true;
+        } else {
+            totalUpdateRect.do_union(batchClip);
+        }
+    }
+    if(convertedSource) {
+        convertedSource->Release();
+    }
     if(anyUpdated) {
+        ImageModified = true;
         totalUpdateRect.add_offsets(ImageLeft, ImageTop);
         Update(totalUpdateRect);
     }

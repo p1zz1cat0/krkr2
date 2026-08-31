@@ -5,6 +5,7 @@
 #include "ConfigManager/IndividualConfigManager.h"
 #include "MotionTraceWeb.h"
 #include "RenderManager.h"
+#include "ThreadIntf.h"
 
 using namespace motion::internal;
 
@@ -441,6 +442,72 @@ namespace motion::internal::render_detail {
         }
     }
 
+    bool operateAffineBitmapWithoutLayerUpdate(
+        tTJSNI_BaseLayer *target, const tTVPPointD *points,
+        iTVPBaseBitmap *source, const tTVPRect &sourceRect,
+        tTVPBlendOperationMode mode, tjs_int opacity,
+        tTVPBBStretchType type) {
+        if(!target || !target->GetMainImage() || !points || !source ||
+           opacity <= 0) {
+            return false;
+        }
+
+        tTVPBBBltMethod method;
+        switch(mode) {
+            case omPsNormal: method = bmPsNormal; break;
+            case omPsAdditive: method = bmPsAdditive; break;
+            case omPsSubtractive: method = bmPsSubtractive; break;
+            case omPsMultiplicative: method = bmPsMultiplicative; break;
+            case omPsScreen: method = bmPsScreen; break;
+            case omPsOverlay: method = bmPsOverlay; break;
+            case omPsHardLight: method = bmPsHardLight; break;
+            case omPsSoftLight: method = bmPsSoftLight; break;
+            case omPsColorDodge: method = bmPsColorDodge; break;
+            case omPsColorDodge5: method = bmPsColorDodge5; break;
+            case omPsColorBurn: method = bmPsColorBurn; break;
+            case omPsLighten: method = bmPsLighten; break;
+            case omPsDarken: method = bmPsDarken; break;
+            case omPsDifference: method = bmPsDifference; break;
+            case omPsDifference5: method = bmPsDifference5; break;
+            case omPsExclusion: method = bmPsExclusion; break;
+            case omAdditive: method = bmAdd; break;
+            case omSubtractive: method = bmSub; break;
+            case omMultiplicative: method = bmMul; break;
+            case omDodge: method = bmDodge; break;
+            case omDarken: method = bmDarken; break;
+            case omLighten: method = bmLighten; break;
+            case omScreen: method = bmScreen; break;
+            case omAlpha:
+                method = target->GetFace() == dfOpaque
+                    ? bmAlpha
+                    : (target->GetFace() == dfAddAlpha
+                           ? bmAlphaOnAddAlpha
+                           : bmAlphaOnAlpha);
+                break;
+            case omAddAlpha:
+                method = target->GetFace() == dfOpaque
+                    ? bmAddAlpha
+                    : (target->GetFace() == dfAddAlpha
+                           ? bmAddAlphaOnAddAlpha
+                           : bmAddAlphaOnAlpha);
+                break;
+            case omOpaque:
+                method = target->GetFace() == dfOpaque
+                    ? bmCopy
+                    : (target->GetFace() == dfAddAlpha
+                           ? bmCopyOnAddAlpha
+                           : bmCopyOnAlpha);
+                break;
+            default:
+                return false;
+        }
+
+        tTVPRect updateRect;
+        return target->GetMainImage()->AffineBlt(
+            target->GetClip(), source, sourceRect, points, method, opacity,
+            &updateRect, target->GetHoldAlpha(), type);
+    }
+
     bool shouldUseDirectRenderPathLike_0x6C7440(
         const motion::detail::PlayerRuntime::PreparedRenderItem &item,
         bool clearEnabled) {
@@ -516,16 +583,16 @@ namespace motion::internal::render_detail {
         const motion::detail::PlayerRuntime::PreparedRenderItem &entry,
         int canvasWidth, int canvasHeight, RenderClipRect &out,
         std::string *failureReason) {
-        (void)canvasWidth;
-        (void)canvasHeight;
-        // sub_6C4E28 writes the render item's own paint/viewport bounds to
-        // the build-stage clip rect. It does not clamp this intermediate
-        // Layer rect to the final target canvas; final target clipping
-        // happens when the prepared Layer is submitted by sub_6C7440.
-        float clipLeft = entry.paintBox[0];
-        float clipTop = entry.paintBox[1];
-        float clipRight = entry.paintBox[2];
-        float clipBottom = entry.paintBox[3];
+        // REF intersects the paint box with the target canvas before creating
+        // the command's scratch surface. Keeping off-screen coordinates here
+        // makes a 1280x720 character allocate 1700px-tall buffers and then
+        // throw most of the pixels away during the final copy.
+        float clipLeft = std::max(0.0f, entry.paintBox[0]);
+        float clipTop = std::max(0.0f, entry.paintBox[1]);
+        float clipRight = std::min(static_cast<float>(canvasWidth),
+                                   entry.paintBox[2]);
+        float clipBottom = std::min(static_cast<float>(canvasHeight),
+                                    entry.paintBox[3]);
 
         if(entry.hasViewport && entry.viewport[2] >= entry.viewport[0] &&
            entry.viewport[3] >= entry.viewport[1]) {
@@ -551,10 +618,14 @@ namespace motion::internal::render_detail {
             return false;
         }
 
-        out.left = static_cast<int>(floorf(clipLeft));
-        out.top = static_cast<int>(floorf(clipTop));
-        out.right = static_cast<int>(ceilf(clipRight));
-        out.bottom = static_cast<int>(ceilf(clipBottom));
+        // REF truncates the already canvas-clamped floating bounds.  Mixing
+        // floor/ceil here makes an animated edge resize its scratch origin by
+        // one pixel as it crosses an integer, which shows up as horizontal
+        // seams and left/right jitter on face parts.
+        out.left = static_cast<int>(clipLeft);
+        out.top = static_cast<int>(clipTop);
+        out.right = static_cast<int>(clipRight);
+        out.bottom = static_cast<int>(clipBottom);
         if(failureReason) {
             failureReason->clear();
         }
@@ -624,6 +695,14 @@ namespace motion::internal::render_detail {
             std::max(outerRect.left, innerRect.left), innerRect.bottom,
             std::min(outerRect.right, innerRect.right), outerRect.bottom));
         return true;
+    }
+
+    int motionMaskThreadCount(int width, int height) {
+        const auto pixelCount = static_cast<std::int64_t>(width) * height;
+        if(pixelCount < 128 * 1024) {
+            return 1;
+        }
+        return std::max(1, std::min(TVPGetThreadNum(), height));
     }
 
     bool applyMotionAlphaMaskLike_0x6AF104(
@@ -703,19 +782,28 @@ namespace motion::internal::render_detail {
             return true;
         }
 
-        for(int y = 0; y < height; ++y) {
-            auto *dstRow = static_cast<std::uint8_t *>(
-                dstBmp->GetScanLineForWrite(dstY + y));
-            const auto *srcRow = static_cast<const std::uint8_t *>(
-                srcBmp->GetScanLine(srcY + y));
-            for(int x = 0; x < width; ++x) {
-                auto *dstPixel = dstRow + (dstX + x) * 4;
-                const auto *srcPixel = srcRow + (srcX + x) * 4;
-                dstPixel[3] = detail::applyMotionMaskAlpha(
-                    dstPixel[3], srcPixel[3], itemFlags, playerStencilType,
-                    threshold);
+        auto *dstBase = static_cast<std::uint8_t *>(
+            dstBmp->GetScanLineForWrite(0));
+        const auto *srcBase = static_cast<const std::uint8_t *>(
+            srcBmp->GetScanLine(0));
+        const int dstPitch = dstBmp->GetPitchBytes();
+        const int srcPitch = srcBmp->GetPitchBytes();
+        const int threadCount = motionMaskThreadCount(width, height);
+        TVPExecThreadTask(threadCount, [&](int taskIndex) {
+            const int y0 = height * taskIndex / threadCount;
+            const int y1 = height * (taskIndex + 1) / threadCount;
+            for(int y = y0; y < y1; ++y) {
+                auto *dstRow = dstBase + (dstY + y) * dstPitch + dstX * 4;
+                const auto *srcRow = srcBase + (srcY + y) * srcPitch + srcX * 4;
+                for(int x = 0; x < width; ++x) {
+                    auto *dstPixel = dstRow + x * 4;
+                    const auto *srcPixel = srcRow + x * 4;
+                    dstPixel[3] = detail::applyMotionMaskAlpha(
+                        dstPixel[3], srcPixel[3], itemFlags, playerStencilType,
+                        threshold);
+                }
             }
-        }
+        });
 
         motion::detail::logoChainTraceLogf(
             motionPath, "execute.mask", "0x6AF104", frameTime,
@@ -774,36 +862,55 @@ namespace motion::internal::render_detail {
             return false;
         }
 
-        for(int y = 0; y < height; ++y) {
-            auto *dstRow = static_cast<std::uint8_t *>(
-                dstBitmap->GetScanLineForWrite(y));
-            const int worldY = dstWorldTop + y;
-            for(int x = 0; x < width; ++x) {
-                const int worldX = dstWorldLeft + x;
-                std::uint8_t unionAlpha = 0;
-                for(const auto &surface : resolved) {
-                    const int sourceX = worldX - surface.worldLeft;
+        auto *dstBase = static_cast<std::uint8_t *>(
+            dstBitmap->GetScanLineForWrite(0));
+        const int dstPitch = dstBitmap->GetPitchBytes();
+        const int threadCount = motionMaskThreadCount(width, height);
+        TVPExecThreadTask(threadCount, [&](int taskIndex) {
+            const int y0 = height * taskIndex / threadCount;
+            const int y1 = height * (taskIndex + 1) / threadCount;
+            std::vector<const std::uint8_t *> sourceRows(resolved.size());
+            for(int y = y0; y < y1; ++y) {
+                const int worldY = dstWorldTop + y;
+                for(size_t surfaceIndex = 0; surfaceIndex < resolved.size();
+                    ++surfaceIndex) {
+                    const auto &surface = resolved[surfaceIndex];
                     const int sourceY = worldY - surface.worldTop;
-                    if(sourceX < 0 || sourceY < 0 ||
-                       sourceX >= surface.width || sourceY >= surface.height) {
-                        continue;
-                    }
-                    const auto *sourceRow =
-                        static_cast<const std::uint8_t *>(
-                            surface.bitmap->GetScanLine(sourceY));
-                    unionAlpha = detail::unionMotionMaskAlpha(
-                        unionAlpha, sourceRow[sourceX * 4 + 3],
-                        playerStencilType, threshold);
-                    if(unionAlpha == 255) {
-                        break;
+                    if(sourceY >= 0 && sourceY < surface.height) {
+                        sourceRows[surfaceIndex] =
+                            static_cast<const std::uint8_t *>(
+                                surface.bitmap->GetScanLine(sourceY));
+                    } else {
+                        sourceRows[surfaceIndex] = nullptr;
                     }
                 }
-                auto &dstAlpha = dstRow[x * 4 + 3];
-                dstAlpha = detail::applyMotionCompositeMaskAlpha(
-                    dstAlpha, unionAlpha, compositeFlags, playerStencilType,
-                    threshold);
+                auto *dstRow = dstBase + y * dstPitch;
+                for(int x = 0; x < width; ++x) {
+                    const int worldX = dstWorldLeft + x;
+                    std::uint8_t unionAlpha = 0;
+                    for(size_t surfaceIndex = 0;
+                        surfaceIndex < resolved.size(); ++surfaceIndex) {
+                        const auto &surface = resolved[surfaceIndex];
+                        const int sourceX = worldX - surface.worldLeft;
+                        const auto *sourceRow = sourceRows[surfaceIndex];
+                        if(!sourceRow || sourceX < 0 ||
+                           sourceX >= surface.width) {
+                            continue;
+                        }
+                        unionAlpha = detail::unionMotionMaskAlpha(
+                            unionAlpha, sourceRow[sourceX * 4 + 3],
+                            playerStencilType, threshold);
+                        if(unionAlpha == 255) {
+                            break;
+                        }
+                    }
+                    auto &dstAlpha = dstRow[x * 4 + 3];
+                    dstAlpha = detail::applyMotionCompositeMaskAlpha(
+                        dstAlpha, unionAlpha, compositeFlags, playerStencilType,
+                        threshold);
+                }
             }
-        }
+        });
 
         detail::logoChainTraceLogf(
             motionPath, "execute.compositeMask", "0x6AF104", frameTime,

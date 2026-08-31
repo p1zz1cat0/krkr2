@@ -51,6 +51,12 @@ namespace motion::internal::render_detail {
     tTVPBlendOperationMode
     resolveBlendOperationModeLike_0x6C7440(int rawBlendMode);
 
+    bool operateAffineBitmapWithoutLayerUpdate(
+        tTJSNI_BaseLayer *target, const tTVPPointD *points,
+        iTVPBaseBitmap *source, const tTVPRect &sourceRect,
+        tTVPBlendOperationMode mode, tjs_int opacity,
+        tTVPBBStretchType type);
+
     std::array<tTVPPointD, 3>
     buildAffineTrianglePoints(const std::array<float, 8> &corners,
                               float xOffset, float yOffset);

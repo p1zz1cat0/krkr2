@@ -636,6 +636,81 @@ namespace motion {
         return entry.sourceObject;
     }
 
+    std::shared_ptr<tTVPBaseBitmap>
+    SourceCache::loadRenderSourceBitmapByName(
+        const ttstr &name, const tTJSVariant &currentSource, int blendMode,
+        const std::array<std::uint32_t, 4> &packedColors,
+        const std::shared_ptr<detail::MotionSnapshot> &sourceMotion) {
+        const auto key = detail::narrow(name);
+        if(key.empty()) {
+            return nullptr;
+        }
+
+        // Keep the same source-identity and backing-bitmap cache as the Layer
+        // API, but stop before ensureLayerObject/assignBitmapToLayer.  This is
+        // the hot path used by the render-command executor.
+        const auto effectiveMotion = sourceMotion
+            ? sourceMotion
+            : (_runtime ? _runtime->activeMotion : nullptr);
+        const auto sourceIdentity = detail::renderSourceCacheIdentity(
+            effectiveMotion ? effectiveMotion->path : std::string{}, key);
+        std::string resolvedKey;
+        tTJSVariant rawSource;
+        Entry *entryPtr = findRenderEntry(key, blendMode, sourceIdentity);
+        if(entryPtr) {
+            resolvedKey = entryPtr->resolvedKey;
+            rawSource = entryPtr->rawSource;
+        } else {
+            rawSource = currentSource.Type() != tvtVoid
+                ? currentSource
+                : loadRawSourceVariant(name, resolvedKey);
+            entryPtr = &ensureEntry(key, resolvedKey.empty() ? key : resolvedKey,
+                                    blendMode, packedColors, effectiveMotion,
+                                    sourceIdentity);
+            entryPtr->rawSource = rawSource;
+        }
+
+        auto &entry = *entryPtr;
+        if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors,
+                                     effectiveMotion)) {
+            return nullptr;
+        }
+        // Temporary source-art probe for the face alignment investigation.
+        // This is intentionally environment-gated and removed after the
+        // comparison; the render path must never write game assets normally.
+        static const bool dumpFaceSources = [] {
+            const char *env = std::getenv("KRKR_EMOTE_DUMP_FACE_SOURCES");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        if(dumpFaceSources && entry.backingBitmap &&
+           (key.find("face_eye_mabuta_l/icon") != std::string::npos ||
+            key.find("face_eye_mabuta_r/icon") != std::string::npos ||
+            key.find("face_eye_hitomi_l/icon") != std::string::npos ||
+            key.find("face_eye_hitomi_r/icon") != std::string::npos ||
+            key.find("face_eye_shirome_l/icon") != std::string::npos ||
+            key.find("face_eye_shirome_r/icon") != std::string::npos)) {
+            static std::unordered_set<std::string> dumped;
+            if(dumped.insert(key).second) {
+                const auto basename = key.substr(key.find_last_of('/') + 1);
+                const auto side = key.find("_l/") != std::string::npos ? "l" : "r";
+                const auto stem = key.find("mabuta") != std::string::npos
+                    ? "mabuta" : (key.find("hitomi") != std::string::npos
+                        ? "hitomi" : "shirome");
+                const auto path = fmt::format(
+                    "/Users/pizzicato/XCode Projects/Yoghourt/.work/"
+                    "motionplayer-visual-probe-20260830/source-{}-{}-{}.png",
+                    stem, side, basename);
+                try {
+                    TVPSaveImage(ttstr(path.c_str()), TJS_W("png"),
+                                 entry.backingBitmap.get(), nullptr);
+                } catch(...) {
+                    dumped.erase(key);
+                }
+            }
+        }
+        return entry.backingBitmap;
+    }
+
     iTVPTexture2D *SourceCache::loadRenderSourceTextureByName(
         const ttstr &name, const tTJSVariant &currentSource, int blendMode,
         const std::array<std::uint32_t, 4> &packedColors,

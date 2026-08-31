@@ -160,6 +160,15 @@ namespace motion {
         // Aligned to 0x6BC4F0. Full implementation matching decompilation.
         for(size_t vi = 1; vi < nodes.size(); ++vi) {
             auto &vn = nodes[vi];
+            if(vn.meshWarpedQuad) {
+                // A generated external-mesh grid belongs to the previous
+                // frame. Drop it before the new vertex pass so a meshType-0
+                // leaf never reuses stale eyelid geometry when the parent
+                // Bezier changes or disappears.
+                vn.meshControlPoints.clear();
+                vn.meshDivX = 0;
+                vn.meshDivY = 0;
+            }
             vn.meshWarpedQuad = false;
             const int parentIdx = vn.parentIndex >= 0 ? vn.parentIndex : 0;
             auto &parentNode = nodes[parentIdx];
@@ -319,10 +328,8 @@ namespace motion {
                     auto cascadeThroughParent =
                         [&](const detail::MotionNode &cn, float &wx,
                             float &wy) -> bool {
-                            if(cn.meshType != 1) {
-                                return false;
-                            }
-                            if(detail::isExactUnitMeshBezier(
+                            if(cn.meshType != 1 ||
+                               detail::isExactUnitMeshBezier(
                                    cn.interpolatedCache.meshBezierPoints)) {
                                 return false;
                             }
@@ -375,9 +382,6 @@ namespace motion {
                             }
                             clipWalk = cn.meshParentIndex;
                         }
-                        // Coordinates move from the leaf outwards. Local mesh
-                        // parents therefore run before the inherited wrapper
-                        // chain; Bezier warps are not commutative.
                         for(const auto *externalMeshParent :
                             _externalMeshParents) {
                             if(!externalMeshParent ||
@@ -401,7 +405,46 @@ namespace motion {
                     //     for MeshCopy draw (meshDivision)
                     // Mixing them made face layers collapse to dots/lines and
                     // 前髪 ghost when cascade sampled dense grids as Bezier.
-                    if(vn.meshType == 1 && cw > 0 && ch > 0) {
+                    // MeshType-0 children under a non-unit mesh parent are
+                    // promoted to the same dense representation below.
+                    const detail::MotionNode *meshGridParent = nullptr;
+                    if(vn.meshType == 0 && vn.meshControlPoints.empty()) {
+                        int meshWalk = vn.meshParentIndex;
+                        for(int guard = 0;
+                            meshWalk >= 0 &&
+                                meshWalk < static_cast<int>(nodes.size()) &&
+                                guard < 256;
+                            ++guard) {
+                            const auto *candidate =
+                                &nodes[static_cast<size_t>(meshWalk)];
+                            if(candidate->meshType == 1 &&
+                               !detail::isExactUnitMeshBezier(
+                                   candidate->interpolatedCache
+                                       .meshBezierPoints)) {
+                                meshGridParent = candidate;
+                                break;
+                            }
+                            if(candidate->meshParentIndex == meshWalk) {
+                                break;
+                            }
+                            meshWalk = candidate->meshParentIndex;
+                        }
+                    }
+                    if(!meshGridParent && vn.meshType == 0 &&
+                       vn.meshControlPoints.empty()) {
+                        for(const auto *candidate : _externalMeshParents) {
+                            if(candidate && candidate->meshType == 1 &&
+                               !detail::isExactUnitMeshBezier(
+                                   candidate->interpolatedCache
+                                       .meshBezierPoints)) {
+                                meshGridParent = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    const bool affineChildUnderMesh = meshGridParent != nullptr;
+                    if((vn.meshType == 1 || affineChildUnderMesh) && cw > 0 &&
+                       ch > 0) {
                         const double mw11 = m11 * cw, mw12 = m12 * ch;
                         const double mw21 = m21 * cw, mw22 = m22 * ch;
                         const double det = mw11 * mw22 - mw12 * mw21;
@@ -461,17 +504,17 @@ namespace motion {
                             vn.meshDivY = 0;
                         } else {
                             // G02（REF useBezierMesh = isNeedBp || 祖先
-                            // type==1）：保留变形看 mesh 数据，不看素材名。
-                            // mesh 祖先项（REF 祖先 type==1）依赖 mesh 祖先
-                            // 级联（渲染 WIP），此处暂传 false；级联落地时
-                            // 由其调用点改为 hasMeshAncestor。参数化与帧
-                            // authored bp 两项已生效。
+                            // type==1）：保留变形看 mesh 数据——参数化、帧
+                            // authored bp、祖先 mesh surface；不看素材名。
                             const bool keepDeformation =
                                 detail::nodeKeepsEmoteDeformation(
                                     vn.parameterizeIndex >= 0, hasUnitBp,
-                                    false);
+                                    affineChildUnderMesh);
                             const auto meshPlan = detail::planEmoteMeshDivision(
-                                vn.meshDivision, _emoteMeshDivisionRatio,
+                                affineChildUnderMesh
+                                    ? meshGridParent->meshDivision
+                                    : vn.meshDivision,
+                                _emoteMeshDivisionRatio,
                                 hasUnitBp, unitBpNearIdentity(unitPatch),
                                 keepDeformation, cw, ch);
                             const bool useAffineGrid = meshPlan.useAffineGrid;
@@ -517,6 +560,13 @@ namespace motion {
                                                 static_cast<double>(v));
                                 }
                             }
+                        }
+                        if(affineChildUnderMesh &&
+                           !vn.meshControlPoints.empty()) {
+                            // Keep the prepared item on the mesh path. The
+                            // points are warped below through the exact same
+                            // ancestor chain as authored mesh nodes.
+                            vn.meshWarpedQuad = true;
                         }
 
                         // Cascade through mesh ancestors using each ancestor's
@@ -611,14 +661,14 @@ namespace motion {
                         }
                     }
 
-                    // Leaf icons (meshTransform=0) still AffineCopy from
-                    // vertices[]. Parent bit-0x8 mesh.bp only warped
-                    // meshType==1 children, so 胴体同期UD breathing never
-                    // reached drawn parts. Warp the quad through the same
-                    // ancestor chain; meshType==1 already cascaded origin
-                    // and dense points above.
-                    const bool builtOwnMesh = vn.meshType == 1 && cw > 0.0 &&
-                        ch > 0.0;
+                    // Leaf icons with no mesh payload still use their four
+                    // vertices when no Bezier parent is active. Generated
+                    // child grids already traversed the ancestor chain above;
+                    // do not collapse those points back to an affine quad.
+                    const bool builtOwnMesh =
+                        (vn.meshType == 1 && cw > 0.0 && ch > 0.0) ||
+                        (vn.meshControlPoints.size() >= 8 && vn.meshDivX >= 2 &&
+                         vn.meshDivY >= 2);
                     if(!builtOwnMesh) {
                         bool warpedQuad = false;
                         for(int ci = 0; ci < 4; ++ci) {
@@ -639,6 +689,38 @@ namespace motion {
                         const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
                         return env && env[0] != '\0' && env[0] != '0';
                     }();
+                    static const bool eyeGeomProbe = [] {
+                        const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
+                        return env && env[0] != '\0' && env[0] != '0';
+                    }();
+                    if(eyeGeomProbe &&
+                       (vn.layerName == "mabuta" ||
+                        vn.layerName == "eye_R" || vn.layerName == "eye_L" ||
+                        vn.layerName == "shirome" || vn.layerName == "目影R" ||
+                        vn.layerName == "目影L" || vn.layerName == "瞳R" ||
+                        vn.layerName == "瞳L")) {
+                        if(auto L = spdlog::get("plugin")) {
+                            L->info(
+                                "emote.eye-geom idx={} label={} parent={} "
+                                "meshParent={} meshType={} meshPts={} div=({}, {}) "
+                                "acc=({:.3f},{:.3f}) v0=({:.3f},{:.3f}) "
+                                "v1=({:.3f},{:.3f}) v2=({:.3f},{:.3f}) "
+                                "v3=({:.3f},{:.3f}) src={} bp={}",
+                                vn.index, vn.layerName.empty() ? "<none>"
+                                                               : vn.layerName,
+                                vn.parentIndex, vn.meshParentIndex, vn.meshType,
+                                vn.meshControlPoints.size(), vn.meshDivX,
+                                vn.meshDivY, vn.accumulated.posX,
+                                vn.accumulated.posY, vn.vertices[0],
+                                vn.vertices[1], vn.vertices[2], vn.vertices[3],
+                                vn.vertices[4], vn.vertices[5], vn.vertices[6],
+                                vn.vertices[7],
+                                vn.interpolatedCache.src.empty()
+                                    ? "<none>"
+                                    : vn.interpolatedCache.src.c_str(),
+                                vn.interpolatedCache.meshBezierPoints.size());
+                        }
+                    }
                     if(geomProbe) {
                         const bool selfBodyUd = vn.parameterEntry &&
                             vn.parameterEntry->id == "body_UD";
