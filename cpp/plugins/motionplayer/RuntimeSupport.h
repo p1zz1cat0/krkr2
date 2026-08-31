@@ -345,6 +345,11 @@ namespace motion::detail {
         // Zeroed when no motion is active; consumed by frame evaluation
         // (coord NaN/Inf sentinel fix) and upcoming render alignment.
         ScreenSize logicalScreen;
+        // F07-①: wrapper-provided root region. For nested child Players this
+        // carries the wrapper node's rectangle (REF: emotemotion::progress
+        // receives the wrapper node's originX/originY/width/height, not the
+        // file's root screenSize). Zeroed = fall back to logicalScreen.
+        ScreenSize wrapperLim;
         // Incremented for every motion activation/deactivation. Controller
         // candidates bind to this generation so a failed init after a motion
         // switch cannot drive the new node tree with stale state.

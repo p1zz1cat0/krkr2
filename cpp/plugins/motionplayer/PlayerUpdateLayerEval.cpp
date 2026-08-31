@@ -910,7 +910,16 @@ namespace motion {
         if(!_runtime->perNodeEvalData.empty()) {
             // F07：root 节点（index 0）的区域 = PSB logicalScreen；子节点
             // 的区域在循环内按父先子后传递（见 effectiveNodeLimLike_REF）。
-            _runtime->perNodeEvalData[0].evalLim = _runtime->logicalScreen;
+            // F07-①：嵌套 child Player 的 root 区域 = wrapper 节点矩形
+            // （updateChildMotion 每帧 stamp wrapperLim；REF EmoteNode.cpp
+            // 758-764：emotemotion::progress 收到引用节点自身的矩形，而非
+            // 文件的 root screenSize）。无 wrapper 或矩形为零时回退
+            // logicalScreen。
+            _runtime->perNodeEvalData[0].evalLim =
+                (_runtime->wrapperLim.width > 0.0 &&
+                 _runtime->wrapperLim.height > 0.0)
+                    ? _runtime->wrapperLim
+                    : _runtime->logicalScreen;
         }
         for(size_t i = 1; i < nodes.size(); ++i) {
             auto &node = nodes[i];
