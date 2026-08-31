@@ -460,9 +460,16 @@ namespace motion {
                             vn.meshDivX = 0;
                             vn.meshDivY = 0;
                         } else {
+                            // G02（REF useBezierMesh = isNeedBp || 祖先
+                            // type==1）：保留变形看 mesh 数据，不看素材名。
+                            // mesh 祖先项（REF 祖先 type==1）依赖 mesh 祖先
+                            // 级联（渲染 WIP），此处暂传 false；级联落地时
+                            // 由其调用点改为 hasMeshAncestor。参数化与帧
+                            // authored bp 两项已生效。
                             const bool keepDeformation =
-                                detail::sourceKeepsEmoteDeformation(
-                                    srcName, vn.parameterizeIndex);
+                                detail::nodeKeepsEmoteDeformation(
+                                    vn.parameterizeIndex >= 0, hasUnitBp,
+                                    false);
                             const auto meshPlan = detail::planEmoteMeshDivision(
                                 vn.meshDivision, _emoteMeshDivisionRatio,
                                 hasUnitBp, unitBpNearIdentity(unitPatch),

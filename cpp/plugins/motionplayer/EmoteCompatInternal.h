@@ -167,22 +167,11 @@ namespace motion {
         // G02（REF EmoteNode.cpp useBezierMesh = isNeedBp || 祖先 type==1）：
         // 是否保留 Bezier/mesh 变形只看 mesh 数据本身——参数化节点、帧
         // authored bp、祖先 mesh surface 任一成立即保留。素材命名
-        // （face_parts/face_ 字符串分流）不是格式语义，删除。
+        // （face_parts/face_ 字符串分流）不是格式语义，已删除。
         inline bool nodeKeepsEmoteDeformation(bool parameterized,
                                               bool hasFrameBp,
                                               bool hasMeshAncestor) {
             return parameterized || hasFrameBp || hasMeshAncestor;
-        }
-
-        // G02 过渡期保留：结构版的调用方切换在 PlayerUpdateGeometry，与
-        // mesh 祖先级联（未提交改动）同批落地；切换提交后删除本 name 版本。
-        inline bool sourceKeepsEmoteDeformation(const std::string &source,
-                                                int parameterizeIndex) {
-            if(parameterizeIndex >= 0) {
-                return true;
-            }
-            return source.find("face_parts") != std::string::npos ||
-                source.find("face_") != std::string::npos;
         }
 
         struct MeshDivisionPlan {
