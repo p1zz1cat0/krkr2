@@ -25,27 +25,18 @@ namespace motion {
                 !label.empty() && !instantVariable && trackLabel == label;
         }
 
+        // C01（REF emotemotion 单树递归）：是否并入父 bounds/render graph
+        // 只看结构事实——该节点是否拥有 child Player（nodeType==3，由
+        // buildNodeTree 按 PSB motion 引用结构创建）。source 前缀与日文
+        // label allowlist（motion/face_parts/…、■目L 等 15 项）是症状驱动
+        // 的启发式，已删除：未命中名字的合法附件此前会完成 update 却永不
+        // 进入渲染图。
         inline bool shouldMergeEmoteBoundedChild(int nodeType,
                                                  const std::string &source,
                                                  const std::string &layerName) {
-            if(nodeType != 3) {
-                return false;
-            }
-            if(source.find("motion/face_parts/") != std::string::npos ||
-               source.find("motion/head_parts/") != std::string::npos ||
-               source.find("motion/body_parts/") != std::string::npos) {
-                return true;
-            }
-
-            static constexpr std::array<std::string_view, 15> kBoundedLabels = {
-                "■目L",       "■目R",       "■眉L",     "■眉R",   "■口",
-                "■鼻",        "■頬",        "口_種類",  "瞳L",    "瞳R",
-                "涙L",        "涙R",        "頭部変形基礎", "全身変形基礎",
-                "下半身変形基礎",
-            };
-            return std::find(kBoundedLabels.begin(), kBoundedLabels.end(),
-                             std::string_view(layerName)) !=
-                kBoundedLabels.end();
+            (void)source;
+            (void)layerName;
+            return nodeType == 3;
         }
 
         inline bool clipLabelMatchesRequest(const std::string &label,
@@ -173,6 +164,18 @@ namespace motion {
             return motionPath + '\n' + sourceKey;
         }
 
+        // G02（REF EmoteNode.cpp useBezierMesh = isNeedBp || 祖先 type==1）：
+        // 是否保留 Bezier/mesh 变形只看 mesh 数据本身——参数化节点、帧
+        // authored bp、祖先 mesh surface 任一成立即保留。素材命名
+        // （face_parts/face_ 字符串分流）不是格式语义，删除。
+        inline bool nodeKeepsEmoteDeformation(bool parameterized,
+                                              bool hasFrameBp,
+                                              bool hasMeshAncestor) {
+            return parameterized || hasFrameBp || hasMeshAncestor;
+        }
+
+        // G02 过渡期保留：结构版的调用方切换在 PlayerUpdateGeometry，与
+        // mesh 祖先级联（未提交改动）同批落地；切换提交后删除本 name 版本。
         inline bool sourceKeepsEmoteDeformation(const std::string &source,
                                                 int parameterizeIndex) {
             if(parameterizeIndex >= 0) {
@@ -193,9 +196,14 @@ namespace motion {
                               bool hasUnitBp, bool unitBpNearIdentity,
                               bool keepDeformation, double clipW,
                               double clipH) {
-            // NEKOPARA 素材常见 meshDivision=20。先前硬帽 8 会把五官网格打成
-            // 粗块，看起来像低分辨率锯齿。
-            constexpr int kMeshDivCap = 20;
+            // G01（REF）：meshDivision 只 clamp 到 1..50，再按 icon 宽高
+            // 分配 divX/divY。删除 cap=20 与「unit-bp 折成 2x2 affine」
+            // 折叠——authored density 是像素契约，性能旋钮是 TJS
+            // meshDivisionRatio（ratio 缩放 authoredDivision）。非 name、
+            // 非 unit-bp 驱动。hasUnitBp/unitBpNearIdentity 仅为调用方
+            // 兼容保留，不再参与判定。
+            (void)hasUnitBp;
+            (void)unitBpNearIdentity;
             constexpr int kMeshDivHardCap = 50;
 
             const double ratio = (std::isfinite(meshDivisionRatio) &&
@@ -210,13 +218,9 @@ namespace motion {
             if(divTotal > kMeshDivHardCap) {
                 divTotal = kMeshDivHardCap;
             }
-            if(divTotal > kMeshDivCap) {
-                divTotal = kMeshDivCap;
-            }
 
             MeshDivisionPlan plan;
-            plan.useAffineGrid =
-                !keepDeformation && (!hasUnitBp || unitBpNearIdentity);
+            plan.useAffineGrid = !keepDeformation;
             if(plan.useAffineGrid) {
                 plan.divX = 2;
                 plan.divY = 2;

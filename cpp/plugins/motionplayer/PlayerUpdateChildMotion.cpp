@@ -41,14 +41,13 @@ namespace motion {
                 }
                 Player &child = *childPtr;
                 const auto &slotSrc = mn.activeSlot().src;
-                // e-mote 有界子树（face/head/body）在首帧可能尚无
-                // v12/dirty，但仍需 play 才能 build 节点树，否则
-                // prepare 的 bounded merge 拿到空 child。
+                // C02（REF findmotionByName 结构判定）：首帧 bootstrap 看
+                // 「子 Player 尚无 active motion 且 wrapper 有 slot src」，
+                // 不做路径前缀匹配——前缀外的合法嵌套 motion 此前永远
+                // build 不出节点树（e-mote 有界子树在首帧可能尚无
+                // v12/dirty，但仍需 play 才能 build 节点树）。
                 const bool needsBoundedChildBootstrap =
-                    !child.hasActiveMotion() &&
-                    (slotSrc.rfind("motion/face_parts/", 0) == 0 ||
-                     slotSrc.rfind("motion/head_parts/", 0) == 0 ||
-                     slotSrc.rfind("motion/body_parts/", 0) == 0);
+                    !child.hasActiveMotion() && !slotSrc.empty();
 
                 // Aether's working fallback gates this on visibility, not the
                 // transient dirty bit. A visible child must remain eligible

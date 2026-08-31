@@ -11,8 +11,14 @@
 #include <cmath>
 #include <limits>
 
+#include "motionplayer/EmoteCompatInternal.h"
 #include "motionplayer/PlayerInternal.h"
 #include "motionplayer/RuntimeSupport.h"
+
+namespace {
+    const std::string kUnlistedSource = "motion/tail_parts/ohagi";
+    const std::string kUnlistedLabel = "しっぽ";
+} // namespace
 
 namespace {
     motion::detail::MotionParameterEntry
@@ -154,4 +160,54 @@ TEST_CASE("evaluateTimelineLike keeps coords when the node lim is unsized") {
                                                     unsized);
     REQUIRE(std::isnan(active.x));
     REQUIRE(std::isinf(active.y));
+}
+
+TEST_CASE("shouldMergeEmoteBoundedChild decides on node structure only") {
+    // C01: any node owning a child player merges, regardless of source or
+    // layer naming; the old prefix/allowlist heuristics are gone.
+    REQUIRE(motion::detail::shouldMergeEmoteBoundedChild(
+        3, kUnlistedSource, kUnlistedLabel));
+    REQUIRE(motion::detail::shouldMergeEmoteBoundedChild(
+        3, "motion/face_parts/eye", "■目L"));
+    REQUIRE_FALSE(motion::detail::shouldMergeEmoteBoundedChild(
+        0, kUnlistedSource, kUnlistedLabel));
+    REQUIRE_FALSE(motion::detail::shouldMergeEmoteBoundedChild(
+        2, "motion/face_parts/eye", "■目L"));
+    REQUIRE_FALSE(motion::detail::shouldMergeEmoteBoundedChild(
+        4, kUnlistedSource, kUnlistedLabel));
+}
+
+TEST_CASE("nodeKeepsEmoteDeformation follows mesh data, not names") {
+    // G02: keep on parameterized / frame-authored bp / mesh ancestor.
+    REQUIRE(motion::detail::nodeKeepsEmoteDeformation(true, false, false));
+    REQUIRE(motion::detail::nodeKeepsEmoteDeformation(false, true, false));
+    REQUIRE(motion::detail::nodeKeepsEmoteDeformation(false, false, true));
+    // No mesh data anywhere: affine fallback even for face-ish naming —
+    // naming is no longer consulted.
+    REQUIRE_FALSE(
+        motion::detail::nodeKeepsEmoteDeformation(false, false, false));
+}
+
+TEST_CASE("planEmoteMeshDivision honors authored density without name folds") {
+    // G01: division clamps to 1..50 only; the unit-bp → 2x2 fold and the
+    // extra cap of 20 are gone. meshDivisionRatio is the perf knob.
+    const auto dense = motion::detail::planEmoteMeshDivision(
+        50, 1.0, true, true, true, 100.0, 100.0);
+    REQUIRE_FALSE(dense.useAffineGrid);
+    REQUIRE(dense.divX + dense.divY - 2 == 50);
+    REQUIRE(dense.divX == 26);
+    REQUIRE(dense.divY == 26);
+    // Ratio scales the authored axis.
+    const auto scaled = motion::detail::planEmoteMeshDivision(
+        40, 0.5, true, true, true, 100.0, 100.0);
+    REQUIRE(scaled.divX + scaled.divY - 2 == 20);
+    // No authored mesh: affine fallback, unaffected by unit-bp data.
+    const auto plain = motion::detail::planEmoteMeshDivision(
+        20, 1.0, true, false, false, 100.0, 100.0);
+    REQUIRE(plain.useAffineGrid);
+    REQUIRE(plain.divX == 2);
+    // An authored mesh with unit bp keeps the mesh path instead of folding.
+    const auto unitKept = motion::detail::planEmoteMeshDivision(
+        20, 1.0, true, true, true, 100.0, 100.0);
+    REQUIRE_FALSE(unitKept.useAffineGrid);
 }
