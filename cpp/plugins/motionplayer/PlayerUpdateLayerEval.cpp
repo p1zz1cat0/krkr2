@@ -745,6 +745,32 @@ namespace motion {
                 writeEvalResultValueLike_0x6C4668(label, 0,
                                                   frames.front().value);
             }
+            // F04/F05（REF emotefile::_varList 文件级单表）：嵌套 child 的
+            // _variableValues 必须每帧镜像 controllerOwner 的全局表。此前
+            // child 各自独立演化：varFrames 只在首帧 seed 一次 frames.front
+            // （多为 0），EyeControl 等唯一 owner 的逐帧值只落在 root 的
+            // 表里——child 持有过期 0 值驱动本层 bind/parameterize，与
+            // wrapper 侧 sync 的 blink 值分叉（帧间抖动源）。seeded default
+            // 不得遮蔽 owner 值（与 A1 决策一致：inherited inputs 胜过
+            // neutral seeds）。
+            if(_parentPlayer != nullptr) {
+                const Player *controllerOwner = this;
+                while(controllerOwner->_parentPlayer) {
+                    controllerOwner = controllerOwner->_parentPlayer;
+                }
+                if(controllerOwner != this && controllerOwner->_runtime) {
+                    for(const auto &[label, value] :
+                        controllerOwner->_variableValues) {
+                        auto it = _variableValues.find(label);
+                        if(it == _variableValues.end()) {
+                            _variableValues.emplace(label, value);
+                        } else if(it->second != value) {
+                            it->second = value;
+                            _emoteDirty = true;
+                        }
+                    }
+                }
+            }
             // Controller state and its evaluated output are distinct. Auto
             // blink, clamp and timeline blending write the latter without
             // changing the expression animator's base value.  Pass the
