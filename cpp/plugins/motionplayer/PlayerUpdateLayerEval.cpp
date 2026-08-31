@@ -492,7 +492,7 @@ namespace motion::internal {
     MOTIONPLAYER_NOINLINE bool
     evaluateTimelineLike_0x699AE4(detail::MotionNode &node, bool dirtyArg,
                                   double currentTime, bool isEmoteMode,
-                                  const detail::ScreenSize &logicalScreen) {
+                                  const detail::ScreenSize &lim) {
         const bool dirty = dirtyArg || node.flags != 0;
         auto &active = node.activeSlot();
         auto &other = node.otherSlot();
@@ -500,24 +500,26 @@ namespace motion::internal {
         currentTime =
             frameSelectionTimeLike_0x6B7E44(node, currentTime, isEmoteMode);
 
-        // sdl3-ref EmoteNode::progress（REF 436-443）：coord 特殊值动态
-        // 修正——NaN→-lim.origin、Inf→(lim.width|height)-lim.origin，用于
-        // 贴边类关键帧。lim 在本架构以 PSB root screenSize 逻辑边界扮演
-        // （MOTIONPLAYER_TEXTURE_WORLD_COORDS.md §3.3）；无 screenSize 的
-        // motion（宽度为 0）不修正，保持原值。
-        if(logicalScreen.width > 0.0 && logicalScreen.height > 0.0) {
-            const auto fixCoord = [&logicalScreen](double &x, double &y) {
+        // F07（REF EmoteNode::progress 436-443/516-519）：coord 特殊值动态
+        // 修正——NaN→区域左/上边缘（-lim.origin）、Inf→右/下边缘
+        // （lim.width|height − lim.origin，按语义取 x→width、y→height，
+        // 不抄 REF 的交叉笔误），用于贴边类关键帧。lim 是本节点的有效
+        // 区域（effectiveNodeLimLike_REF：父矩形/继承区域/root 逻辑屏），
+        // 哨兵值在本节点局部锚点坐标系消费；无尺寸区域（宽或高为 0）不
+        // 修正，保持原值。
+        if(lim.width > 0.0 && lim.height > 0.0) {
+            const auto fixCoord = [&lim](double &x, double &y) {
                 if(std::isnan(x)) {
-                    x = -logicalScreen.originX;
+                    x = -lim.originX;
                 }
                 if(std::isnan(y)) {
-                    y = -logicalScreen.originY;
+                    y = -lim.originY;
                 }
                 if(std::isinf(x)) {
-                    x = logicalScreen.width - logicalScreen.originX;
+                    x = lim.width - lim.originX;
                 }
                 if(std::isinf(y)) {
-                    y = logicalScreen.height - logicalScreen.originY;
+                    y = lim.height - lim.originY;
                 }
             };
             fixCoord(active.x, active.y);
@@ -878,6 +880,11 @@ namespace motion {
         // 时间轴与变量打架导致卡顿/错位。
         const bool emoteLike = detail::isEmoteLikeMotion(*_runtime);
         const bool freezeBodyTimeline = emoteLike;
+        if(!_runtime->perNodeEvalData.empty()) {
+            // F07：root 节点（index 0）的区域 = PSB logicalScreen；子节点
+            // 的区域在循环内按父先子后传递（见 effectiveNodeLimLike_REF）。
+            _runtime->perNodeEvalData[0].evalLim = _runtime->logicalScreen;
+        }
         for(size_t i = 1; i < nodes.size(); ++i) {
             auto &node = nodes[i];
 
@@ -923,6 +930,16 @@ namespace motion {
                 parentIdx = 0;
             }
             const auto &parent = nodes[parentIdx];
+
+            // F07（REF emotenode::progress lim）：本节点的有效区域取自
+            // 合成变换所用的 resolved parent——有尺寸（icon/blank 已解析
+            // clipW/H）用父矩形，无尺寸（motion/layout/clip）继承父收到的
+            // 区域。哨兵值在 parent 局部锚点坐标系消费，必须与变换合成
+            // 用同一个父节点。
+            const auto nodeLim = detail::effectiveNodeLimLike_REF(
+                _runtime->perNodeEvalData[parentIdx].evalLim,
+                parent.clipW, parent.clipH, parent.originX, parent.originY);
+            _runtime->perNodeEvalData[i].evalLim = nodeLim;
 
             if(detail::logoChainTraceEnabled(_runtime->activeMotion)) {
                 const auto &parentNode = nodes[parentIdx];
@@ -1066,7 +1083,7 @@ namespace motion {
             const bool timelineUpdated = [&]() {
                 const bool __updated = evaluateTimelineLike_0x699AE4(
                     node, timelineDirtyArg, nodeEvalTime, emoteLike,
-                    _runtime->logicalScreen);
+                    nodeLim);
                 if(evalProbe && node.parameterEntry &&
                    node.parameterEntry->id == "body_UD") {
                     if(auto L = spdlog::get("plugin")) {

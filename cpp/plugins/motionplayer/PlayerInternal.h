@@ -1630,10 +1630,13 @@ namespace motion {
             const std::vector<std::shared_ptr<const PSB::PSBDictionary>>
                 *rootLayerList = nullptr);
 
+        // F07: `lim` is the node's effective region for the current frame
+        // (effectiveNodeLimLike_REF) against which NaN/Inf sentinel coords
+        // resolve; NOT the root logical screen for nested nodes.
         bool evaluateTimelineLike_0x699AE4(detail::MotionNode &node,
                                            bool dirtyArg, double currentTime,
                                            bool isEmoteMode,
-                                           const detail::ScreenSize &screen);
+                                           const detail::ScreenSize &lim);
 
 
         // -----------------------------------------------------------------

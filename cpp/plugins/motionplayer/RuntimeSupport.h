@@ -252,6 +252,23 @@ namespace motion::detail {
         double height = 0.0;
     };
 
+    // F07（REF emotenode::progress 的 emotelimit）：节点收到的有效区域。
+    // 有尺寸的父节点（icon/blank，clipW/H/originX/Y 已解析）用它自己的
+    // 矩形；motion/layout/clip 等无尺寸父节点把收到的区域原样下发；
+    // root 收 PSB logicalScreen。NaN/Inf 坐标哨兵（evaluateTimelineLike）
+    // 以该区域换算贴边值——区域不同，贴边像素不同。
+    inline ScreenSize effectiveNodeLimLike_REF(const ScreenSize &parentLim,
+                                               double parentWidth,
+                                               double parentHeight,
+                                               double parentOriginX,
+                                               double parentOriginY) {
+        if(parentWidth > 0.0 && parentHeight > 0.0) {
+            return ScreenSize{parentOriginX, parentOriginY, parentWidth,
+                              parentHeight};
+        }
+        return parentLim;
+    }
+
     struct MotionSnapshot {
         std::string path;
         std::shared_ptr<PSB::PSBFile> file;
@@ -678,6 +695,11 @@ namespace motion::detail {
                 padding[5] = {}; // offsets 0-39 (unused in our current scope)
             double evalTime = 0.0;
             int dirtyFlag = 0;
+            // F07: effective emotelimit this node received for the current
+            // frame (parent rect or inherited region; root = logicalScreen).
+            // Written parent-first in Phase2 before the node's own eval, so a
+            // child's sentinel resolves against the parent's current rect.
+            ScreenSize evalLim;
         };
         std::vector<PerNodeEvalData> perNodeEvalData;
         // Aligned to libkrkr2.so Player_playImpl (0x6B2284):
