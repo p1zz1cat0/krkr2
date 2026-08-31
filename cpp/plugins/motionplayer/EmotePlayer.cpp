@@ -12,6 +12,7 @@
 #include "D3DEmoteModule.h"
 #include "EmotePlayer.h"
 #include "LayerIntf.h"
+#include "PlayerInternal.h"
 #include "RuntimeSupport.h"
 #include "SeparateLayerAdaptor.h"
 #include "ncbind.hpp"
@@ -225,6 +226,7 @@ namespace motion {
         copy->_visible = _visible;
         copy->_playCallback = _playCallback;
         copy->_isSelfClear = _isSelfClear;
+        copy->_speedRatio = _speedRatio;
         copy->_baseScale = _baseScale;
         copy->_userScale = _userScale;
         copy->_rot = _rot;
@@ -246,6 +248,24 @@ namespace motion {
         copy->_player.setBustScale(copy->_bustScale);
         copy->_player.setEmoteMeshDivisionRatio(copy->_meshDivisionRatio);
         copy->_player.setVisible(copy->_visible);
+
+        // A06（状态级 clone）：经 A05 superset schema 把 Player 内状态
+        // （变量/timeline 播放态与 currentTime/blendRatio/tick/speed/
+        // outline）转移到副本——"模块加载成功"不等于状态保真。过渡动画
+        // 队列（transition/ease animator）是瞬态，不在 schema 内。
+        if(snapshot) {
+            copy->_player.unserialize(_player.serialize());
+        }
+        // wrapper 变换在状态转移后推入（与 unserialize 同序）。
+        copy->_player.setEmoteCoord(copy->_coordX, copy->_coordY, 0.0, 0.0);
+        copy->_player.setEmoteScale(
+            static_cast<double>(copy->_baseScale) *
+                static_cast<double>(copy->_userScale),
+            0.0, 0.0);
+        copy->_player.setRotate(copy->_rot, 0.0, 0.0);
+        copy->_player.setEmoteColor(static_cast<tjs_uint32>(copy->_color),
+                                    0.0, 0.0);
+        copy->_player.setMirror(copy->_mirrorChanged);
 
         tTJSVariant result;
         if(iTJSDispatch2 *adaptor = AdaptorT::CreateAdaptor(copy)) {
@@ -290,10 +310,96 @@ namespace motion {
         _modified = true;
     }
 
-    tTJSVariant EmotePlayer::serialize() { return _player.serialize(); }
+    tTJSVariant EmotePlayer::serialize() {
+        // A05（版本化 superset schema）：Player 层字段（chara/motion/
+        // tickcount/speed/outline/variables/timelines）原样保留在顶层，
+        // 追加 wrapper 变换状态。REF emoteplayerclass.cpp:363 的键名
+        // （currCoordx/currCoordy/currAngle/currZx/currZy）原样复用，REF
+        // 产出的存档可直接被本 unserialize 消费；wrapper 专有拆分
+        // （base/user scale、color、mirror、speedRatio）用显式键。
+        // 旧 Player schema 存档（无 wrapper 键）反序列化时字段保持当前值。
+        tTJSVariant playerState = _player.serialize();
+        std::vector<std::pair<std::string, tTJSVariant>> entries;
+        if(playerState.Type() == tvtObject &&
+           playerState.AsObjectNoAddRef() != nullptr) {
+            motion::internal::DictionaryEnumerator callback;
+            tTJSVariantClosure closure(&callback, nullptr);
+            playerState.AsObjectNoAddRef()->EnumMembers(
+                TJS_IGNOREPROP, &closure, playerState.AsObjectNoAddRef());
+            entries.reserve(callback.entries.size() + 11);
+            for(auto &[key, value] : callback.entries) {
+                entries.emplace_back(key.AsStdString(), value);
+            }
+        }
+        const double finalScale =
+            static_cast<double>(_baseScale) * static_cast<double>(_userScale);
+        entries.emplace_back("schemaVersion", static_cast<tjs_int64>(2));
+        entries.emplace_back("currCoordx", _coordX);
+        entries.emplace_back("currCoordy", _coordY);
+        entries.emplace_back("currAngle", _rot);
+        entries.emplace_back("currZx", finalScale);
+        entries.emplace_back("currZy", finalScale);
+        entries.emplace_back("userScale", static_cast<double>(_userScale));
+        entries.emplace_back("baseScale", static_cast<double>(_baseScale));
+        entries.emplace_back("color", static_cast<tjs_int64>(_color));
+        entries.emplace_back("mirror", _mirrorRequested);
+        entries.emplace_back("speedRatio", _speedRatio);
+        return detail::makeDictionary(entries);
+    }
 
     void EmotePlayer::unserialize(tTJSVariant data) {
+        // A05：wrapper 字段全部可选——旧 Player schema 存档缺 wrapper 键时
+        // 保持当前值；含 REF 键或 superset 键时恢复。Player 层先恢复
+        // （可能重建节点树），wrapper 变换随后推入才能生效。
+        if(data.Type() == tvtObject && data.AsObjectNoAddRef() != nullptr) {
+            iTJSDispatch2 *dict = data.AsObjectNoAddRef();
+            auto readKey = [&](const tjs_char *key, tTJSVariant &out) {
+                return dict != nullptr &&
+                    TJS_SUCCEEDED(
+                        dict->PropGet(0, key, nullptr, &out, dict)) &&
+                    out.Type() != tvtVoid;
+            };
+            tTJSVariant value;
+            if(readKey(TJS_W("currCoordx"), value)) {
+                _coordX = value.AsReal();
+            }
+            if(readKey(TJS_W("currCoordy"), value)) {
+                _coordY = value.AsReal();
+            }
+            if(readKey(TJS_W("currAngle"), value)) {
+                _rot = value.AsReal();
+            }
+            if(readKey(TJS_W("userScale"), value)) {
+                _userScale = static_cast<float>(value.AsReal());
+            } else if(readKey(TJS_W("currZx"), value)) {
+                // REF 存档只存最终 scale（currZx/currZy 均分），base 保持
+                // 现值时 user 即最终 scale。
+                _userScale = static_cast<float>(value.AsReal());
+            }
+            if(readKey(TJS_W("baseScale"), value)) {
+                _baseScale = static_cast<float>(value.AsReal());
+            }
+            if(readKey(TJS_W("color"), value)) {
+                _color = static_cast<tjs_int>(value.AsInteger());
+            }
+            if(readKey(TJS_W("mirror"), value)) {
+                _mirrorRequested = value.operator bool();
+                _mirrorChanged = (_mirrorRequested != _mirrorBase);
+            }
+            if(readKey(TJS_W("speedRatio"), value)) {
+                _speedRatio = value.AsReal();
+            }
+        }
         _player.unserialize(data);
+        // wrapper 变换在 Player 状态恢复之后推入（Player::unserialize 可能
+        // ensureMotionLoaded 重建节点树）。
+        _player.setEmoteCoord(_coordX, _coordY, 0.0, 0.0);
+        _player.setEmoteScale(
+            static_cast<double>(_baseScale) * static_cast<double>(_userScale),
+            0.0, 0.0);
+        _player.setRotate(_rot, 0.0, 0.0);
+        _player.setEmoteColor(static_cast<tjs_uint32>(_color), 0.0, 0.0);
+        _player.setMirror(_mirrorChanged);
         _modified = true;
     }
 

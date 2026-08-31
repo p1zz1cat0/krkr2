@@ -157,7 +157,57 @@ check(player.getTimelinePlaying("差分用_waiting_loop2"),
     "parallel diff timeline starts");
 pluginAssertEqual("parallel main plus diff count", 2,
     player.countPlayingTimelines());
-player.stopTimeline("");
+
+// A05/A06: serialize must carry the wrapper transform state (REF keys
+// currCoordx/currAngle/currZx) AND the playing-timeline list. Run after the
+// parallel timelines are started so the playing list is populated.
+player.setCoord(123, 456);
+player.setRot(15);
+player.setColor(0x11223344, 0, 0);
+player.setVariable("body_UD", -7);
+var saved = player.serialize();
+pluginAssertEqual("A05 serialize carries wrapper coord", 123, saved.currCoordx);
+pluginAssertEqual("A05 serialize carries wrapper angle", 15, saved.currAngle);
+check(saved.variables.body_UD == -7,
+    "A05 serialize carries the variable table");
+check(saved.timelines.count > 0,
+    "A05 serialize carries playing timelines");
+
+// Round-trip through unserialize: the same player restores its own state,
+// observed by re-serializing (EmotePlayer exposes no coord getter).
+player.setCoord(0, 0);
+player.setRot(0);
+player.unserialize(saved);
+var restored = player.serialize();
+pluginAssertEqual("A05 unserialize restores wrapper coord", 123,
+    restored.currCoordx);
+check(Math.abs(player.getVariable("body_UD") - (-7)) < 0.001,
+    "A05 unserialize restores the variable table");
+pluginAssertEqual("A05 unserialize restores playing timelines", 2,
+    player.countPlayingTimelines());
+
+// A06: a clone must inherit state, not start fresh.
+var twin = player.clone();
+var twinState = twin.serialize();
+pluginAssertEqual("A06 clone inherits wrapper coord", 123,
+    twinState.currCoordx);
+check(Math.abs(twin.getVariable("body_UD") - (-7)) < 0.001,
+    "A06 clone inherits the variable table");
+check(twin.countPlayingTimelines() == player.countPlayingTimelines(),
+    "A06 clone inherits playing timelines");
+// Mutating the original must not leak into the twin.
+player.setVariable("body_UD", 0);
+check(Math.abs(twin.getVariable("body_UD") - (-7)) < 0.001,
+    "A06 clone state is independent of the original");
+// Twin must render on its own (draw through its own adaptor).
+var twinLayer = new Layer(new Window(), null);
+twinLayer.setImageSize(1280, 720);
+var twinAdaptor = new Motion.SeparateLayerAdaptor(twinLayer);
+twinAdaptor.targetLayer = twinLayer;
+twinAdaptor.absolute = 100;
+twin.draw(twinAdaptor);
+check(twin.countPlayingTimelines() >= 1,
+    "A06 twin keeps its own playing timelines after draw");
 
 // Render-path coverage: draw twice through the recommended
 // SeparateLayerAdaptor route. The fixture contains nested motion players
