@@ -518,6 +518,12 @@ namespace motion {
         // Currently a placeholder; real implementation lands with the
         // std::vector<VariableLabelEntry> field (see RuntimeSupport.h).
         void initVariables();
+        // F03: single-shot default-parameter binding at init. Nodes without
+        // their own parameterize get the clip's default parameter axis here —
+        // the only second channel besides node-level parameterize. Phase2
+        // must not re-resolve it per frame (playing-timeline clip changes
+        // would silently rebind axes mid-play).
+        void bindDefaultParameterEntriesLike_sdl3();
         friend void
         detail::buildNodeTree(detail::PlayerRuntime &runtime,
                               const detail::MotionSnapshot &snapshot,

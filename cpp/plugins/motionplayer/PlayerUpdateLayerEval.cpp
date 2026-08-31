@@ -889,31 +889,14 @@ namespace motion {
             auto &node = nodes[i];
 
             double nodeEvalTime = currentTime;
-            // Faces such as 目L/眉L carry no node-level parameterize; their
-            // layer timelines are indexed by the motion's own parameter axis.
-            // Resolve through the clip's defaultParameterIndex and map the
-            // parameter value onto the timeline (aligned to Aether REF
-            // Phase2).  This replaces the former MotionSubNode local fix that
-            // transToTick'd the first child parameter manually.
-            if(node.parameterizeIndex < 0) {
-                const auto *clip = selectActiveClip();
-                if(clip && clip->defaultParameterIndex >= 0 &&
-                   static_cast<size_t>(clip->defaultParameterIndex) <
-                       _runtime->parameterEntries.size()) {
-                    const auto &entry = _runtime->parameterEntries[
-                        static_cast<size_t>(clip->defaultParameterIndex)];
-                    if(!entry.id.empty() && entry.rangeScale != 0.0) {
-                        const double raw =
-                            initialParameterRawValueLike_0x6B1ABC(entry.id);
-                        // F01（REF getTickByIdx 单轨契约）：无
-                        // direct-controller 帧号特判；统一
-                        // parameterizedClipTime（transToTick + division 轴）。
-                        nodeEvalTime = detail::parameterizedClipTime(
-                            *clip, entry, raw);
-                    }
-                } else if(freezeBodyTimeline) {
-                    nodeEvalTime = 0.0;
-                }
+            // F03：参数化只有两条通道——node-level parameterize
+            // （node.parameterEntry）和 init 时 bindDefaultParameterEntries
+            // 一次性下推的 clip 默认轴。Phase2 不逐帧经 activeClip 重解析
+            // 参数轴（第三通道已删）：playingTimelineLabels 变化会换
+            // activeClip，运行时重绑会让口/眼参数轴静默漂移；参数轴在
+            // init 时定死（REF emotemotion 构造时下推 root parameterize）。
+            if(node.parameterizeIndex < 0 && freezeBodyTimeline) {
+                nodeEvalTime = 0.0;
             }
 
             const int origParentIdx = node.parentIndex;

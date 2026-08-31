@@ -716,22 +716,7 @@ namespace motion {
         }
 
         buildNodeTree();
-        if(_runtime->defaultParameterEntryIndex >= 0) {
-            const int defaultIndex = _runtime->defaultParameterEntryIndex;
-            for(size_t i = 1; i < _runtime->nodes.size(); ++i) {
-                auto &node = _runtime->nodes[i];
-                if(node.parameterizeIndex >= 0) {
-                    continue;
-                }
-                node.parameterizeIndex = defaultIndex;
-                if(static_cast<size_t>(defaultIndex) <
-                   _runtime->parameterEntries.size()) {
-                    node.parameterEntry =
-                        &_runtime->parameterEntries[static_cast<size_t>(
-                            defaultIndex)];
-                }
-            }
-        }
+        bindDefaultParameterEntriesLike_sdl3();
         initVariables();
         seedEmoteVariableDefaultsLike_sdl3();
         syncParameterEntriesFromVariablesLike_sdl3();
@@ -750,6 +735,31 @@ namespace motion {
                 "Player::initEmoteMotionLike_0x6B3A8C: node tree empty for "
                 "{} — check clip.layer[] index resolution (C-1)",
                 _runtime->activeMotion->path);
+        }
+    }
+
+    // F03：init 时一次性把 clip 默认参数轴绑给所有无 node-level
+    // parameterize 的节点（对应 REF emotemotion 构造时把 root
+    // parameterize 下推给 nodeList 全体）。Phase2 不得逐帧重解析：
+    // playingTimelineLabels 变化导致 activeClip 变化时会把参数轴静默
+    // 换轨（口/眼抖动源），参数轴在播放会话内定死。
+    void Player::bindDefaultParameterEntriesLike_sdl3() {
+        if(!_runtime || _runtime->defaultParameterEntryIndex < 0) {
+            return;
+        }
+        const int defaultIndex = _runtime->defaultParameterEntryIndex;
+        for(size_t i = 1; i < _runtime->nodes.size(); ++i) {
+            auto &node = _runtime->nodes[i];
+            if(node.parameterizeIndex >= 0) {
+                continue;
+            }
+            node.parameterizeIndex = defaultIndex;
+            if(static_cast<size_t>(defaultIndex) <
+               _runtime->parameterEntries.size()) {
+                node.parameterEntry =
+                    &_runtime->parameterEntries[static_cast<size_t>(
+                        defaultIndex)];
+            }
         }
     }
 
