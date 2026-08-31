@@ -880,8 +880,9 @@ namespace motion {
                 if(eyeEvalProbe && label.rfind("face_", 0) == 0) {
                     if(auto L = spdlog::get("plugin")) {
                         L->info(
-                            "emote.bind label={} value={:.2f} localNodes={}",
-                            label, value,
+                            "emote.bind pid={} label={} value={:.2f} "
+                            "localNodes={}",
+                            _runtime->diagPlayerId, label, value,
                             static_cast<int>(_runtime->nodes.size()));
                     }
                 }
@@ -1002,10 +1003,12 @@ namespace motion {
                                 probeClip->defaultParameterIndex)].id);
                     }
                     L->info(
-                        "emote.eye-eval label={} evalTime={:.3f} raw={:.3f} "
+                        "emote.eye-eval pid={} label={} evalTime={:.3f} "
+                        "raw={:.3f} "
                         "src={} frame={} activeTime={:.3f} nextTime={:.3f} "
                         "param={} clip={} dpi={} entries={}",
-                        node.layerName, nodeEvalTime, raw,
+                        _runtime->diagPlayerId, node.layerName, nodeEvalTime,
+                        raw,
                         state.src.empty() ? "<none>" : state.src.c_str(),
                         state.debugActiveIndex, state.debugFrameATime,
                         state.debugFrameBTime, node.parameterizeIndex,

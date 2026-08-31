@@ -3,6 +3,8 @@
 //
 
 #include "RuntimeSupport.h"
+
+#include <atomic>
 #include "ResourceManager.h"
 
 #include <algorithm>
@@ -1346,6 +1348,10 @@ namespace motion::detail {
 
     std::shared_ptr<PlayerRuntime> makePlayerRuntime() {
         auto runtime = std::make_shared<PlayerRuntime>();
+        // EYE_DIAG 实例区分：诊断日志按实例 id 分流（多角色同屏时
+        // 各 Player 的 clip 名/localNodes 相同，无 id 无法归因）。
+        static std::atomic<std::uint64_t> playerSerial{1};
+        runtime->diagPlayerId = playerSerial.fetch_add(1);
         runtime->defaultParameterEntry.rangeScale = 1.0;
         runtime->defaultParameterEntry.mode = 0;
         ensureRootNodeLike_0x6CED30(*runtime);

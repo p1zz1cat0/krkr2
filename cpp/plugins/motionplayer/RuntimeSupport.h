@@ -349,6 +349,8 @@ namespace motion::detail {
         // candidates bind to this generation so a failed init after a motion
         // switch cannot drive the new node tree with stale state.
         std::uint64_t motionGeneration = 0;
+        // EYE_DIAG: per-instance serial for log attribution.
+        std::uint64_t diagPlayerId = 0;
         std::unordered_map<std::string, TimelineState> timelines;
         std::vector<std::string> playingTimelineLabels;
         std::unordered_map<std::string, tjs_int> layerIdsByName;
