@@ -11,9 +11,12 @@
 
 #include "D3DEmoteModule.h"
 #include "EmotePlayer.h"
+#include "LayerIntf.h"
 #include "RuntimeSupport.h"
+#include "SeparateLayerAdaptor.h"
 #include "ncbind.hpp"
 #include "psbfile/PSBFile.h"
+#include "tjsDictionary.h"
 
 #define LOGGER spdlog::get("plugin")
 
@@ -866,6 +869,121 @@ namespace motion {
     void EmotePlayer::draw(tTJSVariant target) {
         _player.draw(target);
         _modified = true;
+    }
+
+    // ============================================================
+    // A01（REF EmotePlayer ABI 补齐）
+    // ============================================================
+
+    namespace {
+        // REF emoteplayerclass.cpp:286 fillLayerColor 原样移植：整面填充
+        // 0xAARRGGBB（字节序 b/g/r/a），填完调 Update 触发重绘。
+        void fillLayerColorLike_REF(tTJSNI_BaseLayer *layer,
+                                    tjs_uint32 color) {
+            if(layer == nullptr) {
+                return;
+            }
+            auto *buff = static_cast<tjs_uint8 *>(
+                layer->GetMainImagePixelBufferForWrite());
+            if(buff == nullptr) {
+                return;
+            }
+            const tjs_int pitch = layer->GetMainImagePixelBufferPitch();
+            const tjs_int height = layer->GetHeight();
+            const tjs_int width = layer->GetWidth();
+            const tjs_uint8 b = static_cast<tjs_uint8>(color & 0xFF);
+            const tjs_uint8 g = static_cast<tjs_uint8>((color >> 8) & 0xFF);
+            const tjs_uint8 r = static_cast<tjs_uint8>((color >> 16) & 0xFF);
+            const tjs_uint8 a = static_cast<tjs_uint8>((color >> 24) & 0xFF);
+            for(tjs_int y = 0; y < height; ++y) {
+                auto *row = buff + y * pitch;
+                for(tjs_int x = 0; x < width; ++x) {
+                    auto *px = row + x * 4;
+                    px[0] = b;
+                    px[1] = g;
+                    px[2] = r;
+                    px[3] = a;
+                }
+            }
+            layer->Update();
+        }
+    } // namespace
+
+    void EmotePlayer::clear(tTJSVariant layer, tjs_uint32 neutralColor) {
+        // REF emoteplayerclass.cpp:470：参数可以是 SeparateLayerAdaptor
+        // （取其 owner layer）或裸 Layer；两者都解析不到时 REF 静默 return，
+        // 这里以 warn 记录同一行为。
+        iTJSDispatch2 *obj = layer.Type() == tvtObject
+            ? layer.AsObjectNoAddRef()
+            : nullptr;
+        if(obj == nullptr) {
+            LOGGER->warn("EmotePlayer::clear: non-object layer argument; "
+                         "nothing filled");
+            return;
+        }
+        tTJSNI_BaseLayer *native = nullptr;
+        if(auto *adaptor =
+               ncbInstanceAdaptor<SeparateLayerAdaptor>::GetNativeInstance(
+                   obj, false)) {
+            iTJSDispatch2 *owner = adaptor->getOwner();
+            if(owner != nullptr &&
+               TJS_SUCCEEDED(owner->NativeInstanceSupport(
+                   TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
+                   reinterpret_cast<iTJSNativeInstance **>(&native))) &&
+               native != nullptr) {
+                fillLayerColorLike_REF(native, neutralColor);
+                return;
+            }
+            native = nullptr;
+        }
+        if(TJS_SUCCEEDED(obj->NativeInstanceSupport(
+               TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
+               reinterpret_cast<iTJSNativeInstance **>(&native))) &&
+           native != nullptr) {
+            fillLayerColorLike_REF(native, neutralColor);
+            return;
+        }
+        LOGGER->warn("EmotePlayer::clear: argument carries no "
+                     "tTJSNI_BaseLayer; nothing filled");
+    }
+
+    void EmotePlayer::assign(tTJSVariant another) {
+        // REF emoteplayerclass.cpp:695 assign 本体即 LOGGER->info("TODO")；
+        // 按 REF incomplete 原样登记为 no-op，避免臆造拷贝语义。
+        (void)another;
+        LOGGER->info("EmotePlayer::assign TODO");
+    }
+
+    void EmotePlayer::setCameraOffset(tjs_int w, tjs_int h) {
+        // REF emoteplayerclass.cpp:768 存 currCamX/Y；本实现委托
+        // Player::setCameraOffset（0x6D9A38），其参数为带 x/y 属性的对象。
+        iTJSDispatch2 *dict = TJSCreateDictionaryObject();
+        if(dict == nullptr) {
+            LOGGER->warn("EmotePlayer::setCameraOffset: failed to create "
+                         "argument object; offset not stored");
+            return;
+        }
+        tTJSVariant xv(static_cast<tjs_int64>(w));
+        tTJSVariant yv(static_cast<tjs_int64>(h));
+        dict->PropSet(TJS_MEMBERENSURE, TJS_W("x"), nullptr, &xv, dict);
+        dict->PropSet(TJS_MEMBERENSURE, TJS_W("y"), nullptr, &yv, dict);
+        tTJSVariant offset(dict, dict);
+        dict->Release();
+        _player.setCameraOffset(offset);
+        _modified = true;
+    }
+
+    tTJSVariant EmotePlayer::getVariableKeys() {
+        // REF emoteplayerclass.cpp:346 get_variableKeys：把当前文件的
+        // _varList 键打包成 TJS 数组；setter 在 REF 里抛错，这里注册为
+        // RO property 达到同样的“写入被拒”。
+        const tjs_int count = _player.countVariables();
+        std::vector<std::string> labels;
+        labels.reserve(static_cast<size_t>(count));
+        for(tjs_int i = 0; i < count; ++i) {
+            labels.push_back(_player.getVariableLabelAt(i).AsStdString());
+        }
+        return detail::makeArray(detail::stringsToVariants(labels));
     }
 
     tjs_error EmotePlayer::setDrawAffineTranslateMatrixCompat(

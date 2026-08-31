@@ -338,6 +338,15 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_PROPERTY_RO(animating, getAnimating);
     NCB_PROPERTY_RO(playCallback, getPlayCallback);
 
+    // A01（REF EmotePlayer ABI 补齐；emoteplayerclass.h property_marco）
+    // REF 的 set_variableKeys 抛 "reject to set variableKeys" → RO 等价拒写。
+    // D3DEmotePlayer 继承 EmotePlayer，同一组成员在镜像注册里同样暴露。
+    NCB_PROPERTY_RO(playing, getPlaying);
+    NCB_PROPERTY_RO(allplaying, getAllplaying);
+    NCB_PROPERTY(tickCount, getTickCount, setTickCount);
+    NCB_PROPERTY(speed, getSpeedRatio, setSpeedRatio);
+    NCB_PROPERTY_RO(variableKeys, getVariableKeys);
+
     // Methods
     NCB_METHOD(create);
     NCB_METHOD(load);
@@ -404,6 +413,9 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
                             0);
     NCB_METHOD(getOuterForce);
     NCB_METHOD_RAW_CALLBACK(contains, &EmotePlayer::containsCompat, 0);
+    NCB_METHOD(clear);
+    NCB_METHOD(assign);
+    NCB_METHOD(setCameraOffset);
 }
 
 // ============================================================
@@ -640,6 +652,15 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_PROPERTY_RO(animating, getAnimating);
     NCB_PROPERTY_RO(playCallback, getPlayCallback);
 
+    // A01（REF EmotePlayer ABI 补齐；emoteplayerclass.h property_marco）
+    // REF 的 set_variableKeys 抛 "reject to set variableKeys" → RO 等价拒写。
+    // D3DEmotePlayer 继承 EmotePlayer，同一组成员在镜像注册里同样暴露。
+    NCB_PROPERTY_RO(playing, getPlaying);
+    NCB_PROPERTY_RO(allplaying, getAllplaying);
+    NCB_PROPERTY(tickCount, getTickCount, setTickCount);
+    NCB_PROPERTY(speed, getSpeedRatio, setSpeedRatio);
+    NCB_PROPERTY_RO(variableKeys, getVariableKeys);
+
     // Methods
     NCB_METHOD(create);
     NCB_METHOD(load);
@@ -705,4 +726,7 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
                             0);
     NCB_METHOD(getOuterForce);
     NCB_METHOD_RAW_CALLBACK(contains, &EmotePlayer::containsCompat, 0);
+    NCB_METHOD(clear);
+    NCB_METHOD(assign);
+    NCB_METHOD(setCameraOffset);
 }

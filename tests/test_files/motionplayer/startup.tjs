@@ -73,6 +73,38 @@ data.metadata.eyeControl[0].blinkIntervalMin = 0;
 data.metadata.eyeControl[0].blinkIntervalMax = 0;
 data.metadata.eyeControl[0].blinkFrameCount = 2;
 player.initPhysics(data.metadata);
+
+// A01 ABI: REF EmotePlayer members the wrapper historically lacked
+// (ref/emoteplayerclass.h property_marco + clear/assign/setCameraOffset).
+// Existence plus minimal semantics; REF assign is a logged TODO stub.
+check(player.playing == true || player.playing == false,
+    "A01 playing property readable");
+check(player.allplaying == true || player.allplaying == false,
+    "A01 allplaying property readable");
+var a01tick0 = player.tickCount;
+player.progress(0);
+pluginAssertEqual("A01 tickCount tracks the progress accumulator",
+    a01tick0, player.tickCount);
+player.speed = 20.0;
+pluginAssertEqual("A01 speed round-trips REF default", 20, player.speed);
+var a01keys = player.variableKeys;
+check(a01keys != void && a01keys.count == player.countVariables() &&
+      a01keys.count > 0,
+    "A01 variableKeys lists every variable label");
+check(a01keys[0] == player.getVariableLabelAt(0),
+    "A01 variableKeys order matches the label accessor");
+player.setCameraOffset(10, 20);
+check(true, "A01 setCameraOffset accepts (w, h)");
+player.assign(player);
+check(true, "A01 assign member exists (REF TODO parity)");
+var a01clearLayer = new Layer(new Window(), null);
+a01clearLayer.setImageSize(32, 24);
+player.clear(a01clearLayer, 0xFF00FF00);
+// Layer getMainPixel masks the alpha byte off (LayerIntf.cpp GetMainPixel
+// "& 0xffffff"), so the 0xAARRGGBB fill reads back as 0x00RRGGBB here.
+pluginAssertEqual("A01 clear fills the layer with the neutral color",
+    0x00FF00, a01clearLayer.getMainPixel(16, 12));
+
 var eye0 = player.getVariable("face_eye_open");
 player.progress(0);
 pluginAssertEqual("zero dt eye republish", eye0,
