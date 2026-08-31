@@ -647,6 +647,12 @@ namespace motion {
         }
 
         buildNodeTree();
+        // F01-② 对拍回归修复：非 emote 路径（e-mote3 type=0 子 Player，
+        // 如 目R/目L/頬/鼻）此前从不执行 clip 默认参数轴下推——dict 型
+        // parameterize 解析出了 defaultParameterEntryIndex 与参数表，但没有
+        // 任何节点绑定它，眼睑/眼白冻结在 tick 0。与 emote 路径同规则：
+        // init 一次性绑定，Phase2 不逐帧重解析。
+        bindDefaultParameterEntriesLike_sdl3();
         initVariables();
         seedEmoteVariableDefaultsLike_sdl3();
         syncParameterEntriesFromVariablesLike_sdl3();
@@ -744,7 +750,35 @@ namespace motion {
     // playingTimelineLabels 变化导致 activeClip 变化时会把参数轴静默
     // 换轨（口/眼抖动源），参数轴在播放会话内定死。
     void Player::bindDefaultParameterEntriesLike_sdl3() {
-        if(!_runtime || _runtime->defaultParameterEntryIndex < 0) {
+        if(!_runtime) {
+            return;
+        }
+        // F01-② 对拍回归修复（89147af 后 EYE_DIAG 探针，6068 行
+        // evalTime=0）：dict 型 parameterize 的 clip（如 目R 的
+        // dpi=0/entries=1）此前在 parameterEntries 非空时永不设置
+        // defaultParameterEntryIndex——init 通道对眼睑/眼白失联，删除
+        // 逐帧通道 3 后它们冻结在 tick 0（=旧注释「眨眼露眼白」结构）。
+        // root 保底：activeClip 无 parameterize 时退回 root clip 的轴。
+        if(_runtime->defaultParameterEntryIndex < 0) {
+            if(const auto *clip = selectActiveClip();
+               clip && clip->defaultParameterIndex >= 0 &&
+               static_cast<size_t>(clip->defaultParameterIndex) <
+                   _runtime->parameterEntries.size()) {
+                _runtime->defaultParameterEntryIndex =
+                    clip->defaultParameterIndex;
+            } else if(!_runtime->activeMotion->clipList.empty() &&
+                      _runtime->activeMotion->clipList.front()
+                              .defaultParameterIndex >= 0) {
+                const int rootIndex =
+                    _runtime->activeMotion->clipList.front()
+                        .defaultParameterIndex;
+                if(static_cast<size_t>(rootIndex) <
+                   _runtime->parameterEntries.size()) {
+                    _runtime->defaultParameterEntryIndex = rootIndex;
+                }
+            }
+        }
+        if(_runtime->defaultParameterEntryIndex < 0) {
             return;
         }
         const int defaultIndex = _runtime->defaultParameterEntryIndex;
