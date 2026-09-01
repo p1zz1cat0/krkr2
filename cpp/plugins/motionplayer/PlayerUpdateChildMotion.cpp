@@ -263,9 +263,22 @@ namespace motion {
                     if(mn.activeSlot().motionDocmpl &&
                        mn.activeSlot().crossfading && !mn.otherSlot().done &&
                        mn.otherSlot().motionDt != 0) {
-                        // Binary at 0x6BE864 reads node+8+40:
-                        // parameterEntry->value. Falls back to player+456
-                        // (_clampedEvalTime) if node+8 is null.
+                        // F01-① (resolved 2026-09-01, libkrkr2.so arm64
+                        // 0x6BE858..0x6BE898): x10=[node+8] (parameter-entry
+                        // ptr); x11=x10+0x28; parentTime=*(double*)(entry+0x28)
+                        // — i.e. the +0x28 field IS the normalized tick value
+                        // (entry.value, the transToTick product), not a raw
+                        // frame. Write side confirmed in sub_6B1718
+                        // (0x6B188C..0x6B19E4): entry fields are laid out as
+                        // id(str)@0..0x1F, discretization@0x20, rangeBegin
+                        // @-0x28 from end, ..., value@+0x28 written via the
+                        // transToTick computation (division * (raw-
+                        // rangeBegin)/(rangeEnd-rangeBegin)). Consumers here
+                        // (0x6BE864 crossfade angle, 0x6BE688 case-3 finite
+                        // difference) read entry+0x28 directly as the parent
+                        // clock; fallback when node+8 is null is player+456
+                        // (_clampedEvalTime, same tick domain). Current code
+                        // passes parameterEntry->value — matches the binary.
                         double parentTime = parameterEntry
                             ? parameterEntry->value
                             : _clampedEvalTime;
@@ -354,7 +367,9 @@ namespace motion {
                                 }
                                 // Parent time (0x6BE688..0x6BE6B0): node+8+40
                                 // is parameterEntry->value; fallback is
-                                // player+456.
+                                // player+456. F01-① (2026-09-01): +0x28 is
+                                // the normalized tick value (see the detailed
+                                // note at the crossfade block above).
                                 double parentTime = parameterEntry
                                     ? parameterEntry->value
                                     : _clampedEvalTime;

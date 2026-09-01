@@ -194,6 +194,9 @@ namespace motion::detail {
         // totalFrames−1 保底。
         // 与 REF 的偏差：REF transToTick 不做 clamp，这里归一化后保留
         // [0,1]，超范围写入落到端点帧，防止越界 tick 进入选帧。
+        // F01-①（2026-09-01 定域）：本函数的返回值即原 DLL 参数对象 +0x28
+        // 处的存储值（normalized tick），消费点见 PlayerUpdateChildMotion
+        // 的 crossfade/case-3 注释——两边同域，无需换算。
         const double timelineEnd = parameter.division > 0.0
             ? parameter.division
             : std::max(0.0, clip.totalFrames - 1.0);
