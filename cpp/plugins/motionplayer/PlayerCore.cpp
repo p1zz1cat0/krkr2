@@ -865,6 +865,15 @@ namespace motion {
         // clip（selectActiveClip 的 motionObject["parameter"]），不做
         // 「頭部変形基礎/全体構造」名字优先或「参数数最多」启发——素材改名或
         // 另一个 clip 参数更多时会被静默绑定错表。root 仅作最终保底。
+        //
+        // F02-① 裁决（2026-09-01，intentional override 固化）：active clip
+        // 无 parameter 表时 REF getTickByIdx 返回 -1 → 参数化节点不画；
+        // 本实现回退 root 表继续画。不跟 REF，理由：
+        // 1. REF 的 -1 是「查不到别画」的防御分支，非格式语义——E-mote
+        //    素材没有「无表表达隐藏」的设计惯例证据；
+        // 2. 已知商业素材（NEKOPARA 系）全部 clip 均有 parameter 表，
+        //    该路径不可达，两边实际等价；
+        // 3. 失败方向不对称：保底多画的后果远小于 REF 式凭空消失。
         const detail::MotionClip *clip = selectActiveClip();
         if(clip && clip->motionObject) {
             loadFromObject(clip->motionObject);
