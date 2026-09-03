@@ -372,7 +372,7 @@ namespace motion {
         void playTimeline(ttstr label, tjs_int flags);
         void stopTimeline(ttstr label);
         // A08: set the explicit loop override for a timeline (consumed by
-        // frame wrap / skipToSync via TimelineState.loop). Unknown labels are
+        // frame wrapping and serialized timeline state). Unknown labels are
         // ignored here; playTimeline logs its own lookup failure.
         void setTimelineLoop(ttstr label, bool loop);
         void setTimelineBlendRatio(ttstr label, double ratio);

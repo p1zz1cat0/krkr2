@@ -208,6 +208,9 @@ namespace motion::detail {
         int flags = 0;
         bool playing = false;
         bool loop = false;
+        // Explicit EmotePlayer.setTimeline(label, loop) override. A separate
+        // bit distinguishes an explicit false from the authored loop value.
+        bool loopOverrideSet = false;
         double loopTime =
             -1.0; // from PSB; >=0 means loop, <0 means stop at end
         double totalFrames = 0.0;

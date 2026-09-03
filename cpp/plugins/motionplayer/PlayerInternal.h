@@ -231,6 +231,13 @@ namespace motion {
             runtime.logicalScreen = snapshot
                 ? snapshot->screenSize
                 : detail::ScreenSize{};
+            // Node indices are reused after every motion rebuild. Retained
+            // command layers must not become the next motion's pixels merely
+            // because source and geometry happen to match.
+            runtime.emoteCommandOutputCache.clear();
+            runtime.emoteCommandOutputCacheGeneration = 0;
+            runtime.emoteCommandOutputCacheHits = 0;
+            runtime.emoteCommandLeafCacheHits = 0;
             runtime.timelines.clear();
             runtime.hasLastPreparedDrawBounds = false;
             // Reset persistent node tree so it gets rebuilt for new motion
@@ -382,6 +389,7 @@ namespace motion {
                     { "label", detail::widen(label) },
                     { "flags", static_cast<tjs_int>(state.flags) },
                     { "loop", state.loop },
+                    { "loopOverride", state.loopOverrideSet },
                     { "playing", state.playing },
                     { "currentTime", state.currentTime },
                     { "totalFrames", state.totalFrames },

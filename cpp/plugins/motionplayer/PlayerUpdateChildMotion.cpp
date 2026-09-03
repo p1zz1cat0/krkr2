@@ -696,9 +696,14 @@ namespace motion {
                 // 这里以 wrapper 节点（mn）的几何作为 child 的 root region。
                 // 无尺寸 wrapper（motion/layout/clip，clipW/H=0）→ region
                 // 全零 → child 的 Phase2 回退到自己 PSB 的 screenSize。
-                child._runtime->wrapperLim = detail::effectiveNodeLimLike_REF(
-                    detail::ScreenSize{}, mn.clipW, mn.clipH,
-                    mn.originX, mn.originY);
+                const auto inheritedWrapperLim =
+                    (i < _runtime->perNodeEvalData.size())
+                        ? _runtime->perNodeEvalData[i].evalLim
+                        : _runtime->logicalScreen;
+                child._runtime->wrapperLim =
+                    detail::effectiveNodeLimLike_REF(
+                        inheritedWrapperLim, mn.clipW, mn.clipH, mn.originX,
+                        mn.originY);
                 // libkrkr2.so label_18：子 Player 每帧
                 // frameProgress+updateLayers。
                 if(emoteLike) {

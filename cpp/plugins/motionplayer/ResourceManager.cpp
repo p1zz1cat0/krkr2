@@ -224,7 +224,6 @@ void motion::ResourceManager::clearCache() const {
         return;
     }
 
-    _state->loadedModules.clear();
     _state->moduleLoadGenerations.clear();
     _state->nextLoadGeneration = 0;
     _state->lastLoadedPath.clear();
@@ -233,7 +232,20 @@ void motion::ResourceManager::clearCache() const {
     _state->layerNamesById.clear();
     _state->usedLayerIds.clear();
     _state->nextLayerId = 1;
-    detail::clearModuleSnapshots();
+    // Snapshot identity is process-global, but ownership is per manager:
+    // unregister only objects held by this cache. Clearing the whole registry
+    // invalidates modules that another ResourceManager still owns.
+    std::unordered_set<iTJSDispatch2 *> seen;
+    for(const auto &[_, module] : _state->loadedModules) {
+        if(module.Type() != tvtObject) {
+            continue;
+        }
+        auto *object = module.AsObjectNoAddRef();
+        if(object && seen.insert(object).second) {
+            detail::unregisterModuleSnapshot(module);
+        }
+    }
+    _state->loadedModules.clear();
 }
 
 tTJSVariant motion::ResourceManager::getLastLoadedModule() const {

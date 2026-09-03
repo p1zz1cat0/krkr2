@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <unordered_set>
 
 using namespace motion::internal;
@@ -257,8 +258,10 @@ namespace motion {
             }
             renderReuseHashCombine(seed,
                                    std::hash<bool>{}(command.groupOnly));
+            // Blend resolution consumes the low nibble; hashing only the high
+            // nibble lets a changed alpha/add/sub operation reuse old pixels.
             renderReuseHashCombine(
-                seed, std::hash<int>{}(command.blendMode & 0xF0));
+                seed, std::hash<int>{}(command.blendMode & 0x0F));
             renderReuseHashCombine(
                 seed, std::hash<int>{}(command.item->clipRect[2] -
                                        command.item->clipRect[0]));
@@ -288,8 +291,9 @@ namespace motion {
                 seed, std::hash<bool>{}(item.hasOwnSource));
             renderReuseHashCombine(
                 seed, std::hash<bool>{}(item.groupOnly));
+            // The effective operation is selected from the low nibble.
             renderReuseHashCombine(
-                seed, std::hash<int>{}(item.blendMode & 0xF0));
+                seed, std::hash<int>{}(item.blendMode & 0x0F));
             renderReuseHashCombine(
                 seed, std::hash<int>{}(item.clipRect[2] - item.clipRect[0]));
             renderReuseHashCombine(
@@ -2155,6 +2159,7 @@ namespace motion {
         std::size_t outputBuildFailed = 0;
         std::size_t directOutputs = 0;
         std::size_t bufferedOutputs = 0;
+        bool outputCopyException = false;
         auto *drawTargetLayer = graphScratchLayer ? graphScratchLayer : renderLayer;
         double outputBuildMs = 0.0;
         double outputCopyMs = 0.0;
@@ -2424,8 +2429,31 @@ namespace motion {
                         item.clipRect[2], item.clipRect[3], opa, item.blendMode,
                         item.childItems.size(), 0);
                 }
-            } catch(const eTJS &) {
+            } catch(const eTJS &error) {
+                outputCopyException = true;
+                ++outputBuildFailed;
+                if(LOGGER) {
+                    LOGGER->error(
+                        "emote.execute copy failed node={} source={} error={}",
+                        item.nodeIndex, item.sourceKey,
+                        error.getMessage().AsStdString());
+                }
+            } catch(const std::exception &error) {
+                outputCopyException = true;
+                ++outputBuildFailed;
+                if(LOGGER) {
+                    LOGGER->error(
+                        "emote.execute copy failed node={} source={} error={}",
+                        item.nodeIndex, item.sourceKey, error.what());
+                }
             } catch(...) {
+                outputCopyException = true;
+                ++outputBuildFailed;
+                if(LOGGER) {
+                    LOGGER->error(
+                        "emote.execute copy failed node={} source={} error=unknown",
+                        item.nodeIndex, item.sourceKey);
+                }
             }
             if(renderProfileEnabled) {
                 outputCopyMs += std::chrono::duration<double, std::milli>(
@@ -2544,9 +2572,9 @@ namespace motion {
                 _runtime->emoteCommandOutputCache.size());
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)
-        renderTrace.setResult(true);
+        renderTrace.setResult(!outputCopyException);
 #endif
-        return true;
+        return !outputCopyException;
     }
 
 } // namespace motion

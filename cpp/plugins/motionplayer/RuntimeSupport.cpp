@@ -1712,6 +1712,7 @@ namespace motion::detail {
                     snapshot.loopTimelines.end()
                 ? snapshot.loopTimelines.at(label)
                 : false;
+            state.loopOverrideSet = false;
             state.loopTime = snapshot.timelineLoopTimes.find(label) !=
                     snapshot.timelineLoopTimes.end()
                 ? snapshot.timelineLoopTimes.at(label)
@@ -1766,8 +1767,13 @@ namespace motion::detail {
                 continue;
             }
 
+            const double effectiveLoopTime = state.loopOverrideSet
+                ? (state.loop
+                       ? (state.loopTime >= 0.0 ? state.loopTime : 0.0)
+                       : -1.0)
+                : state.loopTime;
             if(!wrapTimelineCurrentTime(state.currentTime, state.totalFrames,
-                                        state.loopTime)) {
+                                        effectiveLoopTime)) {
                 state.playing = false;
                 // Aligned to libkrkr2.so Player_dispatchEvents (0x6C4490):
                 // Queue onSync event when timeline stops (playing→false)

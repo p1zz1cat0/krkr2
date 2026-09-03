@@ -326,13 +326,19 @@ TEST_CASE("Eye supports reverse ranges and manual suppression") {
             Catch::Approx(5.0));
     CHECK_FALSE(eye.step(1.0, 7.0, [] { return 0.0; }).has_value());
     // F04/F05 debounce: a single frame at begin does not unsuppress — the
-    // external writer must hold begin for kStableFramesNeeded frames first.
+    // external writer must hold begin for the required elapsed duration.
     CHECK_FALSE(eye.step(0.0, 10.0, [] { return 0.0; }).has_value());
     for(int stable = 1; stable < 8; ++stable) {
-        CHECK_FALSE(eye.step(0.0, 10.0, [] { return 0.0; }).has_value());
+        CHECK_FALSE(eye.step(1.0, 10.0, [] { return 0.0; }).has_value());
     }
-    REQUIRE(eye.step(0.0, 10.0, [] { return 0.0; }).value() ==
+    REQUIRE(eye.step(1.0, 10.0, [] { return 0.0; }).value() ==
             Catch::Approx(10.0));
+    // Repeated zero-delta calls do not satisfy the elapsed-time debounce.
+    motion::physics::EyeControl zeroDelta(config);
+    REQUIRE_FALSE(zeroDelta.step(1.0, 7.0, [] { return 0.0; }).has_value());
+    for(int i = 0; i < 16; ++i) {
+        CHECK_FALSE(zeroDelta.step(0.0, 10.0, [] { return 0.0; }).has_value());
+    }
 }
 
 TEST_CASE("Emote bounded child merge is structural (C01)") {

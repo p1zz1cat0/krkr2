@@ -256,7 +256,7 @@ namespace motion {
             return _player.getAllplaying();
         }
         [[nodiscard]] double getTickCount() const { return _progress; }
-        void setTickCount(double v) { _progress = v; }
+        void setTickCount(double v);
         [[nodiscard]] double getSpeedRatio() const { return _speedRatio; }
         void setSpeedRatio(double v) { _speedRatio = v; }
         [[nodiscard]] tTJSVariant getVariableKeys();

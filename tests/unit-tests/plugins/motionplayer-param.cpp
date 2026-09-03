@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 #include "motionplayer/EmoteCompatInternal.h"
 #include "motionplayer/PlayerInternal.h"
@@ -210,4 +211,27 @@ TEST_CASE("planEmoteMeshDivision honors authored density without name folds") {
     const auto unitKept = motion::detail::planEmoteMeshDivision(
         20, 1.0, true, true, true, 100.0, 100.0);
     REQUIRE_FALSE(unitKept.useAffineGrid);
+}
+
+TEST_CASE("explicit timeline loop override can disable authored looping") {
+    motion::detail::TimelineState state;
+    state.label = "loop";
+    state.playing = true;
+    state.loop = false;
+    state.loopOverrideSet = true;
+    state.loopTime = 0.0;
+    state.totalFrames = 10.0;
+
+    std::unordered_map<std::string, motion::detail::TimelineState> states;
+    states.emplace(state.label, state);
+    motion::detail::stepTimelines(states, 11.0);
+    REQUIRE_FALSE(states.at("loop").playing);
+    REQUIRE(states.at("loop").currentTime == Catch::Approx(10.0));
+
+    states.at("loop").playing = true;
+    states.at("loop").loop = true;
+    states.at("loop").currentTime = 0.0;
+    motion::detail::stepTimelines(states, 11.0);
+    REQUIRE(states.at("loop").playing);
+    REQUIRE(states.at("loop").currentTime == Catch::Approx(1.0));
 }

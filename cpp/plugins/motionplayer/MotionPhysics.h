@@ -243,9 +243,9 @@ namespace motion::physics {
         // F04/F05 对拍修复：抑制解除去抖。外部写者（创作时间轴轨）驱动的
         // label 在过 0 交叉时只会短暂驻留 begin 值；若单帧驻留即解除抑制，
         // EyeControl 会抢写 beginFrame 与轨乒乓（用户可见抖动/半睁卡住）。
-        // 仅当外部值连续 stableFrames_ 帧驻留 begin 才解除——轨的 idle 段
-        // （ authored 长零段）足以满足，过零交叉不满足。
-        int stableFrames_ = 0;
+        // 仅当外部值在 begin 驻留足够的动画时间才解除；使用 elapsed
+        // time 而不是调用次数，避免重复 progress(0) 伪造稳定帧。
+        double stableDuration_ = 0.0;
         double stableValue_ = 0.0;
     };
 

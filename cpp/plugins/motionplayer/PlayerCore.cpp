@@ -300,6 +300,12 @@ namespace motion {
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
         _runtime->hasLastPreparedDrawBounds = false;
+        // The null-snapshot reset does not pass through activateMotion; drop
+        // retained command outputs here as well.
+        _runtime->emoteCommandOutputCache.clear();
+        _runtime->emoteCommandOutputCacheGeneration = 0;
+        _runtime->emoteCommandOutputCacheHits = 0;
+        _runtime->emoteCommandLeafCacheHits = 0;
         _hasLastGoodBounds = false;
         _boundsMinX = 0.0;
         _boundsMinY = 0.0;
@@ -1545,6 +1551,19 @@ namespace motion {
                                      blendRatioValue) &&
                    blendRatioValue.Type() != tvtVoid) {
                     it->second.blendRatio = blendRatioValue.AsReal();
+                }
+
+                tTJSVariant loopOverrideValue;
+                if(getObjectProperty(item, TJS_W("loopOverride"),
+                                     loopOverrideValue) &&
+                   loopOverrideValue.Type() != tvtVoid) {
+                    it->second.loopOverrideSet =
+                        loopOverrideValue.operator bool();
+                    tTJSVariant loopValue;
+                    if(getObjectProperty(item, TJS_W("loop"), loopValue) &&
+                       loopValue.Type() != tvtVoid) {
+                        it->second.loop = loopValue.operator bool();
+                    }
                 }
             }
         }

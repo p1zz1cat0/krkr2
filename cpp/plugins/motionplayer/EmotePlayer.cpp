@@ -7,11 +7,13 @@
 //
 
 #include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 #include "D3DEmoteModule.h"
 #include "EmotePlayer.h"
 #include "LayerIntf.h"
+#include "common/PluginSafety.h"
 #include "PlayerInternal.h"
 #include "RuntimeSupport.h"
 #include "SeparateLayerAdaptor.h"
@@ -194,14 +196,46 @@ namespace motion {
         _module.Clear();
         _storageKey.Clear();
         _clipLabel.Clear();
+        _useD3D = false;
+        _smoothing = true;
+        _meshDivisionRatio = 1.0;
+        _queuing = false;
+        _hairScale = 1.0;
+        _partsScale = 1.0;
+        _bustScale = 1.0;
+        _bodyScale = 1.0;
+        _speedRatio = 20.0;
+        _drawVisible = true;
+        _drawOpacity = 1.0;
+        _opengl = false;
+        _visible = true;
+        _playCallback = false;
+        _isSelfClear = true;
+        _baseScale = 1.0f;
+        _userScale = 1.0f;
         _mirrorRequested = false;
         _mirrorChanged = false;
-        _color = 0;
+        _mirrorBase = false;
+        _color = 0xFFFFFF;
         _rot = 0.0;
         _coordX = 0.0;
         _coordY = 0.0;
         _progress = 0.0;
         _player.loadFromSnapshot(nullptr);
+        _player.setUseD3D(false);
+        _player.setVisible(true);
+        _player.setHairScale(1.0);
+        _player.setPartsScale(1.0);
+        _player.setBustScale(1.0);
+        _player.setEmoteMeshDivisionRatio(1.0);
+        _player.setTickCount(0.0);
+        _player.setFrameLoopTime(0.0);
+        _player.setSpeed(true);
+        _player.setEmoteCoord(0.0, 0.0, 0.0, 0.0);
+        _player.setEmoteScale(1.0, 0.0, 0.0);
+        _player.setRotate(0.0, 0.0, 0.0);
+        _player.setEmoteColor(static_cast<tjs_uint32>(_color), 0.0, 0.0);
+        _player.setMirror(false);
         _modified = true;
     }
 
@@ -314,6 +348,18 @@ namespace motion {
         _modified = false;
     }
 
+    void EmotePlayer::setTickCount(double v) {
+        if(!std::isfinite(v)) {
+            return;
+        }
+        _progress = v;
+        // EmotePlayer exposes REF's millisecond clock, while Player stores
+        // frame-domain time internally at 60 Hz. Keep both clocks aligned so
+        // a TJS tickCount write affects the next progress/evaluation pass.
+        _player.setTickCount(v);
+        _player.setFrameLoopTime(v * 60.0 / 1000.0);
+    }
+
     void EmotePlayer::initPhysics(tTJSVariant rule) {
         if(rule.Type() != tvtVoid) {
             _player.setMetadata(rule);
@@ -372,6 +418,9 @@ namespace motion {
                     out.Type() != tvtVoid;
             };
             tTJSVariant value;
+            if(readKey(TJS_W("tickcount"), value)) {
+                setTickCount(value.AsReal());
+            }
             if(readKey(TJS_W("currCoordx"), value)) {
                 _coordX = value.AsReal();
             }
@@ -1011,25 +1060,28 @@ namespace motion {
     namespace {
         // REF emoteplayerclass.cpp:286 fillLayerColor 原样移植：整面填充
         // 0xAARRGGBB（字节序 b/g/r/a），填完调 Update 触发重绘。
-        void fillLayerColorLike_REF(tTJSNI_BaseLayer *layer,
+        bool fillLayerColorLike_REF(iTJSDispatch2 *layerObject,
+                                    tTJSNI_BaseLayer *layer,
                                     tjs_uint32 color) {
-            if(layer == nullptr) {
-                return;
+            if(layerObject == nullptr || layer == nullptr) {
+                return false;
             }
-            auto *buff = static_cast<tjs_uint8 *>(
-                layer->GetMainImagePixelBufferForWrite());
-            if(buff == nullptr) {
-                return;
+            const auto view = pluginSafety::LayerWriteView::create(layerObject);
+            if(!view) {
+                return false;
             }
-            const tjs_int pitch = layer->GetMainImagePixelBufferPitch();
-            const tjs_int height = layer->GetHeight();
-            const tjs_int width = layer->GetWidth();
+            const tjs_int height = view.value.height();
+            const tjs_int width = view.value.width();
             const tjs_uint8 b = static_cast<tjs_uint8>(color & 0xFF);
             const tjs_uint8 g = static_cast<tjs_uint8>((color >> 8) & 0xFF);
             const tjs_uint8 r = static_cast<tjs_uint8>((color >> 16) & 0xFF);
             const tjs_uint8 a = static_cast<tjs_uint8>((color >> 24) & 0xFF);
             for(tjs_int y = 0; y < height; ++y) {
-                auto *row = buff + y * pitch;
+                const auto rowResult = view.value.row(y);
+                if(!rowResult) {
+                    return false;
+                }
+                auto *row = rowResult.value;
                 for(tjs_int x = 0; x < width; ++x) {
                     auto *px = row + x * 4;
                     px[0] = b;
@@ -1039,6 +1091,7 @@ namespace motion {
                 }
             }
             layer->Update();
+            return true;
         }
     } // namespace
 
@@ -1064,8 +1117,9 @@ namespace motion {
                    TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
                    reinterpret_cast<iTJSNativeInstance **>(&native))) &&
                native != nullptr) {
-                fillLayerColorLike_REF(native, neutralColor);
-                return;
+                if(fillLayerColorLike_REF(owner, native, neutralColor)) {
+                    return;
+                }
             }
             native = nullptr;
         }
@@ -1073,8 +1127,9 @@ namespace motion {
                TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
                reinterpret_cast<iTJSNativeInstance **>(&native))) &&
            native != nullptr) {
-            fillLayerColorLike_REF(native, neutralColor);
-            return;
+            if(fillLayerColorLike_REF(obj, native, neutralColor)) {
+                return;
+            }
         }
         LOGGER->warn("EmotePlayer::clear: argument carries no "
                      "tTJSNI_BaseLayer; nothing filled");

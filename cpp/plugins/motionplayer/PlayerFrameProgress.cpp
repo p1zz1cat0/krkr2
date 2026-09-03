@@ -562,8 +562,10 @@ namespace motion {
                     // A08：显式 loop 覆盖（setTimelineLoop）优先于 authored
                     // loopTime——loop=true 时从 0 回卷，即使素材没有写
                     // loopTime；loop=false 时不改变 authored 回卷行为。
-                    const double effectiveLoopTime = state.loop
-                        ? (state.loopTime >= 0.0 ? state.loopTime : 0.0)
+                    const double effectiveLoopTime = state.loopOverrideSet
+                        ? (state.loop
+                               ? (state.loopTime >= 0.0 ? state.loopTime : 0.0)
+                               : -1.0)
                         : state.loopTime;
                     if(!detail::wrapTimelineCurrentTime(state.currentTime,
                                                         state.totalFrames,
@@ -640,7 +642,22 @@ namespace motion {
                         state, *binding, std::max(state.currentTime, 0.0));
                 }
 
-                if(loopBegin < 0.0) {
+                // An explicit false override must bypass authored loopBegin/
+                // loopEnd as well as loopTime.
+                if(state.loopOverrideSet && !state.loop) {
+                    applyTimelineControlWindowLike_0x669E1C(
+                        state, *binding, state.currentTime + dt, true);
+                    stepInternalRoute(dt);
+                    const bool blendAnimatorPending =
+                        state.blendAnimator.active ||
+                        !state.blendAnimator.queue.empty();
+                    if(lastTime <= state.currentTime ||
+                       (state.blendAutoStop && !blendAnimatorPending)) {
+                        state.currentTime = lastTime;
+                        state.playing = false;
+                        keepPlaying = false;
+                    }
+                } else if(loopBegin < 0.0) {
                     applyTimelineControlWindowLike_0x669E1C(
                         state, *binding, state.currentTime + dt, true);
                     stepInternalRoute(dt);

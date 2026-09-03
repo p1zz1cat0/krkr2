@@ -231,6 +231,22 @@ for (var a08frame = 0; a08frame < 120; a08frame++) {
 }
 check(player.getTimelinePlaying("挨拶"),
     "A08 setTimeline loop keeps the timeline playing past its end");
+// The authored waiting timeline is looping. An explicit false must override
+// both its loopTime and loopBegin/loopEnd range, not merely change a query bit.
+player.setTimeline("差分用_waiting_loop2", false);
+var a08loopFalseState = player.serialize();
+for (var a08stopFrame = 0; a08stopFrame < 360; a08stopFrame++) {
+    player.progress(1000.0 / 60.0);
+}
+check(!player.getTimelinePlaying("差分用_waiting_loop2"),
+    "A08 setTimeline false disables an authored loop");
+player.setTimeline("差分用_waiting_loop2", true);
+player.unserialize(a08loopFalseState);
+for (var a08restoreFrame = 0; a08restoreFrame < 360; a08restoreFrame++) {
+    player.progress(1000.0 / 60.0);
+}
+check(!player.getTimelinePlaying("差分用_waiting_loop2"),
+    "A08 serialized false loop override survives restore");
 player.stopTimeline("");
 
 // Render-path coverage: draw twice through the recommended
