@@ -1145,6 +1145,13 @@ namespace motion {
         const double dtFrames = deltaMs * kMotionFramesPerMillisecond;
         _frameLastTime = dtFrames;
 
+        // REF EmotePlayer::progress publishes staged physics and EyeControl
+        // before authored timeline controls. Keep that ownership order: the
+        // timeline/controller/post-process chain below is the final writer for
+        // labels it owns, so an automatic blink or prior-frame physics output
+        // cannot overwrite an authored pose in the same frame.
+        beginProgressTransaction(_speed ? dtFrames : 0.0);
+
         // sdl3: clockPassed += mstime/speedRatio（仅 _playing）；立绘树固定
         // progress(0)。
         if(_speed && dtFrames > 0.0) {
@@ -1199,7 +1206,6 @@ namespace motion {
         }
         // progress(0) 也须 face_talk→talk 与 clamp；否则口型 parameter 不刷新。
         applyEvalResultPostProcessLike_0x67CC9C();
-        beginProgressTransaction(_speed ? dtFrames : 0.0);
         syncParameterEntriesFromVariablesLike_sdl3();
 
         if(_queuing) {

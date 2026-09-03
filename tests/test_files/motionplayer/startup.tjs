@@ -74,6 +74,24 @@ data.metadata.eyeControl[0].blinkIntervalMax = 0;
 data.metadata.eyeControl[0].blinkFrameCount = 2;
 player.initPhysics(data.metadata);
 
+// REF writer order: automatic EyeControl publishes before authored timeline
+// controls, so a timeline that owns face_eye_open remains the final writer.
+// sample_全自動_test holds face_eye_open at 0 for its opening segment while
+// the deterministic zero-interval EyeControl tries to start a blink.
+var writerOrderPlayer = new Motion.EmotePlayer(manager);
+writerOrderPlayer.motionKey = Storages.getPlacedPath(
+    "../emote/e-mote3.0バニラパジャマa.psb");
+writerOrderPlayer.chara = data.metadata.base.chara;
+writerOrderPlayer.play(data.metadata.base.motion, Motion.PlayFlagForce);
+writerOrderPlayer.initPhysics(data.metadata);
+writerOrderPlayer.playTimeline("sample_全自動_test",
+    Motion.TimelinePlayFlagParallel);
+for (var writerFrame = 0; writerFrame < 20; writerFrame++) {
+    writerOrderPlayer.progress(1000.0 / 60.0);
+}
+check(Math.abs(writerOrderPlayer.getVariable("face_eye_open")) < 0.001,
+    "authored eye timeline wins over automatic EyeControl");
+
 // A01 ABI: REF EmotePlayer members the wrapper historically lacked
 // (ref/emoteplayerclass.h property_marco + clear/assign/setCameraOffset).
 // Existence plus minimal semantics; REF assign is a logged TODO stub.

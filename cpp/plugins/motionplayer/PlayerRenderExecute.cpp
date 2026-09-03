@@ -1324,10 +1324,11 @@ namespace motion {
             const float right = std::max(corners[0], corners[2]) + xOffset;
             const float top = std::min(corners[1], corners[5]) + yOffset;
             const float bottom = std::max(corners[1], corners[5]) + yOffset;
-            out = { static_cast<int>(std::lround(left)),
-                    static_cast<int>(std::lround(top)),
-                    static_cast<int>(std::lround(right)),
-                    static_cast<int>(std::lround(bottom)) };
+            // Match computeRenderClipRect and REF: truncate all bounds toward
+            // zero. Mixing rounded destinations with truncated scratch origins
+            // makes sub-pixel motion alternate by one pixel at the 0.5 edge.
+            out = { static_cast<int>(left), static_cast<int>(top),
+                    static_cast<int>(right), static_cast<int>(bottom) };
             return out.left < out.right && out.top < out.bottom;
         };
         auto ensurePrivateOutputLayer =
