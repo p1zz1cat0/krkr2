@@ -174,6 +174,13 @@ namespace motion {
             return parameterized || hasFrameBp || hasMeshAncestor;
         }
 
+        // A child of a Bezier surface keeps a mesh grid even while the parent
+        // happens to be at its identity pose.  Otherwise the topology flips
+        // between affine and mesh paths as the parent starts/stops deforming.
+        inline bool meshParentRequiresStableChildGrid(int meshType) {
+            return meshType == 1;
+        }
+
         struct MeshDivisionPlan {
             int divX = 2;
             int divY = 2;

@@ -417,10 +417,8 @@ namespace motion {
                             ++guard) {
                             const auto *candidate =
                                 &nodes[static_cast<size_t>(meshWalk)];
-                            if(candidate->meshType == 1 &&
-                               !detail::isExactUnitMeshBezier(
-                                   candidate->interpolatedCache
-                                       .meshBezierPoints)) {
+                            if(detail::meshParentRequiresStableChildGrid(
+                                   candidate->meshType)) {
                                 meshGridParent = candidate;
                                 break;
                             }
@@ -433,10 +431,9 @@ namespace motion {
                     if(!meshGridParent && vn.meshType == 0 &&
                        vn.meshControlPoints.empty()) {
                         for(const auto *candidate : _externalMeshParents) {
-                            if(candidate && candidate->meshType == 1 &&
-                               !detail::isExactUnitMeshBezier(
-                                   candidate->interpolatedCache
-                                       .meshBezierPoints)) {
+                            if(candidate &&
+                               detail::meshParentRequiresStableChildGrid(
+                                   candidate->meshType)) {
                                 meshGridParent = candidate;
                                 break;
                             }

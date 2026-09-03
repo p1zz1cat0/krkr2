@@ -377,8 +377,13 @@ namespace motion::internal::render_detail {
         if(!layer->GetHasImage()) {
             layer->SetHasImage(true);
         }
-        layer->SetImageSize(static_cast<tjs_uint>(width),
-                            static_cast<tjs_uint>(height));
+        const int imageWidth = static_cast<int>(layer->GetImageWidth());
+        const int imageHeight = static_cast<int>(layer->GetImageHeight());
+        if(imageWidth < width || imageHeight < height) {
+            layer->SetImageSize(
+                static_cast<tjs_uint>(std::max(imageWidth, width)),
+                static_cast<tjs_uint>(std::max(imageHeight, height)));
+        }
         layer->SetSize(width, height);
         layer->SetClip(0, 0, width, height);
         tTVPRect rect(0, 0, width, height);
