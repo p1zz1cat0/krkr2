@@ -1,6 +1,8 @@
 // PlayerRenderExecute.cpp — render command build and execution
 // Split from PlayerRender.cpp for maintainability.
 //
+#include <atomic>
+
 #include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
@@ -943,6 +945,37 @@ namespace motion {
                 }
                 if(maskCommandIndex >= commands.size() ||
                    maskCommandIndex == gi) {
+                    // Distinguish the two failure directions. A mask input
+                    // naming a real drawable node that this frame turns off
+                    // is an EMPTY mask: the group's content must disappear
+                    // (closed eyes must not keep drawing the iris). Only a
+                    // structurally unresolvable reference — a type-3 wrapper
+                    // that owns no render item of its own — stays permissive,
+                    // because dropping a whole body region is far worse than
+                    // drawing it unclipped.
+                    const auto *maskOwner =
+                        static_cast<const detail::PlayerRuntime *>(
+                            fallbackScope);
+                    if(maskOwner != nullptr && input.first >= 0 &&
+                       input.first <
+                           static_cast<int>(maskOwner->nodes.size()) &&
+                       maskOwner->nodes[static_cast<size_t>(input.first)]
+                               .nodeType != 3) {
+                        command.emptyAuthoredMask = true;
+                    }
+                    if(kRenderCommandGraphDiag) {
+                        if(auto logger = LOGGER) {
+                            logger->warn(
+                                "emote.cmdgraph.maskbind.fail group={} "
+                                "groupScoped={} inputNode={} inputScope={} "
+                                "groupScope={} player={}",
+                                command.nodeIndex, command.scopedNodeIndex,
+                                input.first,
+                                static_cast<const void *>(input.second),
+                                command.renderScopeId,
+                                static_cast<const void *>(this));
+                        }
+                    }
                     ++maskBindFailCount;
                     continue;
                 }
@@ -1095,7 +1128,11 @@ namespace motion {
         // executor learns the item+264 alpha carrier (phase 2).
         const auto isPassThroughGroup =
             [](const ScopedRenderCommand &command) {
+            // A group whose authored mask went empty this frame is NOT a
+            // pass-through group: its children must be consumed (and then
+            // dropped), not promoted to standalone unclipped draws.
             return command.groupOnly && command.item != nullptr &&
+                !command.emptyAuthoredMask &&
                 !command.hasOwnSource && command.item->sourceKey.empty() &&
                 !command.childCommandIndices.empty() &&
                 command.stencilMaskCommandIndices.empty() &&
@@ -1310,29 +1347,6 @@ namespace motion {
         // small eye/lash source cells and turns fractional motion into hard
         // one-pixel jumps.
         const auto emoteStretchType = stLinear;
-        const auto axisAlignedRectBounds =
-            [](const std::array<float, 8> &corners, float xOffset,
-               float yOffset, tTVPRect &out) -> bool {
-            constexpr float epsilon = 0.02f;
-            if(std::fabs(corners[0] - corners[6]) > epsilon ||
-               std::fabs(corners[2] - corners[4]) > epsilon ||
-               std::fabs(corners[1] - corners[3]) > epsilon ||
-               std::fabs(corners[5] - corners[7]) > epsilon) {
-                return false;
-            }
-            const float left = std::min(corners[0], corners[2]) + xOffset;
-            const float right = std::max(corners[0], corners[2]) + xOffset;
-            const float top = std::min(corners[1], corners[5]) + yOffset;
-            const float bottom = std::max(corners[1], corners[5]) + yOffset;
-            // Stretch takes integer rectangles.  Snap axis-aligned fractional
-            // bounds to the nearest pixel like the validated public fallback;
-            // rotated/skewed quads still use the affine path below.
-            out = { static_cast<int>(std::lround(left)),
-                    static_cast<int>(std::lround(top)),
-                    static_cast<int>(std::lround(right)),
-                    static_cast<int>(std::lround(bottom)) };
-            return out.left < out.right && out.top < out.bottom;
-        };
         auto ensurePrivateOutputLayer =
             [&](tTJSVariant &slot) -> iTJSDispatch2 * {
             iTJSDispatch2 *layerObject =
@@ -1484,13 +1498,14 @@ namespace motion {
             const bool meshAsAffine = item.meshType == 1 &&
                 item.meshDivX <= 2 && item.meshDivY <= 2;
             if(item.meshType == 0 || meshAsAffine) {
-                tTVPRect destinationRect;
-                if(axisAlignedRectBounds(item.localCorners, 0.5f, 0.5f,
-                                         destinationRect)) {
-                    targetLayer->StretchCopy(destinationRect, srcImage,
-                                              sourceRect, emoteStretchType);
-                    return true;
-                }
+                // Affine only.  Stretch takes an integer destination rect, so
+                // an axis-aligned shortcut quantised the sub-pixel sway E-mote
+                // authors per component: axis-aligned parts snapped a whole
+                // pixel as their position crossed .5 while rotated neighbours
+                // moved smoothly, and a part oscillating across the alignment
+                // epsilon swapped rasterisers every frame.  AffineBlt is
+                // sub-pixel accurate in both axes (LayerBitmapIntf.cpp adjusts
+                // the source start by the fractional part of each edge).
                 const auto localPts =
                     buildAffineTrianglePoints(item.localCorners, 0.0f, 0.0f);
                 targetLayer->AffineCopy(localPts.data(), srcImage, sourceRect,
@@ -2111,6 +2126,7 @@ namespace motion {
             const auto isPassThroughGroup =
                 [](const auto &command) {
                 return command.groupOnly && command.item != nullptr &&
+                    !command.emptyAuthoredMask &&
                     !command.hasOwnSource &&
                     command.item->sourceKey.empty() &&
                     command.childCommandIndices.size() > 0 &&
@@ -2145,6 +2161,7 @@ namespace motion {
                 ++commandIndex) {
                 const auto &command = _runtime->renderCommands[commandIndex];
                 if(!command.item || command.alphaMaskOnly ||
+                   command.emptyAuthoredMask ||
                    isPassThroughGroup(command) ||
                    (command.hasRenderParent &&
                     consumedByParent[commandIndex])) {
@@ -2154,6 +2171,37 @@ namespace motion {
             }
         } else {
             executionItems = _runtime->preparedRenderItemsTopLevel;
+        }
+        // KRKR_EMOTE_GEOM_DUMP=1: per-draw final world geometry of every
+        // executed item. This is the only way to tell a per-component
+        // oscillation apart from a whole-sprite one: the series for a single
+        // node either alternates between two values every frame or it does
+        // not. Emits one line per executed item per draw; diagnostic only.
+        {
+            static const bool geomDump = [] {
+                const char *env = std::getenv("KRKR_EMOTE_GEOM_DUMP");
+                return env && env[0] != '\0' && env[0] != '0';
+            }();
+            if(geomDump) {
+                static std::atomic<unsigned> drawSerial{ 0 };
+                const unsigned serial = drawSerial.fetch_add(1);
+                for(const auto *dumpItem : executionItems) {
+                    if(!dumpItem) {
+                        continue;
+                    }
+                    LOGGER->warn(
+                        "emote.geomdump draw={} player={} node={} scope={} "
+                        "scoped={} src='{}' x={:.4f} y={:.4f} "
+                        "x2={:.4f} y2={:.4f} mesh={} opa={}",
+                        serial, static_cast<const void *>(this),
+                        dumpItem->nodeIndex,
+                        static_cast<const void *>(dumpItem->renderScopeId),
+                        dumpItem->scopedNodeIndex, dumpItem->sourceKey,
+                        dumpItem->corners[0], dumpItem->corners[1],
+                        dumpItem->corners[4], dumpItem->corners[5],
+                        dumpItem->meshType, dumpItem->opacity);
+                }
+            }
         }
         const auto cacheHitsBefore = _runtime->emoteCommandOutputCacheHits;
         const auto leafCacheHitsBefore =
@@ -2276,16 +2324,9 @@ namespace motion {
                     const bool meshAsAffine = item.meshType == 1 &&
                         item.meshDivX <= 2 && item.meshDivY <= 2;
                     if(item.meshType == 0 || meshAsAffine) {
-                        tTVPRect destinationRect;
-                        if(axisAlignedRectBounds(item.corners, 0.0f, 0.0f,
-                                                 destinationRect)) {
-                            drawTargetLayer->OperateStretch(
-                                destinationRect, source.bitmap.get(), sourceRect,
-                                blendMode, opa, emoteStretchType);
-                            continue;
-                        }
-#if defined(KRKR2_WASMTIME_HEADLESS)
-#endif
+                        // Affine only — see the leaf path above: an integer
+                        // OperateStretch rect quantises per-component
+                        // sub-pixel motion into visible twitching.
                         const auto worldPts = buildAffineTrianglePoints(
                             item.corners, -0.5f, -0.5f);
 #if defined(KRKR2_WASMTIME_HEADLESS)

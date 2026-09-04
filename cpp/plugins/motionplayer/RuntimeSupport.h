@@ -660,6 +660,13 @@ namespace motion::detail {
             // graph builder into stencilMaskCommandIndices.
             std::vector<std::pair<int, const void *>> stencilMaskInputs;
             bool hasRenderParent = false;
+            // An authored mask input that resolves to a real drawable node
+            // which the current frame turns off (E-mote eye assets author
+            // `{"time":N,"type":0}` on shirome/add_mask for the closed part
+            // of the blink range). The mask region is then empty, so the
+            // group's content is fully clipped away — the opposite of an
+            // unresolvable structural reference, which stays permissive.
+            bool emptyAuthoredMask = false;
             bool alphaMaskOnly = false;
             bool implicitVisibleStencilGroup = false;
             std::vector<int> childCommandIndices;

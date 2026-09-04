@@ -690,22 +690,28 @@ namespace motion {
                         const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
                         return env && env[0] != '\0' && env[0] != '0';
                     }();
+                    // Structural filter, not a name allowlist: every Bezier
+                    // surface and everything sitting under one.  The previous
+                    // mabuta/shirome/目影/瞳 list silently excluded sibling
+                    // parts such as the eyelash, so a child that never
+                    // inherited the eyelid deformation could not show up in
+                    // the trace at all.  hasMeshData/meshFlags are printed
+                    // because they are what decides whether children follow
+                    // the parent surface.
                     if(eyeGeomProbe &&
-                       (vn.layerName == "mabuta" ||
-                        vn.layerName == "eye_R" || vn.layerName == "eye_L" ||
-                        vn.layerName == "shirome" || vn.layerName == "目影R" ||
-                        vn.layerName == "目影L" || vn.layerName == "瞳R" ||
-                        vn.layerName == "瞳L")) {
+                       (vn.meshType == 1 || vn.meshParentIndex >= 0)) {
                         if(auto L = spdlog::get("plugin")) {
                             L->info(
                                 "emote.eye-geom idx={} label={} parent={} "
-                                "meshParent={} meshType={} meshPts={} div=({}, {}) "
+                                "meshParent={} meshType={} hasMeshData={} "
+                                "meshFlags={:#x} meshPts={} div=({}, {}) "
                                 "acc=({:.3f},{:.3f}) v0=({:.3f},{:.3f}) "
                                 "v1=({:.3f},{:.3f}) v2=({:.3f},{:.3f}) "
                                 "v3=({:.3f},{:.3f}) src={} bp={}",
                                 vn.index, vn.layerName.empty() ? "<none>"
                                                                : vn.layerName,
                                 vn.parentIndex, vn.meshParentIndex, vn.meshType,
+                                vn.hasMeshData ? 1 : 0, vn.meshFlags,
                                 vn.meshControlPoints.size(), vn.meshDivX,
                                 vn.meshDivY, vn.accumulated.posX,
                                 vn.accumulated.posY, vn.vertices[0],

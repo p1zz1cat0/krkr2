@@ -699,6 +699,23 @@ namespace motion {
                                                 node.priorDraw != 0,
                                                 static_cast<int>(i));
             }
+            if(node.stencilCompositeMaskReferenced) {
+                static const bool maskDiag = [] {
+                    const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
+                    return env && env[0] != '\0' && env[0] != '0';
+                }();
+                if(maskDiag) {
+                    LOGGER->warn(
+                        "emote.mask.leaf node={} label='{}' type={} active={} "
+                        "visible={} hasSource={} src='{}' drawFlag={} opa={}",
+                        i, node.layerName, node.nodeType,
+                        node.accumulated.active ? 1 : 0,
+                        node.accumulated.visible ? 1 : 0,
+                        hasRenderableSource(node) ? 1 : 0,
+                        node.interpolatedCache.src, node.drawFlag ? 1 : 0,
+                        node.accumulated.opacity);
+                }
+            }
             if(!node.accumulated.active)
                 continue;
             if(!_preview) {
@@ -1592,6 +1609,32 @@ namespace motion {
         // Transform-only nodes (UD/LR/head controls) can sit between the group
         // and the actual eye/eyebrow/mouth leaves. Walk the scoped numeric
         // ancestor chain and attach those leaves to the nearest mask group.
+        struct ScopedNodeKey {
+            const void *scope;
+            int node;
+            bool operator==(const ScopedNodeKey &other) const {
+                return scope == other.scope && node == other.node;
+            }
+        };
+        struct ScopedNodeKeyHash {
+            std::size_t operator()(const ScopedNodeKey &key) const {
+                return std::hash<const void *>{}(key.scope) ^
+                    (std::hash<int>{}(key.node) << 1);
+            }
+        };
+        std::unordered_map<ScopedNodeKey,
+                           detail::PlayerRuntime::PreparedRenderItem *,
+                           ScopedNodeKeyHash>
+            maskGroupByScopedNode;
+        for(auto &group : _runtime->preparedRenderItems) {
+            if(group.stencilMaskNodeIndices.empty() ||
+               group.renderScopeId == nullptr || group.scopedNodeIndex < 0) {
+                continue;
+            }
+            maskGroupByScopedNode.emplace(
+                ScopedNodeKey{ group.renderScopeId, group.scopedNodeIndex },
+                &group);
+        }
         for(auto &candidate : _runtime->preparedRenderItems) {
             if(candidate.stencilMaskReferenced ||
                candidate.stencilMaskNodeIndices.size() != 0) {
@@ -1600,27 +1643,89 @@ namespace motion {
             int ancestorIndex = candidate.visibleAncestorIndex;
             for(int guard = 0; ancestorIndex >= 0 && guard < 256; ++guard) {
                 const auto it = entryPtrByNode.find(ancestorIndex);
-                if(it == entryPtrByNode.end() || it->second == &candidate) {
+                auto *ancestor =
+                    it != entryPtrByNode.end() ? it->second : nullptr;
+                if(ancestor == &candidate) {
                     break;
                 }
-                auto *ancestor = it->second;
-                if(!ancestor->stencilMaskNodeIndices.empty()) {
+                if(ancestor != nullptr &&
+                   !ancestor->stencilMaskNodeIndices.empty()) {
                     if(candidate.parentItem == nullptr) {
                         candidate.parentItem = ancestor;
                     }
                     appendUniqueItem(ancestor->childItems, &candidate);
                     break;
                 }
-                if(ancestor->visibleAncestorIndex == ancestorIndex) {
+                // A transform-only ancestor owns no render item: E-mote puts
+                // `layout` and `blank/...` nodes (瞳l_le, eye_pos) between a
+                // type-12 stencil group and the leaves it clips. Requiring an
+                // item at every hop ended the walk on the first such node, so
+                // no group ever collected a child and every stencil had
+                // nothing to clip. Fall back to the owning node tree, which
+                // records the chain for item-less nodes too.
+                int nextAncestorIndex = -1;
+                if(ancestor != nullptr) {
+                    nextAncestorIndex = ancestor->visibleAncestorIndex;
+                } else if(ancestorIndex <
+                          static_cast<int>(_runtime->nodes.size())) {
+                    nextAncestorIndex =
+                        _runtime->nodes[static_cast<size_t>(ancestorIndex)]
+                            .visibleAncestorIndex;
+                }
+                if(nextAncestorIndex == ancestorIndex) {
                     break;
                 }
-                ancestorIndex = ancestor->visibleAncestorIndex;
+                ancestorIndex = nextAncestorIndex;
+            }
+            if(candidate.parentItem != nullptr) {
+                continue;
+            }
+            // Cross-scope fallback. Flattening already records the nearest
+            // type-12 ancestor of every merge slot in
+            // outerRenderAncestorChain (scoped, innermost first). Once a
+            // nested Player's leaves land in the merged numeric namespace
+            // that chain is the only surviving link to the group: the
+            // intermediate `layout` and `blank/...` nodes between a stencil
+            // group and the nested wrapper own no render item and no merged
+            // index. Without this a group whose entire content is a nested
+            // Player — E-mote authors irises exactly that way — collected
+            // zero children and therefore clipped nothing.
+            for(const auto &ancestorRef : candidate.outerRenderAncestorChain) {
+                if(ancestorRef.renderScopeId == nullptr ||
+                   ancestorRef.scopedNodeIndex < 0) {
+                    continue;
+                }
+                const auto groupIt = maskGroupByScopedNode.find(
+                    ScopedNodeKey{ ancestorRef.renderScopeId,
+                                   ancestorRef.scopedNodeIndex });
+                if(groupIt == maskGroupByScopedNode.end() ||
+                   groupIt->second == &candidate) {
+                    continue;
+                }
+                candidate.parentItem = groupIt->second;
+                appendUniqueItem(groupIt->second->childItems, &candidate);
+                break;
             }
         }
 
         for(auto &group : _runtime->preparedRenderItems) {
             if(group.stencilMaskNodeIndices.empty()) {
                 continue;
+            }
+            {
+                static const bool maskDiag = [] {
+                    const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
+                    return env && env[0] != '\0' && env[0] != '0';
+                }();
+                if(maskDiag) {
+                    LOGGER->warn(
+                        "emote.mask.group node={} masksDeclared={} "
+                        "maskItems={} childItems={} groupOnly={} drawFlag={}",
+                        group.nodeIndex, group.stencilMaskNodeIndices.size(),
+                        group.stencilMaskItems.size(),
+                        group.childItems.size(), group.groupOnly ? 1 : 0,
+                        group.drawFlag ? 1 : 0);
+                }
             }
             for(auto *child : group.childItems) {
                 if(child) {

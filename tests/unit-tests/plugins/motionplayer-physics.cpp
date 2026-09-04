@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <limits>
@@ -234,7 +235,7 @@ TEST_CASE("Outer force carries long dt across appended segments") {
     CHECK_FALSE(force.active());
 }
 
-TEST_CASE("Wind spawns fixed slots and returns the first matching force") {
+TEST_CASE("Wind spawns fixed slots and returns the strongest covering gust") {
     motion::physics::WindControl wind;
     wind.start(0.0, 20.0, 1.0, 2.0, 2.0);
     wind.step(1.0, [] { return 0.5; });
@@ -246,6 +247,87 @@ TEST_CASE("Wind spawns fixed slots and returns the first matching force") {
     wind.stop();
     CHECK_FALSE(wind.active());
     CHECK(wind.sample(1.0) == Catch::Approx(0.0));
+}
+
+TEST_CASE("A pend at rest stops bending instead of oscillating forever") {
+    // The bend oscillator is the hair-tip whip that should only run while the
+    // segment is actually moving: applyBend() ramps bendEnvelope_ up while
+    // |output_[2]| > 28 and down otherwise. A pend hangs at the equilibrium
+    // where gravity balances the weak back spring (gravity / backRate), and
+    // the editor stores that sag in `pend.param.ofs`. Referencing zero
+    // instead of ofs reported the static droop as a permanent large vertical
+    // signal, pinned the envelope at 1.0, and left the hair swaying at
+    // 2*pi/bendSpeed frames forever while the character stood still.
+    motion::physics::PendConfig config;
+    config.gravity = 0.2;
+    config.frictionX = 0.03125;
+    config.frictionY = 0.03125;
+    config.backRate = 0.003711;
+    config.velocityBound = 0.5;
+    config.verticalOutputSegment = 0;
+    config.length = { 64.0, 48.0 };
+    config.scaleX = { 0.75, 0.25 };
+    config.scaleY = { 2.0, 3.0 };
+    config.bendSpeed = 0.392699;
+    config.bendVolume = 3.0;
+    config.metadataOffset = -config.gravity / config.backRate;
+
+    motion::physics::PendControl pend(config);
+    const motion::physics::Vec2 input{ 0.0, 0.0 };
+    const motion::physics::Vec2 force{ 0.0, 0.0 };
+    for(int frame = 0; frame < 400; ++frame) {
+        pend.stepFrame(input, force, 1.0, 1.0, 0.0, nullptr);
+    }
+
+    // Settled: the tail of the run must be quiet on every axis.
+    double peak = 0.0;
+    for(int frame = 0; frame < 64; ++frame) {
+        const auto output = pend.stepFrame(input, force, 1.0, 1.0, 0.0,
+                                           nullptr);
+        for(const double value : output) {
+            peak = std::max(peak, std::abs(value));
+        }
+    }
+    CHECK(peak < 1.0);
+}
+
+TEST_CASE("Wind sampling does not depend on gust slot order") {
+    // Slots are a recycled free list and every gust draws its own power from
+    // [powerMin, powerMax]. Returning whichever active slot happened to come
+    // first made the sampled force jump between unrelated random magnitudes
+    // as gusts spawned and expired, which reached the integrator as per-frame
+    // velocity noise on every pend-driven part.
+    motion::physics::WindControl wind;
+    wind.start(0.0, 4096.0, 8.0, 1.0, 9.0);
+
+    // Alternate weak and strong gusts so early slots are frequently weaker
+    // than later ones.
+    int tick = 0;
+    const auto alternating = [&tick] {
+        return (tick++ % 2 == 0) ? 0.0 : 1.0;
+    };
+
+    for(int frame = 0; frame < 64; ++frame) {
+        wind.step(1.0, alternating);
+        for(const double probe : { 0.0, 12.0, 40.0, 130.0 }) {
+            double strongest = 0.0;
+            bool covered = false;
+            for(const auto &gust : wind.gusts()) {
+                if(!gust.active) {
+                    continue;
+                }
+                const double radius = 2.0 * gust.power;
+                if(probe >= gust.position - radius &&
+                   probe <= gust.position + radius) {
+                    covered = true;
+                    strongest = std::max(strongest, gust.power);
+                }
+            }
+            const double expected =
+                covered ? strongest * wind.signedSpeed() : 0.0;
+            CHECK(wind.sample(probe) == Catch::Approx(expected));
+        }
+    }
 }
 
 TEST_CASE("Wind normalizes negative speed and never exceeds fixed slots") {

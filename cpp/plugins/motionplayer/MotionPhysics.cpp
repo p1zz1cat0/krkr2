@@ -168,16 +168,30 @@ namespace motion::physics {
         if(!active_) {
             return 0.0;
         }
+        // Take the strongest gust covering x, not the first one in slot
+        // order. Slots are a recycled free list and every gust carries its
+        // own [powerMin, powerMax] draw, so "first active slot that covers x"
+        // made the sampled force jump between unrelated random magnitudes
+        // from frame to frame as gusts spawned and expired — a per-frame
+        // velocity perturbation on every pend-driven part (hair, parts,
+        // clothes) while the character was otherwise standing still. Facial
+        // features carry no pend control and so never showed it.
+        // Selecting the maximum keeps the original value domain (bounded by
+        // powerMax * |signedSpeed_|) while removing the dependence on slot
+        // recycling order.
+        double strongest = 0.0;
         for(const auto &gust : gusts_) {
             if(!gust.active) {
                 continue;
             }
             const double radius = 2.0 * gust.power;
             if(x >= gust.position - radius && x <= gust.position + radius) {
-                return gust.power * signedSpeed_;
+                if(gust.power > strongest) {
+                    strongest = gust.power;
+                }
             }
         }
-        return 0.0;
+        return strongest * signedSpeed_;
     }
 
     BustControl::BustControl(BustConfig config) : config_(std::move(config)) {
@@ -330,7 +344,12 @@ namespace motion::physics {
             velocity_[index].y += dt * localForce.y +
                 dt * config_.gravity * cosAngle;
             if(wind) {
-                velocity_[index].x += wind->sample(position_[index].x);
+                // Wind is an acceleration like every other term in this
+                // integrator, so it takes the same dt. Without it the gust
+                // force landed as a raw per-frame velocity impulse and the
+                // result changed with the frame rate.
+                velocity_[index].x +=
+                    dt * wind->sample(position_[index].x);
             }
             velocity_[index].x *= 1.0 - config_.frictionX * dt;
             velocity_[index].y *= 1.0 - config_.frictionY * dt;
@@ -343,9 +362,18 @@ namespace motion::physics {
             output_[index] =
                 soft(-dx * config_.scaleX[index] * globalScale);
             if(static_cast<int>(index) == config_.verticalOutputSegment) {
-                output_[2] = soft(
-                    (kDeterministicPendVerticalReference - dy) *
-                    config_.scaleY[index] * globalScale);
+                // Measure the vertical output from the authored rest sag
+                // (`pend.param.ofs`), not from zero. A pend hangs at the
+                // equilibrium where gravity balances the weak back spring —
+                // for this asset 0.2 / 0.003711 = 53.892, and the authored
+                // ofs is -53.89473 — so referencing zero reports that static
+                // droop as a permanent large vertical signal. applyBend()
+                // then keeps bendEnvelope_ pinned at 1.0 and the bend
+                // oscillator runs forever at full amplitude, which is the
+                // standing-still hair/tail sway. metadataOffset defaults to
+                // 0.0, so assets without the field keep the old behaviour.
+                output_[2] = soft((config_.metadataOffset - dy) *
+                                  config_.scaleY[index] * globalScale);
             }
         }
     }
