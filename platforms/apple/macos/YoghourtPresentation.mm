@@ -1,22 +1,8 @@
 #import <AppKit/AppKit.h>
 
-extern "C" void YoghourtRefreshWindowLayout(int width, int height);
+#import "YoghourtDockIcon.h"
 
-static NSImage *YoghourtRoundedDockIcon(NSImage *source) {
-    NSSize size = source.size;
-    NSImage *result = [[NSImage alloc] initWithSize:size];
-    [result lockFocus];
-    CGFloat radius = MIN(size.width, size.height) * 0.08;
-    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, size.width, size.height)
-                                    xRadius:radius
-                                    yRadius:radius] addClip];
-    [source drawInRect:NSMakeRect(0, 0, size.width, size.height)
-              fromRect:NSZeroRect
-             operation:NSCompositingOperationCopy
-              fraction:1.0];
-    [result unlockFocus];
-    return result;
-}
+extern "C" void YoghourtRefreshWindowLayout(int width, int height);
 
 extern "C" void YoghourtApplyPresentation(void) {
     @autoreleasepool {
@@ -30,11 +16,8 @@ extern "C" void YoghourtApplyPresentation(void) {
         NSApplication *application = NSApplication.sharedApplication;
         NSString *iconPath = environment[@"YOGHOURT_GAME_ICON"];
         if (iconPath.length > 0) {
-            NSImage *icon = [[NSImage alloc] initWithContentsOfFile:iconPath];
-            if (icon) application.applicationIconImage = YoghourtRoundedDockIcon(icon);
-#if !__has_feature(objc_arc)
-            [icon release];
-#endif
+            NSImage *icon = YoghourtLoadDockIcon(iconPath);
+            if (icon) application.applicationIconImage = icon;
         }
     }
 }

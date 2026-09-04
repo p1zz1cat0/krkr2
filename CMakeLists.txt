@@ -82,6 +82,8 @@ elseif(MACOS)
     set(YOGHOURT_SPATIAL_PRESENTER_SOURCE
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.h
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtDockIcon.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtDockIcon.h
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/cunny/cunny_metal.h
     )
     set(YOGHOURT_SURFACE_RELAY_SOURCE
@@ -143,12 +145,14 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
 )
 if(MACOS)
     find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
     find_library(IOSURFACE_FRAMEWORK IOSurface REQUIRED)
     find_library(METAL_FRAMEWORK Metal REQUIRED)
     find_library(METALFX_FRAMEWORK MetalFX REQUIRED)
     find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
     target_link_libraries(${PROJECT_NAME} PRIVATE
             ${APPKIT_FRAMEWORK}
+            ${IMAGEIO_FRAMEWORK}
             ${IOSURFACE_FRAMEWORK}
             ${METAL_FRAMEWORK}
             ${METALFX_FRAMEWORK}
