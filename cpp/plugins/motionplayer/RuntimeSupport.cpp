@@ -5,6 +5,7 @@
 #include "RuntimeSupport.h"
 
 #include <atomic>
+#include <functional>
 #include "ResourceManager.h"
 
 #include <algorithm>
@@ -1321,6 +1322,100 @@ namespace motion::detail {
 
     } // namespace
 
+    // E-mote "dx_" PSBs address a frame's source as a (bank, item)
+    // pair — content["src"] names the bank, content["icon"] the item —
+    // where the plain family packs the same reference into one
+    // slash-joined string. Aligned to libkrkr2.so sub_692AB0, whose
+    // source block reads "src" *and* "icon"; this implementation had
+    // only ever read "src", so every dx_ reference arrived truncated to
+    // its bank name (a bare "body_parts" reaching resolveMotion as the
+    // storage path "motion/body_parts/body_parts", which throws).
+    //
+    // The two dialects carry identical values either side of the split,
+    // verified field-by-field on the same character's plain and dx_ PSBs:
+    //   plain "blank/331:432:165:216"  == dx "blank"      + "331:432:165:216"
+    //   plain "motion/body_parts/全身変形基礎"
+    //                                 == dx "body_parts" + "全身変形基礎"
+    //   plain "src/head_parts/輪郭00"   == dx "tex#001"    + "19"
+    // so the pair is joined back into the plain form once, here, and
+    // every downstream consumer keeps its single-string contract.
+    //
+    // The prefix is decided by locating the item itself, not by the shape
+    // of the bank name: a name can be both an object group and a source
+    // bank in one file (the plain family uses "head_parts" for both), so
+    // neither table can be given blanket precedence.
+    //
+    // Each PSB string occurrence is materialised as its own PSBString
+    // (PSBFile.cpp copy-constructs from the string table), so rewriting
+    // one reference cannot alias another. Re-entry is a no-op: a joined
+    // reference already contains '/'.
+    void normalizeSplitSourceReferences(
+        const std::shared_ptr<PSB::PSBDictionary> &root) {
+        if(!root) {
+            return;
+        }
+        const auto sources = std::dynamic_pointer_cast<PSB::PSBDictionary>(
+            (*root)["source"]);
+        const auto objects = std::dynamic_pointer_cast<PSB::PSBDictionary>(
+            (*root)["object"]);
+        const auto holds =
+            [](const std::shared_ptr<PSB::PSBDictionary> &table,
+               const std::string &bank, const char *shelf,
+               const std::string &item) {
+                if(!table) {
+                    return false;
+                }
+                const auto bankDic =
+                    std::dynamic_pointer_cast<PSB::PSBDictionary>(
+                        (*table)[bank]);
+                if(!bankDic) {
+                    return false;
+                }
+                const auto shelfDic =
+                    std::dynamic_pointer_cast<PSB::PSBDictionary>(
+                        (*bankDic)[shelf]);
+                return shelfDic && (*shelfDic)[item] != nullptr;
+            };
+
+        std::function<void(const std::shared_ptr<PSB::IPSBValue> &)> walk;
+        walk = [&](const std::shared_ptr<PSB::IPSBValue> &value) {
+            if(const auto dic =
+                   std::dynamic_pointer_cast<PSB::PSBDictionary>(value)) {
+                const auto src = std::dynamic_pointer_cast<PSB::PSBString>(
+                    (*dic)["src"]);
+                const auto icon = std::dynamic_pointer_cast<PSB::PSBString>(
+                    (*dic)["icon"]);
+                if(src && icon && !src->value.empty() &&
+                   !icon->value.empty() &&
+                   src->value.find('/') == std::string::npos) {
+                    const auto bank = src->value;
+                    const auto &item = icon->value;
+                    if(holds(sources, bank, "icon", item)) {
+                        src->value = "src/" + bank + "/" + item;
+                    } else if(holds(objects, bank, "motion", item)) {
+                        src->value = "motion/" + bank + "/" + item;
+                    } else {
+                        // Placeholder banks ("blank") carry their geometry
+                        // in the item and have no table entry; the plain
+                        // family spells these "blank/<w>:<h>:<x>:<y>".
+                        src->value = bank + "/" + item;
+                    }
+                }
+                for(const auto &entry : *dic) {
+                    walk(entry.second);
+                }
+                return;
+            }
+            if(const auto list =
+                   std::dynamic_pointer_cast<PSB::PSBList>(value)) {
+                for(size_t i = 0; i < list->size(); ++i) {
+                    walk((*list)[i]);
+                }
+            }
+        };
+        walk(root);
+    }
+
     void ensureRootNodeLike_0x6CED30(PlayerRuntime &runtime) {
         if(!runtime.nodes.empty()) {
             runtime.nodes.front().index = 0;
@@ -1467,6 +1562,11 @@ namespace motion::detail {
         if(!root) {
             return nullptr;
         }
+        // PSBFile owns the tree as a non-const shared_ptr<IPSBValue>; the
+        // const on getObjects() is an accessor convention, so the cast here
+        // is the same one scanValue below already relies on.
+        normalizeSplitSourceReferences(
+            std::const_pointer_cast<PSB::PSBDictionary>(root));
 
         auto snapshot = std::make_shared<MotionSnapshot>();
         snapshot->path = narrow(path);

@@ -813,6 +813,14 @@ namespace motion::detail {
     void mergeAttachedSnapshotResources(MotionSnapshot &primary,
                                         const MotionSnapshot &attached);
 
+    // Join E-mote "dx_" split source references — content["src"] naming the
+    // bank and content["icon"] the item — back into the single slash-joined
+    // string the plain PSB family uses, in place across the whole tree.
+    // Called once per parsed motion PSB before anything reads "src";
+    // references without an "icon", and already-joined ones, are untouched.
+    void normalizeSplitSourceReferences(
+        const std::shared_ptr<PSB::PSBDictionary> &root);
+
     std::shared_ptr<MotionSnapshot> loadMotionSnapshot(const ttstr &path,
                                                        tjs_int decryptSeed);
     tTJSVariant loadPSBVariant(const ttstr &path, tjs_int decryptSeed);

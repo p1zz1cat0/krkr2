@@ -12,6 +12,7 @@ set(SOURCES
         plugin-safety-dll.cpp
         motionplayer-physics.cpp
         motionplayer-param.cpp
+        motionplayer-source-dialect.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")
