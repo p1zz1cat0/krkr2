@@ -36,6 +36,168 @@ namespace {
         return slash == std::string::npos ? path : path.substr(slash + 1);
     }
 
+    // KRKR_EMOTE_EDGE_DIAG=1: per decoded E-mote source, report the RGB
+    // content of fully transparent texels and the RGB offset of the
+    // silhouette edge band against the opaque interior. The renderer samples
+    // sources with GL_LINEAR and blends with straight GL_SRC_ALPHA, so
+    // bilinear filtering pulls the RGB of transparent texels into the
+    // semi-transparent edge; what that RGB actually is (white? black?
+    // garbage?) decides whether silhouettes get a light fringe. Evidence
+    // only; nothing here changes rendering.
+    void logEdgeBleedDiagnostics(const std::string &key,
+                                 const tTVPBaseBitmap &bitmap) {
+        static const bool enabled = [] {
+            const char *value = std::getenv("KRKR_EMOTE_EDGE_DIAG");
+            return value && *value && std::strcmp(value, "0") != 0;
+        }();
+        if(!enabled || bitmap.Is8BPP()) {
+            return;
+        }
+        const auto width = bitmap.GetWidth();
+        const auto height = bitmap.GetHeight();
+        const auto *pixels = static_cast<const tjs_uint32 *>(
+            bitmap.GetScanLine(0));
+        if(!pixels || width <= 0 || height <= 0) {
+            return;
+        }
+        const auto pitchPixels = bitmap.GetPitchBytes() /
+            static_cast<ptrdiff_t>(sizeof(tjs_uint32));
+
+        // RGB buckets over fully transparent texels, split into all vs the
+        // ones 4-adjacent to any A>=1 texel (the only ones that bleed).
+        enum class Bucket { Black, White, Light, Dark, Other };
+        auto bucketOf = [](unsigned r, unsigned g, unsigned b) {
+            if(r == 0 && g == 0 && b == 0) {
+                return Bucket::Black;
+            }
+            if(r >= 224 && g >= 224 && b >= 224) {
+                return Bucket::White;
+            }
+            if(r >= 128 && g >= 128 && b >= 128) {
+                return Bucket::Light;
+            }
+            if(r <= 32 && g <= 32 && b <= 32) {
+                return Bucket::Dark;
+            }
+            return Bucket::Other;
+        };
+
+        std::uint64_t transparentAll[5] = { 0, 0, 0, 0, 0 };
+        std::uint64_t transparentBleed[5] = { 0, 0, 0, 0, 0 };
+        std::uint64_t edgeCount = 0;
+        double edgeR = 0, edgeG = 0, edgeB = 0;
+        std::uint64_t opaqueCount = 0;
+        double opaqueR = 0, opaqueG = 0, opaqueB = 0;
+
+        // Authored silhouette AA ramp: per row, the run of texels with
+        // 0<a<255 between a background (a==0) and the opaque interior
+        // (a==255). Hard-cut art has width 0; E-mote illustrations are
+        // usually 1-2px. The canvas probe measures the same ramp after
+        // compositing, so this number is the baseline the render chain
+        // must roughly preserve.
+        std::uint64_t rampRows = 0;
+        std::uint64_t rampWidthCount[8] = { 0, 0, 0, 0, 0, 0, 0, 0 }; // last = >=7
+
+        for(int y = 0; y < height; ++y) {
+            const auto *row = pixels + static_cast<ptrdiff_t>(y) * pitchPixels;
+            for(int x = 0; x < width; ++x) {
+                const auto c = row[x];
+                const unsigned a = (c >> 24) & 0xFF;
+                const unsigned r = (c >> 16) & 0xFF;
+                const unsigned g = (c >> 8) & 0xFF;
+                const unsigned b = c & 0xFF;
+                if(a == 0) {
+                    const auto bucket = static_cast<unsigned>(
+                        bucketOf(r, g, b));
+                    ++transparentAll[bucket];
+                    const int xn[4] = { x - 1, x + 1, x, x };
+                    const int yn[4] = { y, y, y - 1, y + 1 };
+                    for(int n = 0; n < 4; ++n) {
+                        if(xn[n] < 0 || yn[n] < 0 || xn[n] >= width ||
+                           yn[n] >= height) {
+                            continue;
+                        }
+                        const auto nc = pixels[static_cast<ptrdiff_t>(yn[n]) *
+                            pitchPixels + xn[n]];
+                        if(((nc >> 24) & 0xFF) != 0) {
+                            ++transparentBleed[bucket];
+                            break;
+                        }
+                    }
+                } else if(a < 255) {
+                    ++edgeCount;
+                    edgeR += r;
+                    edgeG += g;
+                    edgeB += b;
+                } else {
+                    ++opaqueCount;
+                    opaqueR += r;
+                    opaqueG += g;
+                    opaqueB += b;
+                }
+            }
+        }
+
+        for(int y = 0; y < height; ++y) {
+            const auto *row2 =
+                pixels + static_cast<ptrdiff_t>(y) * pitchPixels;
+            bool inBackground = true;
+            int rampRun = 0;
+            for(int x = 0; x < width; ++x) {
+                const auto a = (row2[x] >> 24) & 0xFF;
+                if(inBackground) {
+                    if(a >= 255) {
+                        // background -> opaque: rampRun texels were the AA
+                        // ramp; 0 means a hard-cut silhouette edge.
+                        ++rampRows;
+                        ++rampWidthCount[std::min(
+                            rampRun > 0 ? rampRun : 0, 7)];
+                        rampRun = 0;
+                        inBackground = false;
+                    } else if(a > 0) {
+                        ++rampRun;
+                    }
+                } else if(a == 0) {
+                    inBackground = true;
+                    rampRun = 0;
+                } else if(a < 255 && rampRun == 0) {
+                    // interior soft region: not a silhouette entry; skip
+                    rampRun = -1000;
+                }
+            }
+            if(rampRun > 0) {
+                ++rampRows;
+                ++rampWidthCount[std::min(rampRun, 7)];
+            }
+        }
+
+        const auto safeMean = [](double sum, std::uint64_t count) {
+            return count > 0 ? sum / static_cast<double>(count) : 0.0;
+        };
+        if(auto logger = spdlog::get("plugin")) {
+            logger->info(
+                "emote.edge.diag key='{}' {}x{} "
+                "transparent(all w/l/d/k/o)={}/{}/{}/{}/{} "
+                "transparent-bleeding(w/l/d/k/o)={}/{}/{}/{}/{} "
+                "edge(texels/meanRGB)={}/{:.1f},{:.1f},{:.1f} "
+                "opaque(texels/meanRGB)={}/{:.1f},{:.1f},{:.1f} "
+                "authoredRamps(total/hard/1/2/3/4/5/6/7+)= {}/{}/{}/{}/{}/"
+                "{}/{}/{}/{}",
+                key, width, height,
+                transparentAll[1], transparentAll[2], transparentAll[3],
+                transparentAll[0], transparentAll[4],
+                transparentBleed[1], transparentBleed[2], transparentBleed[3],
+                transparentBleed[0], transparentBleed[4], edgeCount,
+                safeMean(edgeR, edgeCount), safeMean(edgeG, edgeCount),
+                safeMean(edgeB, edgeCount), opaqueCount,
+                safeMean(opaqueR, opaqueCount), safeMean(opaqueG, opaqueCount),
+                safeMean(opaqueB, opaqueCount), rampRows,
+                rampWidthCount[0], rampWidthCount[1], rampWidthCount[2],
+                rampWidthCount[3], rampWidthCount[4], rampWidthCount[5],
+                rampWidthCount[6], rampWidthCount[7]);
+        }
+    }
+
     bool getObjectProperty(const tTJSVariant &object, const tjs_char *name,
                            tTJSVariant &out) {
         if(object.Type() != tvtObject || !object.AsObjectNoAddRef()) {
@@ -951,6 +1113,9 @@ namespace motion {
                     logger->warn("SourceCache decode slow key={} ms={:.1f}",
                                  key, loadMs);
                 }
+            }
+            if(entry.baseBitmap) {
+                logEdgeBleedDiagnostics(key, *entry.baseBitmap);
             }
         }
         if(!entry.baseBitmap || entry.baseBitmap->GetWidth() <= 0 ||
