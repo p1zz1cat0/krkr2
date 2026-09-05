@@ -42,6 +42,24 @@ namespace motion {
                 }
                 Player &child = *childPtr;
                 const auto &slotSrc = mn.activeSlot().src;
+                {
+                    static const bool motionTrace = [] {
+                        const char *env =
+                            std::getenv("KRKR_EMOTE_MOTION_TRACE");
+                        return env && env[0] != '\0' && env[0] != '0';
+                    }();
+                    static std::atomic<unsigned> traceFrames{ 0 };
+                    if(motionTrace && LOGGER &&
+                       traceFrames.fetch_add(1) < 40) {
+                        LOGGER->info(
+                            "emote.childgate node={} childActive={} src='{}' "
+                            "v12={} visible={} flags={:#x} done={}",
+                            mn.index, child.hasActiveMotion() ? 1 : 0,
+                            slotSrc, v12,
+                            mn.accumulated.visible ? 1 : 0, mn.flags,
+                            mn.activeSlot().done ? 1 : 0);
+                    }
+                }
                 // C02（REF findmotionByName 结构判定）：首帧 bootstrap 看
                 // 「子 Player 尚无 active motion 且 wrapper 有 slot src」，
                 // 不做路径前缀匹配——前缀外的合法嵌套 motion 此前永远
@@ -138,6 +156,20 @@ namespace motion {
                                     start = slashPos + 1;
                                 }
 
+                                static const bool motionTrace = [] {
+                                    const char *env =
+                                        std::getenv("KRKR_EMOTE_MOTION_TRACE");
+                                    return env && env[0] != '\0' &&
+                                        env[0] != '0';
+                                }();
+                                if(motionTrace && LOGGER) {
+                                    LOGGER->info(
+                                        "emote.childplay node={} src='{}' "
+                                        "bootstrap={} seg={}",
+                                        mn.index, src,
+                                        needsBoundedChildBootstrap ? 1 : 0,
+                                        segments.size());
+                                }
                                 if(segments.size() <= 1) {
                                     // Single segment: binary sets chara to src
                                     // itself then Player_play with raw src (no

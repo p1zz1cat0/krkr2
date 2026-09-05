@@ -1512,6 +1512,20 @@ namespace motion::detail {
         resolveClipLayerReferences(*snapshot);
         collectControlMetadata(*snapshot);
         collectRootResources(root, *snapshot);
+        {
+            static const bool treeDiag = [] {
+                const char *env = std::getenv("KRKR_EMOTE_TREE_DIAG");
+                return env && env[0] != '\0' && env[0] != '0';
+            }();
+            if(treeDiag) {
+                std::string clips;
+                for(const auto &clip : snapshot->clipList) {
+                    clips += clip.owner + "/" + clip.label + " ";
+                }
+                LOGGER->info("emote.tree.clips path={} clips=[{}]",
+                             snapshot->path, clips);
+            }
+        }
         if(logoChainTraceEnabled(snapshot)) {
             const auto rootParameterList =
                 dictionaryList(snapshot->root, { "parameter" });

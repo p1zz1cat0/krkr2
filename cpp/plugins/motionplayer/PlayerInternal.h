@@ -277,6 +277,10 @@ namespace motion {
         inline std::shared_ptr<detail::MotionSnapshot>
         resolveMotion(detail::PlayerRuntime &runtime, const ttstr &name,
                       const ResourceManager *resourceManager) {
+            static const bool motionTrace = [] {
+                const char *env = std::getenv("KRKR_EMOTE_MOTION_TRACE");
+                return env && env[0] != '\0' && env[0] != '0';
+            }();
             const auto requestKey = detail::narrow(name);
             if(requestKey.empty()) {
                 return nullptr;
@@ -284,6 +288,11 @@ namespace motion {
 
             if(const auto it = runtime.motionsByKey.find(requestKey);
                it != runtime.motionsByKey.end()) {
+                if(motionTrace && LOGGER) {
+                    LOGGER->info(
+                        "emote.motion.resolve key='{}' branch=cache-hit",
+                        requestKey);
+                }
                 return it->second;
             }
 
@@ -300,9 +309,22 @@ namespace motion {
                 const auto snapshot = detail::loadMotionSnapshot(
                     resolved, ResourceManager::getEmotePSBDecryptSeed());
                 if(snapshot) {
+                    if(motionTrace && LOGGER) {
+                        LOGGER->info(
+                            "emote.motion.resolve key='{}' branch=storage "
+                            "resolved='{}'",
+                            requestKey, detail::narrow(resolved));
+                    }
                     return cacheMotion(runtime, requestKey, resolvedKey,
                                        snapshot);
                 }
+            } else if(LOGGER) {
+                // Forensic: a motion cross-reference that resolved to no
+                // storage. Shows what the resolver was asked for and how much
+                // was already cached when the storage load was attempted.
+                LOGGER->warn(
+                    "emote.motion.miss key='{}' cached={} storageResolved=0",
+                    requestKey, runtime.motionsByKey.size());
             }
 
             if(resourceManager != nullptr) {
@@ -310,6 +332,12 @@ namespace motion {
                     const auto loaded = resourceManager->load(candidate);
                     if(const auto snapshot =
                            detail::lookupModuleSnapshot(loaded)) {
+                        if(motionTrace && LOGGER) {
+                            LOGGER->info(
+                                "emote.motion.resolve key='{}' "
+                                "branch=manager candidate='{}'",
+                                requestKey, detail::narrow(candidate));
+                        }
                         return cacheMotion(runtime, requestKey,
                                            detail::narrow(candidate), snapshot);
                     }
