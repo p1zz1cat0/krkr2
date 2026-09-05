@@ -187,7 +187,21 @@ namespace {
         method->SetParameterColor4B(colorId, color);
         if(alphaTest) {
             const int thresholdId = method->EnumParameterID("alpha_threshold");
-            method->SetParameterOpa(thresholdId, 64);
+            // Forensic override (KRKR_EMOTE_ALPHA_TEST_THRESH): the shipped
+            // value 64 hard-cuts the mask silhouette at alpha<25%, which
+            // turns the mask's authored AA ramp into a 1px staircase that
+            // every stencil-clipped part inherits. The env override lets an
+            // A/B run measure how much of the visible edge damage this
+            // discard actually contributes; 0 disables the discard.
+            static const int thresholdOverride = [] {
+                const char *env =
+                    std::getenv("KRKR_EMOTE_ALPHA_TEST_THRESH");
+                if(!env || !*env) {
+                    return 64;
+                }
+                return std::max(0, std::atoi(env));
+            }();
+            method->SetParameterOpa(thresholdId, thresholdOverride);
         }
         return method;
     }

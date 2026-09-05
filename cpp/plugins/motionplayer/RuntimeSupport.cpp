@@ -1624,6 +1624,43 @@ namespace motion::detail {
                 }
                 LOGGER->info("emote.tree.clips path={} clips=[{}]",
                              snapshot->path, clips);
+                // Icon geometry origins: per-axis parity of these values
+                // decides whether the world left-top lands on half-integers
+                // (odd dimension) or integers (even dimension) after the
+                // pos − origin subtraction. The mesh raster applies a fixed
+                // −0.5 on both axes, so a parity mismatch between the two
+                // axes is the direct suspect for the 1px-wider silhouette
+                // ramps. Forensic only; nothing here changes rendering.
+                for(const auto &groupName :
+                    { "body_parts", "head_parts", "face_parts", "all_parts",
+                      "parts_add", "test", "#custom" }) {
+                    const auto icons = navigateDictionaryPath(
+                        snapshot->root,
+                        std::string("source/") + groupName + "/icon");
+                    if(!icons) {
+                        continue;
+                    }
+                    for(const auto &entry : *icons) {
+                        const auto icon = std::dynamic_pointer_cast<
+                            const PSB::PSBDictionary>(entry.second);
+                        if(!icon) {
+                            continue;
+                        }
+                        auto numText = [&icon](const char *key) {
+                            const auto v = dictionaryNumber(
+                                icon, { key });
+                            return v.has_value()
+                                ? fmt::format("{}", *v)
+                                : std::string("?");
+                        };
+                        LOGGER->info(
+                            "emote.tree.icon group={} name={} w={} h={} "
+                            "originX={} originY={}",
+                            groupName, entry.first, numText("width"),
+                            numText("height"), numText("originX"),
+                            numText("originY"));
+                    }
+                }
             }
         }
         if(logoChainTraceEnabled(snapshot)) {

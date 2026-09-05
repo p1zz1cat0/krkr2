@@ -174,6 +174,22 @@ namespace {
         const auto safeMean = [](double sum, std::uint64_t count) {
             return count > 0 ? sum / static_cast<double>(count) : 0.0;
         };
+        // Alpha precision histogram over the edge band (0<a<255): if any
+        // stage along the decode/upload/composite chain quantizes alpha
+        // (e.g. a 4-bit texture format), the edge-band values collapse to a
+        // few buckets instead of spreading across 1..254.
+        std::uint64_t edgeAlphaBuckets[16] = {};
+        for(int y = 0; y < height; ++y) {
+            const auto *row2 =
+                pixels + static_cast<ptrdiff_t>(y) * pitchPixels;
+            for(int x = 0; x < width; ++x) {
+                const auto a = (row2[x] >> 24) & 0xFF;
+                if(a > 0 && a < 255) {
+                    ++edgeAlphaBuckets[std::min(static_cast<int>(a) * 16 / 256,
+                                                15)];
+                }
+            }
+        }
         if(auto logger = spdlog::get("plugin")) {
             logger->info(
                 "emote.edge.diag key='{}' {}x{} "
@@ -182,7 +198,8 @@ namespace {
                 "edge(texels/meanRGB)={}/{:.1f},{:.1f},{:.1f} "
                 "opaque(texels/meanRGB)={}/{:.1f},{:.1f},{:.1f} "
                 "authoredRamps(total/hard/1/2/3/4/5/6/7+)= {}/{}/{}/{}/{}/"
-                "{}/{}/{}/{}",
+                "{}/{}/{}/{} edgeAlpha/16={}/{}/{}/{}/{}/{}/{}/{}/"
+                "{}/{}/{}/{}/{}/{}/{}/{}",
                 key, width, height,
                 transparentAll[1], transparentAll[2], transparentAll[3],
                 transparentAll[0], transparentAll[4],
@@ -194,7 +211,14 @@ namespace {
                 safeMean(opaqueB, opaqueCount), rampRows,
                 rampWidthCount[0], rampWidthCount[1], rampWidthCount[2],
                 rampWidthCount[3], rampWidthCount[4], rampWidthCount[5],
-                rampWidthCount[6], rampWidthCount[7]);
+                rampWidthCount[6], rampWidthCount[7],
+                edgeAlphaBuckets[0], edgeAlphaBuckets[1], edgeAlphaBuckets[2],
+                edgeAlphaBuckets[3], edgeAlphaBuckets[4], edgeAlphaBuckets[5],
+                edgeAlphaBuckets[6], edgeAlphaBuckets[7], edgeAlphaBuckets[8],
+                edgeAlphaBuckets[9], edgeAlphaBuckets[10],
+                edgeAlphaBuckets[11], edgeAlphaBuckets[12],
+                edgeAlphaBuckets[13], edgeAlphaBuckets[14],
+                edgeAlphaBuckets[15]);
         }
     }
 

@@ -295,8 +295,31 @@ namespace motion {
                         vn.accumulated.posY + vn.accumulated.posZ * _zFactor;
 
                     // Origin offset (0x6BCB58..0x6BCBA4)
-                    const double totalOX = vn.originX + vn.clipOriginX;
-                    const double totalOY = vn.originY + vn.clipOriginY;
+                    double totalOX = vn.originX + vn.clipOriginX;
+                    double totalOY = vn.originY + vn.clipOriginY;
+                    // KRKR_EMOTE_ORIGIN_FIX=1 (experiment): the authored
+                    // icon/clip origins are geometric centers (w/2, h/2),
+                    // so their per-axis parity follows the icon dimension:
+                    // even-width icons yield an integer totalO, odd-width a
+                    // half-integer one. The mesh/affine rasters subtract a
+                    // fixed −0.5 (pixel-center↔corner conversion) and align
+                    // only when the upstream coordinate is a half-integer,
+                    // so every even-dimension axis lands half a pixel off
+                    // and the silhouette AA ramp widens by ~1px. Snap the
+                    // anchor to the center texel's center (⌊x⌋+0.5) so the
+                    // upstream coordinate is convention-aligned on both
+                    // axes regardless of the icon's dimension parity.
+                    // Forensic→candidate fix; default off keeps the
+                    // unmodified binary behavior for A/B comparison.
+                    static const bool originFix = [] {
+                        const char *env =
+                            std::getenv("KRKR_EMOTE_ORIGIN_FIX");
+                        return env && env[0] != '\0' && env[0] != '0';
+                    }();
+                    if(originFix) {
+                        totalOX = std::floor(totalOX) + 0.5;
+                        totalOY = std::floor(totalOY) + 0.5;
+                    }
                     const double orgX = posX - (m12 * totalOY + totalOX * m11);
                     const double orgY = posY - (totalOY * m22 + totalOX * m21);
                     vn.vertexPosX = orgX;
