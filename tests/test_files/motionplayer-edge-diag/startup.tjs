@@ -160,5 +160,43 @@ for (var i = 0; i < rows.length; i++) {
 }
 
 Debug.message("emote.edge.raster done rows=" + rows.length);
+
+// Translation-invariant sharpness metric: total count of partially
+// transparent pixels over the sampled region. Crisper silhouettes shrink
+// the total AA area; unlike per-scanline ramp widths this does not move
+// when the content shifts by half a pixel.
+var partial = 0;
+var sampled = 0;
+// Recovered-alpha precision histogram: 16 buckets of 16 levels, plus the
+// exact-0 and exact-255 end counts. A quantized composite (4-bit alpha,
+// binary threshold) collapses this to a few buckets; a clean 8-bit chain
+// spreads it.
+var alphaBuckets = [];
+for (var bi = 0; bi < 16; bi++) alphaBuckets[bi] = 0;
+var exactZero = 0;
+var exactFull = 0;
+for (var ys = 0; ys < CANVAS_H; ys += 2) {
+    for (var xs = 0; xs < CANVAS_W; xs += 2) {
+        var pbc = blackCanvas.getMainPixel(xs, ys);
+        var pwc = whiteCanvas.getMainPixel(xs, ys);
+        var a = 1.0 - (((pwc >> 8) & 0xff) - ((pbc >> 8) & 0xff)) / 255.0;
+        if (a > 0.05 && a < 0.95) partial++;
+        if (a <= 0.004) { exactZero++; continue; }
+        if (a >= 0.996) { exactFull++; continue; }
+        var level = Math.floor(a * 16);
+        if (level > 15) level = 15;
+        alphaBuckets[level]++;
+        sampled++;
+    }
+}
+Debug.message("emote.edge.partial partial=" + partial + " sampled=" +
+    sampled);
+Debug.message("emote.edge.alphaHist zero=" + exactZero + " full=" +
+    exactFull + " mid=" + (alphaBuckets[0] + "/" + alphaBuckets[1] + "/" +
+    alphaBuckets[2] + "/" + alphaBuckets[3] + "/" + alphaBuckets[4] + "/" +
+    alphaBuckets[5] + "/" + alphaBuckets[6] + "/" + alphaBuckets[7] + "/" +
+    alphaBuckets[8] + "/" + alphaBuckets[9] + "/" + alphaBuckets[10] + "/" +
+    alphaBuckets[11] + "/" + alphaBuckets[12] + "/" + alphaBuckets[13] + "/" +
+    alphaBuckets[14] + "/" + alphaBuckets[15]));
 pluginSmokePass("edge-diag");
 System.exit(0);
