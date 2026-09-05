@@ -104,7 +104,11 @@ for configuration in debug release; do
       -DYOGHOURT_SURFACE_RELAY_DIR="$relay_dir" \
       -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
-  run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 "${targets[@]}"
+  # plugin-tests keeps the macOS ctest stage on the same unit-test set the
+  # Linux stage already builds (line above in the linux branch). Without it
+  # only whatever binaries happened to exist got discovered, so labelled
+  # suites silently never ran here.
+  run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 plugin-tests "${targets[@]}"
   run_logged "$configuration-ctest" ctest --test-dir "$build_dir" -L plugin --output-on-failure
 
   executable="$build_dir/bin/krkr2/krkr2.app/Contents/MacOS/krkr2"
