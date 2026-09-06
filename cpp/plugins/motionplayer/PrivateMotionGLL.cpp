@@ -608,8 +608,22 @@ namespace {
                     _renderQueueLike_0x6DDBD8);
             beginPrivateMotionGLLStencilLike_0x6DD56C(targetTexture,
                                                       stencilEnabled);
-            const double xOffset = static_cast<double>(x) - 0.5;
-            const double yOffset = static_cast<double>(y) - 0.5;
+            // KRKR_EMOTE_GLL_OFFS_X/Y (experiment): additive delta on the
+            // private-GLL draw offset (shipped convention x−0.5). Runtime
+            // A/B sweep for the sampling phase; unset env keeps the
+            // shipped behavior.
+            static const double gllDeltaX = [] {
+                const char *env = std::getenv("KRKR_EMOTE_GLL_OFFS_X");
+                return env && *env ? std::atof(env) : 0.0;
+            }();
+            static const double gllDeltaY = [] {
+                const char *env = std::getenv("KRKR_EMOTE_GLL_OFFS_Y");
+                return env && *env ? std::atof(env) : 0.0;
+            }();
+            const double xOffset =
+                static_cast<double>(x) - 0.5 + gllDeltaX;
+            const double yOffset =
+                static_cast<double>(y) - 0.5 + gllDeltaY;
 
             for(const auto &item : _renderQueueLike_0x6DDBD8) {
                 auto *sourceTexture =
