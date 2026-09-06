@@ -1347,6 +1347,38 @@ namespace motion {
         // small eye/lash source cells and turns fractional motion into hard
         // one-pixel jumps.
         const auto emoteStretchType = stLinear;
+        // KRKR_EMOTE_LEGACY_RASTER=1 (regression A/B): restore the pre-
+        // 9e28714 axis-aligned leaf shortcut. The current unconditional
+        // sub-pixel affine rasters every meshType=0 leaf at its authored
+        // fractional phase, which softened all silhouette ramps by ~1px
+        // against the Aug-29 runtime (user screenshot baseline). The legacy
+        // path integer-snaps axis-aligned leaves with lround — crisp edges
+        // at the cost of the 1px twitch that 9e28714 set out to fix. Env
+        // default keeps the current behavior.
+        static const bool legacyRaster = [] {
+            const char *env = std::getenv("KRKR_EMOTE_LEGACY_RASTER");
+            return env && env[0] != '\0' && env[0] != '0';
+        }();
+        const auto axisAlignedRectBounds =
+            [](const std::array<float, 8> &corners, float xOffset,
+               float yOffset, tTVPRect &out) -> bool {
+            constexpr float epsilon = 0.02f;
+            if(std::fabs(corners[0] - corners[6]) > epsilon ||
+               std::fabs(corners[2] - corners[4]) > epsilon ||
+               std::fabs(corners[1] - corners[3]) > epsilon ||
+               std::fabs(corners[5] - corners[7]) > epsilon) {
+                return false;
+            }
+            const float left = std::min(corners[0], corners[2]) + xOffset;
+            const float right = std::max(corners[0], corners[2]) + xOffset;
+            const float top = std::min(corners[1], corners[5]) + yOffset;
+            const float bottom = std::max(corners[1], corners[5]) + yOffset;
+            out = { static_cast<int>(std::lround(left)),
+                    static_cast<int>(std::lround(top)),
+                    static_cast<int>(std::lround(right)),
+                    static_cast<int>(std::lround(bottom)) };
+            return out.left < out.right && out.top < out.bottom;
+        };
         auto ensurePrivateOutputLayer =
             [&](tTJSVariant &slot) -> iTJSDispatch2 * {
             iTJSDispatch2 *layerObject =
@@ -1498,6 +1530,15 @@ namespace motion {
             const bool meshAsAffine = item.meshType == 1 &&
                 item.meshDivX <= 2 && item.meshDivY <= 2;
             if(item.meshType == 0 || meshAsAffine) {
+                if(legacyRaster && item.meshType == 0) {
+                    tTVPRect destinationRect;
+                    if(axisAlignedRectBounds(item.localCorners, 0.5f, 0.5f,
+                                             destinationRect)) {
+                        targetLayer->StretchCopy(destinationRect, srcImage,
+                                                 sourceRect, emoteStretchType);
+                        return true;
+                    }
+                }
                 // Affine only.  Stretch takes an integer destination rect, so
                 // an axis-aligned shortcut quantised the sub-pixel sway E-mote
                 // authors per component: axis-aligned parts snapped a whole
@@ -2324,6 +2365,17 @@ namespace motion {
                     const bool meshAsAffine = item.meshType == 1 &&
                         item.meshDivX <= 2 && item.meshDivY <= 2;
                     if(item.meshType == 0 || meshAsAffine) {
+                        if(legacyRaster && item.meshType == 0) {
+                            tTVPRect destinationRect;
+                            if(axisAlignedRectBounds(item.corners, 0.0f, 0.0f,
+                                                     destinationRect)) {
+                                drawTargetLayer->OperateStretch(
+                                    destinationRect, source.bitmap.get(),
+                                    sourceRect, blendMode, opa,
+                                    emoteStretchType);
+                                continue;
+                            }
+                        }
                         // Affine only — see the leaf path above: an integer
                         // OperateStretch rect quantises per-component
                         // sub-pixel motion into visible twitching.
