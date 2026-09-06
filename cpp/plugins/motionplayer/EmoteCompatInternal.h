@@ -198,8 +198,17 @@ namespace motion {
             // meshDivisionRatio（ratio 缩放 authoredDivision）。非 name、
             // 非 unit-bp 驱动。hasUnitBp/unitBpNearIdentity 仅为调用方
             // 兼容保留，不再参与判定。
-            (void)hasUnitBp;
-            (void)unitBpNearIdentity;
+            // KRKR_EMOTE_LEGACY_MESH_DENSITY=1 (regression A/B): restore the
+            // pre-34a0e03 (G01) semantics — authoredDivision hard-capped at
+            // 20 and unit-bp nodes folded to a 2x2 affine grid. The Aug-29
+            // runtime (user crisp-screenshot baseline) ran these semantics;
+            // the current authored-density path is the other prime suspect
+            // for the silhouette jaggy regression. Env default keeps the
+            // current behavior.
+            static const bool legacyDensity = [] {
+                const char *env = std::getenv("KRKR_EMOTE_LEGACY_MESH_DENSITY");
+                return env && env[0] != '\0' && env[0] != '0';
+            }();
             constexpr int kMeshDivHardCap = 50;
 
             const double ratio = (std::isfinite(meshDivisionRatio) &&
@@ -215,8 +224,15 @@ namespace motion {
                 divTotal = kMeshDivHardCap;
             }
 
+            if(legacyDensity && divTotal > 20) {
+                divTotal = 20;
+            }
+
             MeshDivisionPlan plan;
-            plan.useAffineGrid = !keepDeformation;
+            plan.useAffineGrid = !keepDeformation &&
+                (!legacyDensity || !hasUnitBp || unitBpNearIdentity);
+            (void)hasUnitBp;
+            (void)unitBpNearIdentity;
             if(plan.useAffineGrid) {
                 plan.divX = 2;
                 plan.divY = 2;
