@@ -198,5 +198,6 @@ Debug.message("emote.edge.alphaHist zero=" + exactZero + " full=" +
     alphaBuckets[8] + "/" + alphaBuckets[9] + "/" + alphaBuckets[10] + "/" +
     alphaBuckets[11] + "/" + alphaBuckets[12] + "/" + alphaBuckets[13] + "/" +
     alphaBuckets[14] + "/" + alphaBuckets[15]));
+pluginAssertTrue("edge presentation preserves opaque alpha", exactFull > 0);
 pluginSmokePass("edge-diag");
 System.exit(0);

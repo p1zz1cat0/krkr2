@@ -2576,8 +2576,8 @@ namespace motion {
             const tTVPRect scratchRect(
                 0, 0, static_cast<tjs_int>(graphScratchLayer->GetWidth()),
                 static_cast<tjs_int>(graphScratchLayer->GetHeight()));
-            renderLayer->OperateRect(0, 0, graphScratchLayer->GetMainImage(),
-                                     scratchRect, omAlpha, 255);
+            renderLayer->CopyRect(0, 0, graphScratchLayer->GetMainImage(),
+                                  nullptr, scratchRect);
             if(renderProfileEnabled) {
                 presentationCopyMs =
                     std::chrono::duration<double, std::milli>(
