@@ -123,6 +123,22 @@ player.clear(a01clearLayer, 0xFF00FF00);
 pluginAssertEqual("A01 clear fills the layer with the neutral color",
     0x00FF00, a01clearLayer.getMainPixel(16, 12));
 
+var a01clearWindow = new Window();
+var a01clearRoot = new Layer(a01clearWindow, null);
+a01clearRoot.setImageSize(320, 240);
+a01clearRoot.setSize(320, 240);
+a01clearRoot.visible = true;
+var a01clearTarget = new Layer(a01clearWindow, a01clearRoot);
+a01clearTarget.setImageSize(320, 240);
+a01clearTarget.setSize(320, 240);
+a01clearTarget.type = ltBinder;
+a01clearTarget.visible = true;
+var a01clearAdaptor = new Motion.SeparateLayerAdaptor(a01clearTarget);
+a01clearAdaptor.targetLayer = a01clearTarget;
+player.progress(0);
+player.draw(a01clearAdaptor);
+player.clear(a01clearAdaptor, 0xFF00FF00);
+
 var eye0 = player.getVariable("face_eye_open");
 player.progress(0);
 pluginAssertEqual("zero dt eye republish", eye0,

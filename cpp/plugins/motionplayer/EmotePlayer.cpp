@@ -15,6 +15,7 @@
 #include "LayerIntf.h"
 #include "common/PluginSafety.h"
 #include "PlayerInternal.h"
+#include "PrivateMotionGLL.h"
 #include "RuntimeSupport.h"
 #include "SeparateLayerAdaptor.h"
 #include "ncbind.hpp"
@@ -1097,8 +1098,8 @@ namespace motion {
 
     void EmotePlayer::clear(tTJSVariant layer, tjs_uint32 neutralColor) {
         // REF emoteplayerclass.cpp:470：参数可以是 SeparateLayerAdaptor
-        // （取其 owner layer）或裸 Layer；两者都解析不到时 REF 静默 return，
-        // 这里以 warn 记录同一行为。
+        // （清其 private render target）或裸 Layer；两者都解析不到时 REF
+        // 静默 return，这里以 warn 记录同一行为。
         iTJSDispatch2 *obj = layer.Type() == tvtObject
             ? layer.AsObjectNoAddRef()
             : nullptr;
@@ -1107,29 +1108,50 @@ namespace motion {
                          "nothing filled");
             return;
         }
+        const auto closure = layer.AsObjectClosureNoAddRef();
+        iTJSDispatch2 *target = closure.ObjThis
+            ? closure.ObjThis
+            : (closure.Object ? closure.Object : obj);
         tTJSNI_BaseLayer *native = nullptr;
         if(auto *adaptor =
                ncbInstanceAdaptor<SeparateLayerAdaptor>::GetNativeInstance(
-                   obj, false)) {
-            iTJSDispatch2 *owner = adaptor->getOwner();
-            if(owner != nullptr &&
-               TJS_SUCCEEDED(owner->NativeInstanceSupport(
+                   target, false)) {
+            iTJSDispatch2 *privateTarget =
+                adaptor->getPrivateRenderTargetObject();
+            if(privateTarget == nullptr) {
+                return;
+            }
+            if(auto *privateLayer =
+                   resolvePrivateMotionGLLNativeLike_0x6DE24C(privateTarget)) {
+                const auto width =
+                    static_cast<tjs_int>(privateLayer->GetWidth());
+                const auto height =
+                    static_cast<tjs_int>(privateLayer->GetHeight());
+                if(width > 0 && height > 0) {
+                    privateLayer->FillRect(tTVPRect(0, 0, width, height),
+                                           neutralColor);
+                    privateLayer->Update(false);
+                }
+                return;
+            }
+            if(TJS_SUCCEEDED(privateTarget->NativeInstanceSupport(
                    TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
                    reinterpret_cast<iTJSNativeInstance **>(&native))) &&
                native != nullptr) {
-                if(fillLayerColorLike_REF(owner, native, neutralColor)) {
+                if(fillLayerColorLike_REF(privateTarget, native,
+                                          neutralColor)) {
                     return;
                 }
             }
             native = nullptr;
         }
-        if(TJS_SUCCEEDED(obj->NativeInstanceSupport(
-               TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
-               reinterpret_cast<iTJSNativeInstance **>(&native))) &&
-           native != nullptr) {
-            if(fillLayerColorLike_REF(obj, native, neutralColor)) {
-                return;
-            }
+        if(target != nullptr &&
+           TJS_SUCCEEDED(target->NativeInstanceSupport(
+                   TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
+                   reinterpret_cast<iTJSNativeInstance **>(&native))) &&
+           native != nullptr &&
+           fillLayerColorLike_REF(target, native, neutralColor)) {
+            return;
         }
         LOGGER->warn("EmotePlayer::clear: argument carries no "
                      "tTJSNI_BaseLayer; nothing filled");

@@ -20,7 +20,7 @@ log_dir="$(mktemp -d "${TMPDIR:-/tmp}/krkr-plugin-smoke.XXXXXX")" || exit 70
 stdout_log="$log_dir/stdout.log"
 stderr_log="$log_dir/stderr.log"
 combined_log="$log_dir/combined.log"
-failure_pattern='PLUGIN_ASSERT_FAIL|script exception|An exception occurred|Member .* does not exist|cannot load (plugin|module)|Segmentation fault|Abort trap|\[critical\]|\[fatal\]'
+failure_pattern='PLUGIN_ASSERT_FAIL|script exception|An exception occurred|Member .* does not exist|cannot load (plugin|module)|EmotePlayer::clear: argument carries no tTJSNI_BaseLayer|Segmentation fault|Abort trap|\[critical\]|\[fatal\]'
 
 print "smoke_executable=$executable"
 print "smoke_fixture=$fixture"
