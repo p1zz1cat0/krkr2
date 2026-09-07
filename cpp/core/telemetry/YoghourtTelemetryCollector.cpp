@@ -1,0 +1,296 @@
+#include "YoghourtTelemetryCollector.h"
+
+#include "YoghourtTelemetryClock.h"
+
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+
+namespace yoghourt_telemetry {
+
+void StdoutOutputSink::writeLine(const char *data, size_t size) {
+    // One stdio call per line: stdio is internally locked per call on
+    // Apple/Linux, so a telemetry line never interleaves with the runtime's
+    // other stdout writers mid-line.
+    std::fwrite(data, 1, size, stdout);
+    std::fflush(stdout);
+}
+
+TelemetryCollector::TelemetryCollector(const char *sessionID, std::unique_ptr<OutputSink> sink, uint64_t (*clockOverride)())
+    : queue_(), ring_(), detector_(), encoder_(sessionID), sink_(std::move(sink)), clockOverride_(clockOverride) {
+    TelemetryRecord start;
+    start.kind = RecordKind::lifecycle;
+    start.monotonicNs = nowNs();
+    std::snprintf(start.eventType, sizeof(start.eventType), "%s", "collector_start");
+    emitRecord(start);
+
+    worker_ = std::thread(&TelemetryCollector::workerLoop, this);
+}
+
+TelemetryCollector::~TelemetryCollector() {
+    if (!shutdownCalled_.load(std::memory_order_acquire)) {
+        shutdown(kShutdownDrainTimeoutMs);
+    }
+}
+
+void TelemetryCollector::emitRecord(const TelemetryRecord &record) {
+    queue_.push(record);
+    {
+        std::lock_guard<std::mutex> lock(wakeMutex_);
+        wakeCv_.notify_one();
+    }
+}
+
+void TelemetryCollector::workerLoop() {
+    TelemetryRecord record;
+    for (;;) {
+        for (;;) {
+            if (!queue_.pop(record)) break;
+            const uint64_t sequence = sequence_.fetch_add(1, std::memory_order_relaxed) + 1;
+            const std::string line = encoder_.encode(sequence, record);
+            sink_->writeLine(line.data(), line.size());
+            linesEmitted_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (stopped_.load(std::memory_order_acquire)) {
+            // Final bounded drain: records already enqueued (including the
+            // runtime_exit lifecycle record) leave before the worker exits.
+            // A completion callback that races past its stopped check may
+            // still land one record here; it is bounded, never blocks, and
+            // the process is exiting.
+            while (queue_.pop(record)) {
+                const uint64_t sequence = sequence_.fetch_add(1, std::memory_order_relaxed) + 1;
+                const std::string line = encoder_.encode(sequence, record);
+                sink_->writeLine(line.data(), line.size());
+                linesEmitted_.fetch_add(1, std::memory_order_relaxed);
+            }
+            workerExited_.store(true, std::memory_order_release);
+            return;
+        }
+        std::unique_lock<std::mutex> lock(wakeMutex_);
+        wakeCv_.wait_for(lock, std::chrono::milliseconds(2));
+    }
+}
+
+uint64_t TelemetryCollector::onFrameSubmitted() {
+    if (stopped_.load(std::memory_order_acquire)) return 0;
+    const uint64_t now = nowNs();
+    const uint64_t index = nextFrameIndex_++;
+    double intervalMs = 0.0;
+    const bool hasInterval = lastSubmitNs_ != 0;
+    if (hasInterval) intervalMs = static_cast<double>(now - lastSubmitNs_) / 1e6;
+    lastSubmitNs_ = now;
+
+    const auto verdict = detector_.onFrame(index, hasInterval, intervalMs, now);
+
+    FrameSample sample;
+    sample.frameIndex = index;
+    sample.monotonicNs = now;
+    sample.engineIntervalMs = intervalMs;
+    sample.hasInterval = hasInterval && !verdict.discontinuity;
+    sample.telemetryDropped = queue_.normalDropped();
+    sample.criticalTelemetryDropped = queue_.criticalDropped();
+    ring_.write(sample);
+
+    if (verdict.anomaly || verdict.burst) {
+        ring_.setReason(index, verdict.burst ? kFrameReasonBurst : kFrameReasonAnomaly);
+    }
+    if (verdict.burst) {
+        emitBurstPrehistory(index, now);
+    }
+    emitPeriodic(now);
+    return index;
+}
+
+void TelemetryCollector::onFramePresented(uint64_t frameIndex) {
+    if (frameIndex == 0 || stopped_.load(std::memory_order_acquire)) return;
+    ring_.markPresented(frameIndex);
+}
+
+void TelemetryCollector::onFrameCompleted(uint64_t frameIndex, uint64_t gpuDurationNs, bool succeeded) {
+    if (frameIndex == 0 || stopped_.load(std::memory_order_acquire)) return;
+    const double gpuMs = static_cast<double>(gpuDurationNs) / 1e6;
+    FrameSample sample;
+    if (!ring_.completeGpu(frameIndex, gpuMs, succeeded, sample)) {
+        // The slot was overwritten before completion arrived: severe signal
+        // (GPU stall / queue overrun), never silently attached elsewhere.
+        warnGpuLateOnce();
+        return;
+    }
+    // Lagged streaming: emit the previous frame's final sample now that its
+    // presented flag has had a vsync to settle. The current frame streams on
+    // the next completion (or at shutdown); a never-completing frame stays
+    // unstreamed and the host marks the frameIndex gap as incomplete.
+    if (frameIndex > 1) {
+        tryStreamFrame(frameIndex - 1);
+    }
+}
+
+void TelemetryCollector::tryStreamFrame(uint64_t frameIndex) {
+    FrameSample sample;
+    if (!ring_.takeForStreaming(frameIndex, sample)) return;
+    TelemetryRecord record;
+    record.kind = RecordKind::frame;
+    record.monotonicNs = sample.monotonicNs;
+    record.frame = sample;
+    emitRecord(record);
+}
+
+void TelemetryCollector::onOutputRebuild(uint32_t oldWidth, uint32_t oldHeight, uint32_t newWidth, uint32_t newHeight) {
+    if (stopped_.load(std::memory_order_acquire)) return;
+    detector_.reset();
+    TelemetryRecord record;
+    record.kind = RecordKind::event;
+    record.monotonicNs = nowNs();
+    std::snprintf(record.eventType, sizeof(record.eventType), "%s", "resolution_change");
+    std::snprintf(record.detail, sizeof(record.detail), "%ux%u->%ux%u", oldWidth, oldHeight, newWidth, newHeight);
+    emitRecord(record);
+}
+
+void TelemetryCollector::onPipelineFailure(const char *reason) {
+    if (stopped_.load(std::memory_order_acquire)) return;
+    TelemetryRecord record;
+    record.kind = RecordKind::event;
+    record.monotonicNs = nowNs();
+    std::snprintf(record.eventType, sizeof(record.eventType), "%s", "pipeline_failure");
+    if (reason) std::snprintf(record.detail, sizeof(record.detail), "%s", reason);
+    emitRecord(record);
+}
+
+void TelemetryCollector::onRingBusyDrop() {
+    if (stopped_.load(std::memory_order_acquire)) return;
+    const uint64_t now = nowNs();
+    ++coalescedRingBusyDrops_;
+    if (lastRingBusyEventNs_ != 0 && now - lastRingBusyEventNs_ < kRingBusyDropCoalesceMs * 1000000ull) {
+        return;
+    }
+    lastRingBusyEventNs_ = now;
+    TelemetryRecord record;
+    record.kind = RecordKind::event;
+    record.monotonicNs = now;
+    std::snprintf(record.eventType, sizeof(record.eventType), "%s", "ring_busy_drop");
+    record.aux = coalescedRingBusyDrops_;
+    coalescedRingBusyDrops_ = 0;
+    emitRecord(record);
+}
+
+void TelemetryCollector::emitPeriodic(uint64_t nowNs) {
+    const uint64_t snapshotStep = kSnapshotIntervalMs * 1000000ull;
+    const uint64_t aggregateStep = kAggregateIntervalMs * 1000000ull;
+    const bool snapshotDue = lastSnapshotNs_ == 0 || nowNs - lastSnapshotNs_ >= snapshotStep;
+    const bool aggregateDue = lastAggregateNs_ == 0 || nowNs - lastAggregateNs_ >= aggregateStep;
+    if (!snapshotDue && !aggregateDue) return;
+
+    const auto intervalStats = detector_.window();
+    const auto gpuStats = ring_.gpuWindow();
+
+    const auto fill = [&](TelemetryRecord &record) {
+        record.monotonicNs = nowNs;
+        record.stats.fps = intervalStats.fps;
+        record.stats.intervalCount = intervalStats.count;
+        record.stats.intervalP50Ms = intervalStats.p50Ms;
+        record.stats.intervalP99Ms = intervalStats.p99Ms;
+        record.stats.intervalMaxMs = intervalStats.maxMs;
+        record.stats.gpuCount = gpuStats.count;
+        record.stats.gpuP50Ms = gpuStats.p50Ms;
+        record.stats.gpuP99Ms = gpuStats.p99Ms;
+        record.stats.gpuMaxMs = gpuStats.maxMs;
+        record.stats.lastGpuFrameMs = gpuStats.lastMs;
+        record.stats.gpuTimingLateDrop = ring_.gpuTimingLateDrop();
+        record.stats.telemetryDropped = queue_.normalDropped();
+        record.stats.criticalTelemetryDropped = queue_.criticalDropped();
+    };
+
+    if (snapshotDue) {
+        TelemetryRecord record;
+        record.kind = RecordKind::snapshot;
+        fill(record);
+        emitRecord(record);
+        lastSnapshotNs_ = nowNs;
+    }
+    if (aggregateDue) {
+        TelemetryRecord record;
+        record.kind = RecordKind::aggregate;
+        fill(record);
+        emitRecord(record);
+        lastAggregateNs_ = nowNs;
+    }
+}
+
+void TelemetryCollector::emitBurstPrehistory(uint64_t triggerIndex, uint64_t nowNs) {
+    const uint64_t lower = triggerIndex > kBurstPrehistoryFrames ? triggerIndex - kBurstPrehistoryFrames : 1;
+    uint64_t missing = 0;
+    for (uint64_t index = lower; index < triggerIndex; ++index) {
+        FrameSample sample;
+        if (ring_.takeForBurst(index, sample)) {
+            sample.reason = kFrameReasonBurst;
+            TelemetryRecord record;
+            record.kind = RecordKind::frame;
+            record.monotonicNs = sample.monotonicNs;
+            record.frame = sample;
+            emitRecord(record);
+        } else {
+            ++missing;
+        }
+    }
+
+    // The trigger frame is deliberately NOT taken here: it streams from the
+    // next completion with its GPU time backfilled (a hang that never
+    // completes leaves a frameIndex gap the host reports as incomplete).
+    // The pending future range [T+1, T+299] is filled by ordinary lagged
+    // completion records. The host closes the burst and writes the final
+    // metadata (target/new/duplicate/pending/truncated).
+    TelemetryRecord record;
+    record.kind = RecordKind::burst;
+    record.monotonicNs = nowNs;
+    std::snprintf(record.eventType, sizeof(record.eventType), "%s", "frame_drop_burst");
+    record.startFrameIndex = lower;
+    record.endFrameIndex = triggerIndex + kBurstPendingFutureFrames;
+    record.aux = missing;
+    emitRecord(record);
+}
+
+void TelemetryCollector::warnGpuLateOnce() {
+    if (!gpuLateWarned_.exchange(true, std::memory_order_relaxed)) {
+        std::fprintf(stderr,
+                     "[Yoghourt] telemetry: gpu timing backfill late drop (sample overwritten); "
+                     "investigate GPU stall, submission queue, or completion ownership\n");
+    }
+}
+
+void TelemetryCollector::shutdown(uint32_t drainTimeoutMs) {
+    bool expected = false;
+    if (!shutdownCalled_.compare_exchange_strong(expected, true)) return;
+
+    // Stream the trailing frame the lagged completer never got to.
+    tryStreamFrame(nextFrameIndex_ - 1);
+
+    TelemetryRecord exitRecord;
+    exitRecord.kind = RecordKind::lifecycle;
+    exitRecord.monotonicNs = nowNs();
+    std::snprintf(exitRecord.eventType, sizeof(exitRecord.eventType), "%s", "runtime_exit");
+    exitRecord.aux = nextFrameIndex_ - 1;
+    emitRecord(exitRecord);
+
+    stopped_.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(wakeMutex_);
+        wakeCv_.notify_all();
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(drainTimeoutMs);
+    while (!workerExited_.load(std::memory_order_acquire)) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            // Bounded drain exceeded: detach and let the worker finish
+            // best-effort. The host detects the missing in-order runtime_exit
+            // and marks the session telemetry incomplete.
+            worker_.detach();
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    if (worker_.joinable()) {
+        worker_.join();
+    }
+}
+
+} // namespace yoghourt_telemetry

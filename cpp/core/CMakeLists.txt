@@ -18,6 +18,7 @@ add_subdirectory(movie)
 add_subdirectory(sound)
 add_subdirectory(visual)
 add_subdirectory(utils)
+add_subdirectory(telemetry)
 
 find_library(KRKR2_LIBB2_LIBRARY NAMES b2 libb2 REQUIRED)
 
@@ -31,6 +32,7 @@ target_link_libraries(${PROJECT_NAME} INTERFACE
         core_sound_module
         core_visual_module
         core_utils_module
+        core_telemetry_module
         ${KRKR2_LIBB2_LIBRARY}
 )
 

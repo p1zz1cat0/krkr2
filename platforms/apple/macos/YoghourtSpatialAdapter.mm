@@ -5,6 +5,7 @@
 
 #include "YoghourtSpatialAdapter.h"
 #include "YoghourtSpatialPresenter.h"
+#include "YoghourtTelemetryCollector.h"
 #include "IOSurfaceRing.h"
 
 #include <EGL/eglext.h>
@@ -73,6 +74,47 @@ id<MTLDevice> gDevice = nil;
 CAMetalLayer *gOverlayLayer = nil;
 std::unique_ptr<Presenter> gPresenter;
 std::unique_ptr<IOSurfaceRing> gRing;
+
+// Session performance telemetry (YOGHOURT_TELEMETRY=1 only). The collector is
+// intentionally never deleted: Metal completion handlers keep a raw pointer
+// to it and may run until process exit, the same ownership shape as the
+// presenter's async-failure signal. shutdown() below stops its worker with a
+// bounded drain. Telemetry covers the spatial presenter path, so the
+// collector is created on the first frame that reaches the spatial path; with
+// YOGHOURT_SPATIAL_SCALER unset there are no frame samples and the host sees
+// no collector_start record.
+yoghourt_telemetry::TelemetryCollector *gTelemetry = nullptr;
+
+// Bridges the engine-agnostic presenter hook to the KrKr2 collector. Lives
+// for the whole process; gTelemetry may be null while disabled.
+class KrKrTelemetryBridge final : public yoghourt_spatial::FrameTelemetryObserver {
+public:
+    uint64_t onFrameSubmitted() override { return gTelemetry ? gTelemetry->onFrameSubmitted() : 0; }
+    void onFramePresented(uint64_t frameIndex) override {
+        if (gTelemetry) gTelemetry->onFramePresented(frameIndex);
+    }
+    void onFrameCompleted(uint64_t frameIndex, uint64_t gpuDurationNs, bool succeeded) override {
+        if (gTelemetry) gTelemetry->onFrameCompleted(frameIndex, gpuDurationNs, succeeded);
+    }
+    void onOutputRebuild(uint32_t oldWidth, uint32_t oldHeight, uint32_t newWidth, uint32_t newHeight) override {
+        if (gTelemetry) gTelemetry->onOutputRebuild(oldWidth, oldHeight, newWidth, newHeight);
+    }
+    void onPipelineFailure(const char *reason) override {
+        if (gTelemetry) gTelemetry->onPipelineFailure(reason);
+    }
+};
+KrKrTelemetryBridge gTelemetryBridge;
+
+void EnsureTelemetryCollector() {
+    if (gTelemetry) return;
+    const char *flag = std::getenv("YOGHOURT_TELEMETRY");
+    if (!flag || std::strcmp(flag, "1") != 0) return;
+    const char *sessionID = std::getenv("YOGHOURT_SESSION_ID");
+    gTelemetry = new yoghourt_telemetry::TelemetryCollector(
+        sessionID ? sessionID : "",
+        std::make_unique<yoghourt_telemetry::StdoutOutputSink>());
+}
+
 int gPresenterWidth = 0;
 int gPresenterHeight = 0;
 GLuint gProgram = 0;
@@ -140,6 +182,7 @@ void HideOverlay() {
 void MarkFallback(const char *reason) {
     if (!gGenerationDisabled) {
         ++gFallbacks;
+        if (gTelemetry) gTelemetry->onPipelineFailure(reason);
         std::fprintf(stderr, "[Yoghourt] KrKr spatial disabled: %s\n", reason);
     }
     gGenerationDisabled = true;
@@ -347,6 +390,7 @@ bool CreateSharedResources(EGLDisplay display,
     Options options;
     options.scaler = ScalerFromEnvironment();
     options.enableOverlayMask = false;
+    options.telemetryObserver = gTelemetry ? &gTelemetryBridge : nullptr;
     gPresenter = std::make_unique<Presenter>((__bridge void *)gOverlayLayer,
                                              gSource.width,
                                              gSource.height,
@@ -562,6 +606,7 @@ extern "C" bool YoghourtKrKrSpatialPresent(
         HideOverlay();
         return false;
     }
+    EnsureTelemetryCollector();
     if (gGenerationDisabled) {
         const bool generationChanged = display != gDisabledDisplay ||
             context != gDisabledContext || gSource.width != gDisabledWidth ||
@@ -586,6 +631,7 @@ extern "C" bool YoghourtKrKrSpatialPresent(
     if (!slot) {
         ++gDroppedScalingFrames;
         ++gRingSaturations;
+        if (gTelemetry) gTelemetry->onRingBusyDrop();
         LogMetricsIfDue();
         return true;
     }
@@ -644,6 +690,12 @@ extern "C" void YoghourtKrKrSpatialShutdown() {
         gProgram = 0;
     }
     ReleaseResources();
+    // Drain the telemetry worker after the presenter drain so in-flight
+    // completions are accounted for. The collector object itself is never
+    // deleted (see the ownership note at its declaration).
+    if (gTelemetry) {
+        gTelemetry->shutdown(yoghourt_telemetry::TelemetryCollector::kShutdownDrainTimeoutMs);
+    }
     gSource = {};
     gLogged = false;
     gGenerationDisabled = false;
