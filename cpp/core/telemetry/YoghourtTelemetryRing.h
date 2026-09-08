@@ -48,8 +48,10 @@ public:
     // final sample for emission. Streaming with one frame of lag lets the
     // presented flag (which fires at vsync, after GPU completion) settle, so
     // emitted frame rows carry the ring's near-final state. Returns false
-    // when the slot is missing, not completed yet, or already streamed.
-    bool takeForStreaming(uint64_t frameIndex, FrameSample &out);
+    // when the slot is missing, not completed yet, or already streamed. The
+    // shutdown-only allowIncomplete path emits a still-owned sample with an
+    // unavailable GPU value so a final anomaly is not lost on GPU hang.
+    bool takeForStreaming(uint64_t frameIndex, FrameSample &out, bool allowIncomplete = false);
 
     // Render thread (burst prehistory): claims any un-streamed sample for
     // re-emission with a burst reason. Frames already streamed earlier are

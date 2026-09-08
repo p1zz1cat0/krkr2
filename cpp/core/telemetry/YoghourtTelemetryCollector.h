@@ -36,8 +36,8 @@ public:
 // Threading: onFrameSubmitted/onOutputRebuild/onPipelineFailure/onRingBusyDrop
 // run on the render thread; onFramePresented/onFrameCompleted run on Metal's
 // present/completion queues. No hook blocks, formats, or touches files.
-// shutdown() is called once from the runtime shutdown chain with a bounded
-// drain; hooks after it are cheap no-ops. The instance must outlive every
+// shutdown() is called once from the runtime shutdown chain; hooks after it
+// are cheap no-ops. The instance must outlive every
 // in-flight command buffer — in production it is intentionally leaked at
 // process exit (see the adapter), the same ownership shape as the
 // presenter's async-failure signal.
@@ -65,10 +65,10 @@ public:
     // kRingBusyDropCoalesceMs with the suppressed count attached.
     void onRingBusyDrop();
 
-    // Bounded drain: emits the runtime_exit lifecycle record, drains the
-    // queue, and joins the worker within drainTimeoutMs; on timeout the
-    // worker is detached and finishes best-effort (the host marks the
-    // session incomplete because runtime_exit never arrives in order).
+    // Emits runtime_exit, drains the queue, and joins the worker. The timeout
+    // is a diagnostic threshold for a slow sink; the worker is never detached
+    // because it still references this collector and must be joined before
+    // the collector can be destroyed.
     void shutdown(uint32_t drainTimeoutMs);
 
     // Inspection counters (tests and diagnostics).
@@ -84,7 +84,7 @@ private:
     void emitRecord(const TelemetryRecord &record);
     void emitPeriodic(uint64_t nowNs);
     void emitBurstPrehistory(uint64_t triggerIndex, uint64_t nowNs);
-    void tryStreamFrame(uint64_t frameIndex);
+    void tryStreamFrame(uint64_t frameIndex, bool allowIncomplete = false);
     void warnGpuLateOnce();
     uint64_t nowNs() const { return clockOverride_ ? clockOverride_() : MonotonicNs(); }
 
@@ -112,6 +112,10 @@ private:
     uint64_t lastAggregateNs_ = 0;
     uint64_t lastRingBusyEventNs_ = 0;
     uint64_t coalescedRingBusyDrops_ = 0;
+    // Set when a burst opens so future frames in [T, T+299] are streamed;
+    // ordinary frames outside anomaly/burst ranges stay in the runtime ring.
+    std::atomic<uint64_t> activeBurstStartFrame_{0};
+    std::atomic<uint64_t> activeBurstEndFrame_{0};
 };
 
 } // namespace yoghourt_telemetry

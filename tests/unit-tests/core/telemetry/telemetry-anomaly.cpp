@@ -39,12 +39,26 @@ TEST_CASE("interval above 1.5x median is an anomaly after warm-up", "[telemetry]
         now += 16666 * kNs;
         verdict = detector.onFrame(i, i > 1, 16.666, now);
     }
-    REQUIRE_FALSE(verdict.warmup);
+    REQUIRE(verdict.warmup);
     now += 30000 * kNs;
     verdict = detector.onFrame(122, true, 30.0, now);
+    REQUIRE_FALSE(verdict.warmup);
     REQUIRE(verdict.anomaly);
     REQUIRE(verdict.consecutiveAnomalies == 1);
     REQUIRE_FALSE(verdict.burst);
+}
+
+TEST_CASE("the final warm-up interval cannot raise an anomaly", "[telemetry][anomaly]") {
+    AnomalyDetector detector;
+    uint64_t now = 0;
+    for (uint64_t i = 1; i <= 121; ++i) {
+        now += 16'666'000;
+        const bool hasInterval = i > 1;
+        const double interval = i == 121 ? 40.0 : 16.666;
+        const auto verdict = detector.onFrame(i, hasInterval, interval, now);
+        REQUIRE_FALSE(verdict.anomaly);
+        if (hasInterval) REQUIRE(verdict.warmup);
+    }
 }
 
 TEST_CASE("burst triggers on the fifth consecutive anomaly and re-arms after 30 normals", "[telemetry][anomaly]") {

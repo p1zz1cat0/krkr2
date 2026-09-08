@@ -35,10 +35,10 @@ TelemetryCollector::~TelemetryCollector() {
 
 void TelemetryCollector::emitRecord(const TelemetryRecord &record) {
     queue_.push(record);
-    {
-        std::lock_guard<std::mutex> lock(wakeMutex_);
-        wakeCv_.notify_one();
-    }
+    // notify_one() does not require owning the mutex. Avoid taking a render
+    // hook mutex merely to wake the worker; the worker's timed wait also
+    // covers a notify that races with the wait transition.
+    wakeCv_.notify_one();
 }
 
 void TelemetryCollector::workerLoop() {
@@ -52,7 +52,7 @@ void TelemetryCollector::workerLoop() {
             linesEmitted_.fetch_add(1, std::memory_order_relaxed);
         }
         if (stopped_.load(std::memory_order_acquire)) {
-            // Final bounded drain: records already enqueued (including the
+            // Final drain: records already enqueued (including the
             // runtime_exit lifecycle record) leave before the worker exits.
             // A completion callback that races past its stopped check may
             // still land one record here; it is bounded, never blocks, and
@@ -116,18 +116,25 @@ void TelemetryCollector::onFrameCompleted(uint64_t frameIndex, uint64_t gpuDurat
         warnGpuLateOnce();
         return;
     }
-    // Lagged streaming: emit the previous frame's final sample now that its
-    // presented flag has had a vsync to settle. The current frame streams on
-    // the next completion (or at shutdown); a never-completing frame stays
-    // unstreamed and the host marks the frameIndex gap as incomplete.
+    // Lagged streaming: emit only anomaly/burst-range frames. Ordinary
+    // samples remain in the runtime ring and are summarized at 4 Hz; this
+    // keeps the stdout side-channel out of the steady-state frame path.
     if (frameIndex > 1) {
         tryStreamFrame(frameIndex - 1);
     }
+    const uint64_t burstEnd = activeBurstEndFrame_.load(std::memory_order_acquire);
+    if (burstEnd != 0 && frameIndex > burstEnd + 1) {
+        activeBurstEndFrame_.store(0, std::memory_order_release);
+    }
 }
 
-void TelemetryCollector::tryStreamFrame(uint64_t frameIndex) {
+void TelemetryCollector::tryStreamFrame(uint64_t frameIndex, bool allowIncomplete) {
     FrameSample sample;
-    if (!ring_.takeForStreaming(frameIndex, sample)) return;
+    if (!ring_.read(frameIndex, sample)) return;
+    const uint64_t burstEnd = activeBurstEndFrame_.load(std::memory_order_acquire);
+    const bool inBurst = burstEnd != 0 && frameIndex <= burstEnd;
+    if (sample.reason == kFrameReasonNone && !inBurst) return;
+    if (!ring_.takeForStreaming(frameIndex, sample, allowIncomplete)) return;
     TelemetryRecord record;
     record.kind = RecordKind::frame;
     record.monotonicNs = sample.monotonicNs;
@@ -218,35 +225,47 @@ void TelemetryCollector::emitPeriodic(uint64_t nowNs) {
 
 void TelemetryCollector::emitBurstPrehistory(uint64_t triggerIndex, uint64_t nowNs) {
     const uint64_t lower = triggerIndex > kBurstPrehistoryFrames ? triggerIndex - kBurstPrehistoryFrames : 1;
-    uint64_t missing = 0;
+    // The conceptual range is [T-300, T+299]. Frame indices start at 1, so
+    // indices before 1 are unavailable history rather than a writer gap.
+    uint64_t missing = triggerIndex > kBurstPrehistoryFrames
+        ? 0
+        : kBurstPrehistoryFrames - (triggerIndex - 1);
+    // Probe first, then publish the marker before any history rows. The host
+    // must have an open burst before it sees the intentionally duplicated
+    // anomaly rows; otherwise its final duplicate/new counts are incomplete.
     for (uint64_t index = lower; index < triggerIndex; ++index) {
         FrameSample sample;
-        if (ring_.takeForBurst(index, sample)) {
-            sample.reason = kFrameReasonBurst;
-            TelemetryRecord record;
-            record.kind = RecordKind::frame;
-            record.monotonicNs = sample.monotonicNs;
-            record.frame = sample;
-            emitRecord(record);
-        } else {
+        if (!ring_.read(index, sample)) {
             ++missing;
         }
     }
 
-    // The trigger frame is deliberately NOT taken here: it streams from the
-    // next completion with its GPU time backfilled (a hang that never
-    // completes leaves a frameIndex gap the host reports as incomplete).
-    // The pending future range [T+1, T+299] is filled by ordinary lagged
-    // completion records. The host closes the burst and writes the final
-    // metadata (target/new/duplicate/pending/truncated).
     TelemetryRecord record;
     record.kind = RecordKind::burst;
     record.monotonicNs = nowNs;
     std::snprintf(record.eventType, sizeof(record.eventType), "%s", "frame_drop_burst");
     record.startFrameIndex = lower;
     record.endFrameIndex = triggerIndex + kBurstPendingFutureFrames;
+    record.triggerFrameIndex = triggerIndex;
+    record.targetFrameCount = kBurstPrehistoryFrames + 1 + kBurstPendingFutureFrames;
     record.aux = missing;
+    activeBurstStartFrame_.store(lower, std::memory_order_release);
+    activeBurstEndFrame_.store(record.endFrameIndex, std::memory_order_release);
     emitRecord(record);
+
+    for (uint64_t index = lower; index < triggerIndex; ++index) {
+        FrameSample sample;
+        // A frame still in flight is left for its completion callback, which
+        // supplies the final GPU time while the burst remains open.
+        if (ring_.takeForBurst(index, sample)) {
+            sample.reason = kFrameReasonBurst;
+            TelemetryRecord frameRecord;
+            frameRecord.kind = RecordKind::frame;
+            frameRecord.monotonicNs = sample.monotonicNs;
+            frameRecord.frame = sample;
+            emitRecord(frameRecord);
+        }
+    }
 }
 
 void TelemetryCollector::warnGpuLateOnce() {
@@ -261,30 +280,44 @@ void TelemetryCollector::shutdown(uint32_t drainTimeoutMs) {
     bool expected = false;
     if (!shutdownCalled_.compare_exchange_strong(expected, true)) return;
 
-    // Stream the trailing frame the lagged completer never got to.
-    tryStreamFrame(nextFrameIndex_ - 1);
+    // Stream the trailing frame(s) the lagged completer never got to. A
+    // shutdown-only incomplete sample keeps an anomaly visible when a GPU
+    // completion never arrives; its gpuFrameMs remains unavailable.
+    const uint64_t lastFrameIndex = nextFrameIndex_ - 1;
+    const uint64_t burstStart = activeBurstStartFrame_.load(std::memory_order_acquire);
+    const uint64_t burstEnd = activeBurstEndFrame_.load(std::memory_order_acquire);
+    if (burstStart != 0 && burstEnd >= burstStart) {
+        const uint64_t upper = std::min(lastFrameIndex, burstEnd);
+        for (uint64_t index = burstStart; index <= upper; ++index) {
+            tryStreamFrame(index, true);
+        }
+    } else {
+        tryStreamFrame(lastFrameIndex, true);
+    }
 
     TelemetryRecord exitRecord;
     exitRecord.kind = RecordKind::lifecycle;
     exitRecord.monotonicNs = nowNs();
     std::snprintf(exitRecord.eventType, sizeof(exitRecord.eventType), "%s", "runtime_exit");
-    exitRecord.aux = nextFrameIndex_ - 1;
+    exitRecord.aux = lastFrameIndex;
     emitRecord(exitRecord);
 
     stopped_.store(true, std::memory_order_release);
-    {
-        std::lock_guard<std::mutex> lock(wakeMutex_);
-        wakeCv_.notify_all();
-    }
+    wakeCv_.notify_all();
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(drainTimeoutMs);
+    bool drainWarningEmitted = false;
     while (!workerExited_.load(std::memory_order_acquire)) {
-        if (std::chrono::steady_clock::now() >= deadline) {
-            // Bounded drain exceeded: detach and let the worker finish
-            // best-effort. The host detects the missing in-order runtime_exit
-            // and marks the session telemetry incomplete.
-            worker_.detach();
-            return;
+        if (!drainWarningEmitted && std::chrono::steady_clock::now() >= deadline) {
+            // Do not detach: the worker still references this collector. A
+            // detached worker would make stack-owned/test collectors use
+            // after-free, and a leaked production collector would hide the
+            // same ownership bug. The deadline is a diagnostic threshold;
+            // safety requires joining before this object can be destroyed.
+            std::fprintf(stderr,
+                         "[Yoghourt] telemetry: shutdown drain exceeded %u ms; waiting for safe worker join\n",
+                         drainTimeoutMs);
+            drainWarningEmitted = true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }

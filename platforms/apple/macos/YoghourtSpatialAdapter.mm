@@ -78,11 +78,10 @@ std::unique_ptr<IOSurfaceRing> gRing;
 // Session performance telemetry (YOGHOURT_TELEMETRY=1 only). The collector is
 // intentionally never deleted: Metal completion handlers keep a raw pointer
 // to it and may run until process exit, the same ownership shape as the
-// presenter's async-failure signal. shutdown() below stops its worker with a
-// bounded drain. Telemetry covers the spatial presenter path, so the
-// collector is created on the first frame that reaches the spatial path; with
-// YOGHOURT_SPATIAL_SCALER unset there are no frame samples and the host sees
-// no collector_start record.
+// presenter's async-failure signal. shutdown() below stops its worker and
+// joins it safely. The collector is created on the first swap hook; without a
+// spatial scaler it still records frame cadence while leaving native
+// presentation untouched.
 yoghourt_telemetry::TelemetryCollector *gTelemetry = nullptr;
 
 // Bridges the engine-agnostic presenter hook to the KrKr2 collector. Lives
@@ -600,13 +599,28 @@ extern "C" bool YoghourtKrKrSpatialPresent(
     EGLConfig config,
     EGLContext context,
     void *nativeWindow) {
-    if (!IsEnabled() || gSource.name == 0 || gSource.width <= 0 || gSource.height <= 0 ||
+    if (gSource.name == 0 || gSource.width <= 0 || gSource.height <= 0 ||
         display == EGL_NO_DISPLAY || windowSurface == EGL_NO_SURFACE ||
         context == EGL_NO_CONTEXT || !nativeWindow) {
         HideOverlay();
         return false;
     }
     EnsureTelemetryCollector();
+
+    // The swap hook is also the only common frame boundary when spatial
+    // scaling is disabled. Keep interval telemetry without enabling or
+    // changing the native renderer: there is no GPU completion to report on
+    // this branch, so the sample is completed with an unavailable GPU value.
+    if (!IsEnabled()) {
+        if (gTelemetry) {
+            const uint64_t frameIndex = gTelemetry->onFrameSubmitted();
+            if (frameIndex != 0) {
+                gTelemetry->onFrameCompleted(frameIndex, 0, false);
+            }
+        }
+        HideOverlay();
+        return false;
+    }
     if (gGenerationDisabled) {
         const bool generationChanged = display != gDisabledDisplay ||
             context != gDisabledContext || gSource.width != gDisabledWidth ||

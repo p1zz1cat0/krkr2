@@ -123,12 +123,16 @@ TEST_CASE("burst and lifecycle lines carry range fields", "[telemetry][encoder]"
     std::snprintf(burst.eventType, sizeof(burst.eventType), "%s", "frame_drop_burst");
     burst.startFrameIndex = 100;
     burst.endFrameIndex = 699;
+    burst.triggerFrameIndex = 400;
+    burst.targetFrameCount = 600;
     burst.aux = 2;
     TelemetryEncoder encoder("s");
     const std::string line = encoder.encode(1, burst);
     REQUIRE(contains(line, "\"kind\":\"burst\""));
     REQUIRE(contains(line, "\"startFrameIndex\":100"));
     REQUIRE(contains(line, "\"endFrameIndex\":699"));
+    REQUIRE(contains(line, "\"triggerFrameIndex\":400"));
+    REQUIRE(contains(line, "\"targetFrameCount\":600"));
     REQUIRE(contains(line, "\"unavailablePrehistory\":2"));
 
     TelemetryRecord exit;

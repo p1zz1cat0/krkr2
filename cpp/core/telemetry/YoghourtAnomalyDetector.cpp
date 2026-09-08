@@ -20,6 +20,7 @@ void AnomalyDetector::reset() {
     intervalCursor_ = 0;
     warmupRemaining_ = kWarmupIntervals;
     cachedMedianMs_ = 0.0;
+    lastMedianRecomputeNs_ = 0;
     consecutiveAnomalies_ = 0;
     consecutiveNormals_ = 0;
     // armed_ survives: an active burst keeps its re-arm rule across rebuilds.
@@ -71,14 +72,17 @@ AnomalyDetector::Verdict AnomalyDetector::onFrame(uint64_t frameIndex, bool hasI
         return verdict;
     }
 
-    if (warmupRemaining_ > 0) {
+    const bool wasWarmup = warmupRemaining_ > 0;
+    if (wasWarmup) {
         --warmupRemaining_;
     }
 
     pushInterval(intervalMs);
     maybeRecomputeMedian(nowNs);
 
-    const bool warmup = warmupRemaining_ > 0;
+    // The interval that consumes the final warm-up token is still part of
+    // warm-up. An anomaly may only be raised by the following valid interval.
+    const bool warmup = wasWarmup || warmupRemaining_ > 0;
     verdict.warmup = warmup;
 
     const bool anomaly = !warmup && cachedMedianMs_ > 0.0 && intervalMs > cachedMedianMs_ * kAnomalyIntervalFactor;

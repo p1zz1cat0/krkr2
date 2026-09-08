@@ -145,6 +145,8 @@ std::string TelemetryEncoder::encode(uint64_t sequence, const TelemetryRecord &r
         out += "\"burst\"";
         appendUint(out, "startFrameIndex", record.startFrameIndex);
         appendUint(out, "endFrameIndex", record.endFrameIndex);
+        appendUint(out, "triggerFrameIndex", record.triggerFrameIndex);
+        appendUint(out, "targetFrameCount", record.targetFrameCount);
         appendUint(out, "unavailablePrehistory", record.aux);
         break;
     }

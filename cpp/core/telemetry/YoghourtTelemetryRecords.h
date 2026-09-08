@@ -84,6 +84,8 @@ struct TelemetryRecord {
     char detail[80] = {};
     uint64_t startFrameIndex = 0;
     uint64_t endFrameIndex = 0;
+    uint64_t triggerFrameIndex = 0; // burst trigger T
+    uint64_t targetFrameCount = 0;  // requested range, including unavailable history
     uint64_t aux = 0; // e.g. unavailablePrehistory, coalesced event count, lastFrameIndex
 };
 

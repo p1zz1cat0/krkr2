@@ -87,11 +87,11 @@ bool FrameSampleRing::read(uint64_t frameIndex, FrameSample &out) const {
     return true;
 }
 
-bool FrameSampleRing::takeForStreaming(uint64_t frameIndex, FrameSample &out) {
+bool FrameSampleRing::takeForStreaming(uint64_t frameIndex, FrameSample &out, bool allowIncomplete) {
     Slot &slot = slotFor(frameIndex);
     SlotLock lock(slot.guard);
     if (slot.tag.load(std::memory_order_acquire) != frameIndex) return false;
-    if (!slot.completed || slot.streamed) return false;
+    if ((!slot.completed && !allowIncomplete) || slot.streamed) return false;
     slot.streamed = true;
     out = slot.sample;
     return true;
@@ -101,6 +101,10 @@ bool FrameSampleRing::takeForBurst(uint64_t frameIndex, FrameSample &out) {
     Slot &slot = slotFor(frameIndex);
     SlotLock lock(slot.guard);
     if (slot.tag.load(std::memory_order_acquire) != frameIndex) return false;
+    // Do not consume an in-flight frame here. Its completion callback must
+    // still be allowed to backfill GPU time and stream the final sample while
+    // the burst is open.
+    if (!slot.completed) return false;
     slot.streamed = true;
     out = slot.sample;
     return true;

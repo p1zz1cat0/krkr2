@@ -76,7 +76,9 @@ TEST_CASE("collector streams ordered lines with strict sequence and lifecycle re
     collector.shutdown(TelemetryCollector::kShutdownDrainTimeoutMs);
 
     const auto lines = sinkPtr->lines();
-    REQUIRE(countLines(lines, "frame") == 50);
+    // Ordinary steady-state frames stay in the runtime ring; only summaries
+    // and anomaly/burst ranges cross the stdout side-channel.
+    REQUIRE(countLines(lines, "frame") == 0);
     REQUIRE(countLines(lines, "lifecycle") == 2); // collector_start + runtime_exit
 
     // Every line: reserved prefix, envelope, this session's ID.
@@ -91,18 +93,6 @@ TEST_CASE("collector streams ordered lines with strict sequence and lifecycle re
         const uint64_t sequence = extractUint(line, "sequence");
         REQUIRE(sequence == last + 1);
         last = sequence;
-    }
-
-    // Frame rows carry the backfilled GPU time; presented only where set.
-    for (const auto &line : lines) {
-        if (line.find("\"kind\":\"frame\"") == std::string::npos) continue;
-        const uint64_t index = extractUint(line, "frameIndex");
-        REQUIRE(index >= 1);
-        REQUIRE(index <= 50);
-        REQUIRE(line.find("\"gpuFrameMs\":4.000") != std::string::npos);
-        if (index % 2 == 0) {
-            REQUIRE(line.find("\"presented\":true") != std::string::npos);
-        }
     }
 
     REQUIRE(collector.stopped());
@@ -149,13 +139,15 @@ TEST_CASE("burst drains prehistory rows and emits the burst record", "[telemetry
     // baseline.
     for (int i = 0; i < 121; ++i) {
         advanceFakeClockMs(17);
-        collector.onFrameSubmitted();
+        const uint64_t index = collector.onFrameSubmitted();
+        collector.onFrameCompleted(index, 4'000'000, true);
     }
     // 5 consecutive anomalies at 2.4x: burst on the fifth.
     uint64_t triggerIndex = 0;
     for (int i = 0; i < 5; ++i) {
         advanceFakeClockMs(40);
         triggerIndex = collector.onFrameSubmitted();
+        collector.onFrameCompleted(triggerIndex, 4'000'000, true);
     }
     REQUIRE(triggerIndex == 126);
     collector.shutdown(TelemetryCollector::kShutdownDrainTimeoutMs);
@@ -163,16 +155,26 @@ TEST_CASE("burst drains prehistory rows and emits the burst record", "[telemetry
     const auto lines = sinkPtr->lines();
     size_t burstRows = 0;
     bool burstRecord = false;
-    for (const auto &line : lines) {
-        if (line.find("\"reason\":\"burst\"") != std::string::npos) ++burstRows;
+    size_t burstMarkerPosition = lines.size();
+    size_t firstBurstFramePosition = lines.size();
+    for (size_t position = 0; position < lines.size(); ++position) {
+        const auto &line = lines[position];
+        if (line.find("\"reason\":\"burst\"") != std::string::npos) {
+            ++burstRows;
+            firstBurstFramePosition = std::min(firstBurstFramePosition, position);
+        }
         if (line.find("\"kind\":\"burst\"") != std::string::npos) {
             burstRecord = true;
+            burstMarkerPosition = std::min(burstMarkerPosition, position);
             REQUIRE(extractUint(line, "startFrameIndex") == 1);
             REQUIRE(extractUint(line, "endFrameIndex") == 126 + 299);
-            REQUIRE(extractUint(line, "unavailablePrehistory") == 0);
+            REQUIRE(extractUint(line, "triggerFrameIndex") == 126);
+            REQUIRE(extractUint(line, "targetFrameCount") == 600);
+            REQUIRE(extractUint(line, "unavailablePrehistory") == 175);
         }
     }
     REQUIRE(burstRecord);
+    REQUIRE(burstMarkerPosition < firstBurstFramePosition);
     // Prehistory [1, 125] drained from the ring; the trigger frame itself
     // streams from its completion.
     REQUIRE(burstRows >= 125);
