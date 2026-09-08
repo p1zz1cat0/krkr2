@@ -85,15 +85,6 @@ namespace motion {
                 }
             }
             if(!snapshot) {
-                static const bool motionTrace = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_MOTION_TRACE");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(motionTrace && LOGGER) {
-                    LOGGER->info(
-                        "emote.motion.site=onFindMotion name='{}' chara='{}'",
-                        detail::narrow(name), charaRaw);
-                }
                 snapshot =
                     resolveMotion(*_runtime, name, &_resourceManagerNative);
             }

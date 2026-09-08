@@ -8,8 +8,6 @@
 #include "ThreadIntf.h"
 
 #include <cmath>
-#include <cstdlib>
-#include <limits>
 
 using namespace motion::internal;
 
@@ -532,29 +530,9 @@ namespace motion::internal::render_detail {
             (lowNibble == 0u || lowNibble > 5u);
     }
 
-    float emoteDrawOffsetX(float fallback) {
-        static const float overrideValue = [] {
-            const char *env = std::getenv("KRKR_EMOTE_MESH_OFFS_X");
-            return env && *env ? std::atof(env)
-                               : std::numeric_limits<float>::quiet_NaN();
-        }();
-        return std::isnan(overrideValue) ? fallback : overrideValue;
-    }
-
-    float emoteDrawOffsetY(float fallback) {
-        static const float overrideValue = [] {
-            const char *env = std::getenv("KRKR_EMOTE_MESH_OFFS_Y");
-            return env && *env ? std::atof(env)
-                               : std::numeric_limits<float>::quiet_NaN();
-        }();
-        return std::isnan(overrideValue) ? fallback : overrideValue;
-    }
-
     std::array<tTVPPointD, 3>
     buildAffineTrianglePoints(const std::array<float, 8> &corners,
                               float xOffset, float yOffset) {
-        xOffset = emoteDrawOffsetX(xOffset);
-        yOffset = emoteDrawOffsetY(yOffset);
         return { {
             { static_cast<double>(corners[0] + xOffset),
               static_cast<double>(corners[1] + yOffset) },
@@ -567,8 +545,6 @@ namespace motion::internal::render_detail {
 
     std::vector<tTVPPointD> buildMeshPoints(const std::vector<float> &points,
                                             float xOffset, float yOffset) {
-        xOffset = emoteDrawOffsetX(xOffset);
-        yOffset = emoteDrawOffsetY(yOffset);
         std::vector<tTVPPointD> result;
         result.reserve(points.size() / 2u);
         for(size_t i = 0; i + 1 < points.size(); i += 2) {

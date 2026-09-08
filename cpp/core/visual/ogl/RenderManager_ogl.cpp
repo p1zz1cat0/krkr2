@@ -4726,22 +4726,6 @@ public:
             pttar[i * 2 + 1] =
                 (((GLfloat)_pttar[i].y - rct) / rch - 0.5f) * 2.f;
         }
-        {
-            static const bool triLog = [] {
-                const char *env = std::getenv("KRKR_EMOTE_TRI_LOG");
-                return env && env[0] != '\0' && env[0] != '0';
-            }();
-            static std::atomic<unsigned> triCalls{ 0 };
-            if(triLog && triCalls.fetch_add(1) < 24) {
-                std::fprintf(
-                    stderr,
-                    "emote.tri.log call=%u pt0=(%.2f,%.2f) pt1=(%.2f,%.2f) "
-                    "clip=[%d,%d,%d,%d] ntri=%d\n",
-                    triCalls.load(), _pttar[0].x, _pttar[0].y, _pttar[1].x,
-                    _pttar[1].y, rcclip.left, rcclip.top, rcclip.right,
-                    rcclip.bottom, nTriangles);
-            }
-        }
         rcw *= tar->_scaleW;
         rch *= tar->_scaleH;
         rcl *= tar->_scaleW;

@@ -1,16 +1,12 @@
 // PlayerRenderExecute.cpp — render command build and execution
 // Split from PlayerRender.cpp for maintainability.
 //
-#include <atomic>
-
 #include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
 #include "SourceCache.h"
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
-#include <cstdlib>
 #include <exception>
 #include <unordered_set>
 
@@ -212,16 +208,8 @@ namespace motion {
 
     namespace {
         // The legacy per-part accurate-SLA path has been removed, so E-mote
-        // must use the REF render-command graph by default. Set
-        // KRKR_EMOTE_COMMAND_GRAPH=0 only for an explicit diagnostic rollback.
-        const bool kRenderCommandGraphEnabled = [] {
-            const char *env = std::getenv("KRKR_EMOTE_COMMAND_GRAPH");
-            return !(env && env[0] != '\0' && env[0] == '0');
-        }();
-        const bool kRenderCommandGraphDiag = [] {
-            const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
-            return env && env[0] != '\0' && env[0] != '0';
-        }();
+        // always uses the REF render-command graph.
+        constexpr bool kRenderCommandGraphEnabled = true;
 
         // REF renderReuseHashCombine + renderCommandLeafReuseSignature
         // (PlayerRender.cpp 274-454). Exact float hashes are intentional:
@@ -347,7 +335,6 @@ namespace motion {
         _runtime->preparedRenderItemsGroup.clear();
         RenderClipRect clipScratch;
         std::string clipReasonScratch;
-        std::array<size_t, 5> cmdGraphGateRejects{};
         const auto localRenderScopeId =
             static_cast<const void *>(_runtime.get());
 
@@ -407,39 +394,6 @@ namespace motion {
         // not ported). Zero-opacity authored mask sources stay alive through
         // the stencilMaskReferenced escape in that gate.
         for(auto &entry : _runtime->preparedRenderItems) {
-            if(kRenderCommandGraphDiag) {
-                if(!entry.drawFlag) {
-                    ++cmdGraphGateRejects[0];
-                } else if(entry.skipFlag0) {
-                    ++cmdGraphGateRejects[1];
-                } else if(_preview && entry.skipFlag1) {
-                    ++cmdGraphGateRejects[2];
-                } else if(entry.opacity <= 0 &&
-                          !entry.stencilMaskReferenced) {
-                    ++cmdGraphGateRejects[3];
-                } else if(!entry.rawFlag21) {
-                    ++cmdGraphGateRejects[4];
-                    if(kRenderCommandGraphDiag) {
-                        if(auto logger = LOGGER) {
-                            logger->warn(
-                                "emote.cmdgraph.noclip player={} "
-                                "nodeIndex={} groupOnly={} "
-                                "paintBox=[{:.1f},{:.1f},{:.1f},{:.1f}] "
-                                "viewport={} visAnc={} scope={} scopedIdx={}",
-                                static_cast<const void *>(this),
-                                entry.nodeIndex, entry.groupOnly ? 1 : 0,
-                                entry.paintBox[0], entry.paintBox[1],
-                                entry.paintBox[2], entry.paintBox[3],
-                                entry.hasViewport ? 1 : 0,
-                                entry.visibleAncestorIndex,
-                                entry.renderScopeId == localRenderScopeId
-                                    ? "local"
-                                    : "foreign",
-                                entry.scopedNodeIndex);
-                        }
-                    }
-                }
-            }
             // skipFlag1 mirrors the executor's preview-only consumption
             // (sub_6C7440 gates item+18 behind the preview flag); rejecting
             // on it unconditionally would drop every non-priorDraw item in
@@ -464,7 +418,6 @@ namespace motion {
                 const bool maskWrapperRoot =
                     entry.groupOnly && entry.stencilMaskReferenced;
                 if(!authorMaskedGroup && !maskWrapperRoot) {
-                    ++cmdGraphGateRejects[4];
                     continue;
                 }
             }
@@ -794,15 +747,6 @@ namespace motion {
                 }
                 if(commands[ci].renderScopeId == ownerScope &&
                    subtreeNodes.count(commands[ci].scopedNodeIndex) != 0) {
-                    if(kRenderCommandGraphDiag) {
-                        if(auto logger = LOGGER) {
-                            logger->warn(
-                                "emote.cmdgraph.subtreehit wrapper={} "
-                                "descendants={} command={} scopedIdx={}",
-                                scopedNodeIndex, subtreeNodes.size(), ci,
-                                commands[ci].scopedNodeIndex);
-                        }
-                    }
                     return ci;
                 }
             }
@@ -886,16 +830,6 @@ namespace motion {
                 }
                 commands[ci].hasRenderParent = true;
             }
-            if(kRenderCommandGraphDiag) {
-                if(auto logger = LOGGER) {
-                    logger->warn(
-                        "emote.cmdgraph.wrapperExpand wrapper={} "
-                        "subtreeNodes={} group={} children={}",
-                        scopedNodeIndex, subtreeNodes.size(),
-                        groupCommand.nodeIndex,
-                        groupCommand.childCommandIndices.size());
-                }
-            }
         };
         for(size_t gi = 0; gi < commands.size(); ++gi) {
             auto &command = commands[gi];
@@ -963,19 +897,6 @@ namespace motion {
                                .nodeType != 3) {
                         command.emptyAuthoredMask = true;
                     }
-                    if(kRenderCommandGraphDiag) {
-                        if(auto logger = LOGGER) {
-                            logger->warn(
-                                "emote.cmdgraph.maskbind.fail group={} "
-                                "groupScoped={} inputNode={} inputScope={} "
-                                "groupScope={} player={}",
-                                command.nodeIndex, command.scopedNodeIndex,
-                                input.first,
-                                static_cast<const void *>(input.second),
-                                command.renderScopeId,
-                                static_cast<const void *>(this));
-                        }
-                    }
                     ++maskBindFailCount;
                     continue;
                 }
@@ -1024,20 +945,6 @@ namespace motion {
             }
             for(auto *mask : command.item->stencilMaskItems) {
                 appendPreparedEdge(mask, true);
-            }
-            if(kRenderCommandGraphDiag && command.groupOnly &&
-               (command.nodeIndex == 6 || command.nodeIndex == 16 ||
-                command.nodeIndex == 24)) {
-                if(auto logger = LOGGER) {
-                    logger->warn(
-                        "emote.cmdgraph.edges node={} children={} masks={} "
-                        "rawFlag21={} visibleAncestor={} scope={}",
-                        command.nodeIndex, command.childCommandIndices.size(),
-                        command.stencilMaskCommandIndices.size(),
-                        command.item->rawFlag21 ? 1 : 0,
-                        command.item->visibleAncestorIndex,
-                        command.renderScopeId);
-                }
             }
         }
 
@@ -1100,24 +1007,6 @@ namespace motion {
                 groupItem->rawFlag21 = true;
             }
         }
-        if(kRenderCommandGraphDiag && LOGGER) {
-            for(const auto &command : commands) {
-                if(!command.groupOnly ||
-                   !(command.nodeIndex == 6 || command.nodeIndex == 16 ||
-                     command.nodeIndex == 24)) {
-                    continue;
-                }
-                LOGGER->warn(
-                    "emote.cmdgraph.geometry node={} rawFlag21={} "
-                    "clip=[{},{},{},{}] children={} masks={}",
-                    command.nodeIndex, command.item->rawFlag21 ? 1 : 0,
-                    command.item->clipRect[0], command.item->clipRect[1],
-                    command.item->clipRect[2], command.item->clipRect[3],
-                    command.childCommandIndices.size(),
-                    command.stencilMaskCommandIndices.size());
-            }
-        }
-
         // Pass 6 — projection onto the PreparedRenderItem pointer channels
         // (parentItem/childItems/stencilMaskItems) that the proven executor
         // consumes. Legacy relationships produced by the prepare post-pass
@@ -1173,20 +1062,6 @@ namespace motion {
             canvasWidth, canvasHeight,
             _runtime->preparedRenderItems.size(), commands.size(),
             parentedCommands, maskWiredCount, maskBindFailCount);
-        if(kRenderCommandGraphDiag) {
-            if(auto logger = LOGGER) {
-                logger->warn(
-                    "emote.cmdgraph.count player={} items={} commands={} "
-                    "parented={} maskWired={} maskBindFail={} "
-                    "rejects[noDraw,skip0,skip1,opa0,noClip]={},{},{},{},{}",
-                    static_cast<const void *>(this),
-                    _runtime->preparedRenderItems.size(), commands.size(),
-                    parentedCommands, maskWiredCount, maskBindFailCount,
-                    cmdGraphGateRejects[0], cmdGraphGateRejects[1],
-                    cmdGraphGateRejects[2], cmdGraphGateRejects[3],
-                    cmdGraphGateRejects[4]);
-            }
-        }
         const bool ok = !_runtime->preparedRenderItems.empty();
 #if defined(KRKR2_WASMTIME_HEADLESS)
         detail::motionTraceRenderBuildCommandsLeave(
@@ -1206,13 +1081,6 @@ namespace motion {
             this, renderLayerObject, skipUpdate);
 #endif
         const auto motionPath = _runtime->activeMotion->path;
-        const bool renderProfileEnabled = [] {
-            const char *env = std::getenv("KRKR_EMOTE_RENDER_PROFILE");
-            return env && env[0] != '\0' && env[0] != '0';
-        }();
-        const auto executeStart = renderProfileEnabled
-            ? std::chrono::steady_clock::now()
-            : std::chrono::steady_clock::time_point{};
 
         auto *renderLayer = resolveNativeLayer(renderLayerObject);
         if(!renderLayer) {
@@ -1347,38 +1215,6 @@ namespace motion {
         // small eye/lash source cells and turns fractional motion into hard
         // one-pixel jumps.
         const auto emoteStretchType = stLinear;
-        // KRKR_EMOTE_LEGACY_RASTER=1 (regression A/B): restore the pre-
-        // 9e28714 axis-aligned leaf shortcut. The current unconditional
-        // sub-pixel affine rasters every meshType=0 leaf at its authored
-        // fractional phase, which softened all silhouette ramps by ~1px
-        // against the Aug-29 runtime (user screenshot baseline). The legacy
-        // path integer-snaps axis-aligned leaves with lround — crisp edges
-        // at the cost of the 1px twitch that 9e28714 set out to fix. Env
-        // default keeps the current behavior.
-        static const bool legacyRaster = [] {
-            const char *env = std::getenv("KRKR_EMOTE_LEGACY_RASTER");
-            return env && env[0] != '\0' && env[0] != '0';
-        }();
-        const auto axisAlignedRectBounds =
-            [](const std::array<float, 8> &corners, float xOffset,
-               float yOffset, tTVPRect &out) -> bool {
-            constexpr float epsilon = 0.02f;
-            if(std::fabs(corners[0] - corners[6]) > epsilon ||
-               std::fabs(corners[2] - corners[4]) > epsilon ||
-               std::fabs(corners[1] - corners[3]) > epsilon ||
-               std::fabs(corners[5] - corners[7]) > epsilon) {
-                return false;
-            }
-            const float left = std::min(corners[0], corners[2]) + xOffset;
-            const float right = std::max(corners[0], corners[2]) + xOffset;
-            const float top = std::min(corners[1], corners[5]) + yOffset;
-            const float bottom = std::max(corners[1], corners[5]) + yOffset;
-            out = { static_cast<int>(std::lround(left)),
-                    static_cast<int>(std::lround(top)),
-                    static_cast<int>(std::lround(right)),
-                    static_cast<int>(std::lround(bottom)) };
-            return out.left < out.right && out.top < out.bottom;
-        };
         auto ensurePrivateOutputLayer =
             [&](tTJSVariant &slot) -> iTJSDispatch2 * {
             iTJSDispatch2 *layerObject =
@@ -1530,15 +1366,6 @@ namespace motion {
             const bool meshAsAffine = item.meshType == 1 &&
                 item.meshDivX <= 2 && item.meshDivY <= 2;
             if(item.meshType == 0 || meshAsAffine) {
-                if(legacyRaster && item.meshType == 0) {
-                    tTVPRect destinationRect;
-                    if(axisAlignedRectBounds(item.localCorners, 0.5f, 0.5f,
-                                             destinationRect)) {
-                        targetLayer->StretchCopy(destinationRect, srcImage,
-                                                 sourceRect, emoteStretchType);
-                        return true;
-                    }
-                }
                 // Affine only.  Stretch takes an integer destination rect, so
                 // an axis-aligned shortcut quantised the sub-pixel sway E-mote
                 // authors per component: axis-aligned parts snapped a whole
@@ -1770,11 +1597,7 @@ namespace motion {
 
         const bool commandOutputCacheEnabled =
             detail::isEmoteLikeMotion(*_runtime) &&
-            !_runtime->renderCommands.empty() &&
-            [] {
-                const char *env = std::getenv("KRKR_EMOTE_DISABLE_OUTPUT_CACHE");
-                return !(env && env[0] != '\0' && env[0] != '0');
-            }();
+            !_runtime->renderCommands.empty();
         const std::uint64_t commandCacheGeneration = commandOutputCacheEnabled
             ? ++_runtime->emoteCommandOutputCacheGeneration
             : 0;
@@ -2213,50 +2036,8 @@ namespace motion {
         } else {
             executionItems = _runtime->preparedRenderItemsTopLevel;
         }
-        // KRKR_EMOTE_GEOM_DUMP=1: per-draw final world geometry of every
-        // executed item. This is the only way to tell a per-component
-        // oscillation apart from a whole-sprite one: the series for a single
-        // node either alternates between two values every frame or it does
-        // not. Emits one line per executed item per draw; diagnostic only.
-        {
-            static const bool geomDump = [] {
-                const char *env = std::getenv("KRKR_EMOTE_GEOM_DUMP");
-                return env && env[0] != '\0' && env[0] != '0';
-            }();
-            if(geomDump) {
-                static std::atomic<unsigned> drawSerial{ 0 };
-                const unsigned serial = drawSerial.fetch_add(1);
-                for(const auto *dumpItem : executionItems) {
-                    if(!dumpItem) {
-                        continue;
-                    }
-                    LOGGER->warn(
-                        "emote.geomdump draw={} player={} node={} scope={} "
-                        "scoped={} src='{}' x={:.4f} y={:.4f} "
-                        "x2={:.4f} y2={:.4f} mesh={} opa={}",
-                        serial, static_cast<const void *>(this),
-                        dumpItem->nodeIndex,
-                        static_cast<const void *>(dumpItem->renderScopeId),
-                        dumpItem->scopedNodeIndex, dumpItem->sourceKey,
-                        dumpItem->corners[0], dumpItem->corners[1],
-                        dumpItem->corners[4], dumpItem->corners[5],
-                        dumpItem->meshType, dumpItem->opacity);
-                }
-            }
-        }
-        const auto cacheHitsBefore = _runtime->emoteCommandOutputCacheHits;
-        const auto leafCacheHitsBefore =
-            _runtime->emoteCommandLeafCacheHits;
-        std::size_t outputBuilt = 0;
-        std::size_t outputBuildFailed = 0;
-        std::size_t directOutputs = 0;
-        std::size_t bufferedOutputs = 0;
         bool outputCopyException = false;
         auto *drawTargetLayer = graphScratchLayer ? graphScratchLayer : renderLayer;
-        double outputBuildMs = 0.0;
-        double outputCopyMs = 0.0;
-        double outputClipMs = 0.0;
-        double presentationCopyMs = 0.0;
 
         for(auto *itemPtr : executionItems) {
             if(!itemPtr) {
@@ -2283,21 +2064,8 @@ namespace motion {
                 continue;
             }
             RenderClipRect targetLayerClip;
-            const auto itemClipStart = renderProfileEnabled
-                ? std::chrono::steady_clock::now()
-                : std::chrono::steady_clock::time_point{};
             if(!applyTargetLayerClipLike_0x6C7440(item, targetLayerClip)) {
-                if(renderProfileEnabled) {
-                    outputClipMs += std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - itemClipStart)
-                        .count();
-                }
                 continue;
-            }
-            if(renderProfileEnabled) {
-                outputClipMs += std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - itemClipStart)
-                    .count();
             }
             detail::logoChainTraceLogf(
                 motionPath, "execute.setClip", "0x6C7440", _clampedEvalTime,
@@ -2307,36 +2075,10 @@ namespace motion {
             if(_preview && item.skipFlag1) {
                 continue;
             }
-            if(!kRenderCommandGraphEnabled && item.parentItem) {
-                continue;
-            }
-            const auto itemBuildStart = renderProfileEnabled
-                ? std::chrono::steady_clock::now()
-                : std::chrono::steady_clock::time_point{};
             if(!buildItemOutput(buildItemOutput, &item)) {
-                if(renderProfileEnabled) {
-                    outputBuildMs += std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - itemBuildStart)
-                        .count();
-                }
-                ++outputBuildFailed;
                 continue;
-            }
-            if(renderProfileEnabled) {
-                outputBuildMs += std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - itemBuildStart)
-                    .count();
-            }
-            ++outputBuilt;
-            if(item.executedDirect) {
-                ++directOutputs;
-            } else {
-                ++bufferedOutputs;
             }
 
-            const auto itemCopyStart = renderProfileEnabled
-                ? std::chrono::steady_clock::now()
-                : std::chrono::steady_clock::time_point{};
             try {
                 if(item.executedDirect) {
                     auto source = resolveSourceObjectLike_0x6C1B70(item);
@@ -2365,17 +2107,6 @@ namespace motion {
                     const bool meshAsAffine = item.meshType == 1 &&
                         item.meshDivX <= 2 && item.meshDivY <= 2;
                     if(item.meshType == 0 || meshAsAffine) {
-                        if(legacyRaster && item.meshType == 0) {
-                            tTVPRect destinationRect;
-                            if(axisAlignedRectBounds(item.corners, 0.0f, 0.0f,
-                                                     destinationRect)) {
-                                drawTargetLayer->OperateStretch(
-                                    destinationRect, source.bitmap.get(),
-                                    sourceRect, blendMode, opa,
-                                    emoteStretchType);
-                                continue;
-                            }
-                        }
                         // Affine only — see the leaf path above: an integer
                         // OperateStretch rect quantises per-component
                         // sub-pixel motion into visible twitching.
@@ -2527,7 +2258,6 @@ namespace motion {
                 }
             } catch(const eTJS &error) {
                 outputCopyException = true;
-                ++outputBuildFailed;
                 if(LOGGER) {
                     LOGGER->error(
                         "emote.execute copy failed node={} source={} error={}",
@@ -2536,7 +2266,6 @@ namespace motion {
                 }
             } catch(const std::exception &error) {
                 outputCopyException = true;
-                ++outputBuildFailed;
                 if(LOGGER) {
                     LOGGER->error(
                         "emote.execute copy failed node={} source={} error={}",
@@ -2544,29 +2273,17 @@ namespace motion {
                 }
             } catch(...) {
                 outputCopyException = true;
-                ++outputBuildFailed;
                 if(LOGGER) {
                     LOGGER->error(
                         "emote.execute copy failed node={} source={} error=unknown",
                         item.nodeIndex, item.sourceKey);
                 }
             }
-            if(renderProfileEnabled) {
-                outputCopyMs += std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - itemCopyStart)
-                    .count();
-            }
         }
 
         // libkrkr2.so Player_renderToCanvas_guess @ 0x6C8FCC resets the target
         // Layer clip once the top-level render-item walk is complete.
-        const auto finalClipResetStart = renderProfileEnabled
-            ? std::chrono::steady_clock::now()
-            : std::chrono::steady_clock::time_point{};
         if(graphScratchLayer) {
-            const auto presentationCopyStart = renderProfileEnabled
-                ? std::chrono::steady_clock::now()
-                : std::chrono::steady_clock::time_point{};
             const auto &targetClip = renderLayer->GetClip();
             if(targetClip.left != 0 || targetClip.top != 0 ||
                targetClip.right != static_cast<tjs_int>(renderLayer->GetWidth()) ||
@@ -2578,26 +2295,12 @@ namespace motion {
                 static_cast<tjs_int>(graphScratchLayer->GetHeight()));
             renderLayer->CopyRect(0, 0, graphScratchLayer->GetMainImage(),
                                   nullptr, scratchRect);
-            if(renderProfileEnabled) {
-                presentationCopyMs =
-                    std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - presentationCopyStart)
-                        .count();
-            }
             targetLayerClipIsFull = true;
         }
         if(!kRenderCommandGraphEnabled || !targetLayerClipIsFull) {
             renderLayer->ResetClip();
             targetLayerClipIsFull = true;
         }
-        const double finalClipResetMs = renderProfileEnabled
-            ? std::chrono::duration<double, std::milli>(
-                  std::chrono::steady_clock::now() - finalClipResetStart)
-                  .count()
-            : 0.0;
-        const auto updateStart = renderProfileEnabled
-            ? std::chrono::steady_clock::now()
-            : std::chrono::steady_clock::time_point{};
         if(!skipUpdate) {
             renderLayer->Update(false);
             detail::logoChainTraceLogf(
@@ -2605,11 +2308,6 @@ namespace motion {
                 "renderLayer.Update(false) size={}x{}", renderLayer->GetWidth(),
                 renderLayer->GetHeight());
         }
-        const double updateMs = renderProfileEnabled
-            ? std::chrono::duration<double, std::milli>(
-                  std::chrono::steady_clock::now() - updateStart)
-                  .count()
-            : 0.0;
         // REF emote command output cache GC (11151-11173): every 120
         // generations evict entries unused for 240 generations, then trim
         // to a 512-entry cap.
@@ -2635,37 +2333,6 @@ namespace motion {
                 }
                 cache.erase(oldest);
             }
-        }
-        if(kRenderCommandGraphDiag && LOGGER &&
-           _runtime->emoteCommandOutputCacheHits +
-                   _runtime->emoteCommandLeafCacheHits >
-               0) {
-            LOGGER->warn(
-                "emote.exec.cache player={} generation={} hits={} leafHits={} "
-                "entries={}",
-                static_cast<const void *>(this),
-                _runtime->emoteCommandOutputCacheGeneration,
-                _runtime->emoteCommandOutputCacheHits,
-                _runtime->emoteCommandLeafCacheHits,
-                _runtime->emoteCommandOutputCache.size());
-        }
-        if(renderProfileEnabled && LOGGER) {
-            const double executeMs =
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - executeStart)
-                    .count();
-            LOGGER->info(
-                "emote.render.profile path={} ms={:.3f} clipMs={:.3f} "
-                "buildMs={:.3f} copyMs={:.3f} presentationMs={:.3f} updateMs={:.3f} finalResetMs={:.3f} items={} built={} failed={} direct={} buffered={} scratch={} "
-                "cacheHits={} leafHits={} cacheEntries={}",
-                motionPath, executeMs, outputClipMs, outputBuildMs, outputCopyMs,
-                presentationCopyMs, updateMs, finalClipResetMs,
-                executionItems.size(), outputBuilt, outputBuildFailed,
-                directOutputs, bufferedOutputs,
-                graphScratchLayer ? 1 : 0,
-                _runtime->emoteCommandOutputCacheHits - cacheHitsBefore,
-                _runtime->emoteCommandLeafCacheHits - leafCacheHitsBefore,
-                _runtime->emoteCommandOutputCache.size());
         }
 #if defined(KRKR2_WASMTIME_HEADLESS)
         renderTrace.setResult(!outputCopyException);

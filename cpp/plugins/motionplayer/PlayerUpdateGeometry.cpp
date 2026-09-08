@@ -3,7 +3,7 @@
 //
 #include "PlayerUpdateLayersInternal.h"
 
-#include <cstdlib>
+#include <cstdio>
 
 namespace motion {
     void Player::updateLayersPhase3_CameraConstraint() {
@@ -295,31 +295,8 @@ namespace motion {
                         vn.accumulated.posY + vn.accumulated.posZ * _zFactor;
 
                     // Origin offset (0x6BCB58..0x6BCBA4)
-                    double totalOX = vn.originX + vn.clipOriginX;
-                    double totalOY = vn.originY + vn.clipOriginY;
-                    // KRKR_EMOTE_ORIGIN_FIX=1 (experiment): the authored
-                    // icon/clip origins are geometric centers (w/2, h/2),
-                    // so their per-axis parity follows the icon dimension:
-                    // even-width icons yield an integer totalO, odd-width a
-                    // half-integer one. The mesh/affine rasters subtract a
-                    // fixed −0.5 (pixel-center↔corner conversion) and align
-                    // only when the upstream coordinate is a half-integer,
-                    // so every even-dimension axis lands half a pixel off
-                    // and the silhouette AA ramp widens by ~1px. Snap the
-                    // anchor to the center texel's center (⌊x⌋+0.5) so the
-                    // upstream coordinate is convention-aligned on both
-                    // axes regardless of the icon's dimension parity.
-                    // Forensic→candidate fix; default off keeps the
-                    // unmodified binary behavior for A/B comparison.
-                    static const bool originFix = [] {
-                        const char *env =
-                            std::getenv("KRKR_EMOTE_ORIGIN_FIX");
-                        return env && env[0] != '\0' && env[0] != '0';
-                    }();
-                    if(originFix) {
-                        totalOX = std::floor(totalOX) + 0.5;
-                        totalOY = std::floor(totalOY) + 0.5;
-                    }
+                    const double totalOX = vn.originX + vn.clipOriginX;
+                    const double totalOY = vn.originY + vn.clipOriginY;
                     const double orgX = posX - (m12 * totalOY + totalOX * m11);
                     const double orgY = posY - (totalOY * m22 + totalOX * m21);
                     vn.vertexPosX = orgX;
@@ -428,43 +405,7 @@ namespace motion {
                     //     for MeshCopy draw (meshDivision)
                     // Mixing them made face layers collapse to dots/lines and
                     // 前髪 ghost when cascade sampled dense grids as Bezier.
-                    // MeshType-0 children under a non-unit mesh parent are
-                    // promoted to the same dense representation below.
-                    const detail::MotionNode *meshGridParent = nullptr;
-                    if(vn.meshType == 0 && vn.meshControlPoints.empty()) {
-                        int meshWalk = vn.meshParentIndex;
-                        for(int guard = 0;
-                            meshWalk >= 0 &&
-                                meshWalk < static_cast<int>(nodes.size()) &&
-                                guard < 256;
-                            ++guard) {
-                            const auto *candidate =
-                                &nodes[static_cast<size_t>(meshWalk)];
-                            if(detail::meshParentRequiresStableChildGrid(
-                                   candidate->meshType)) {
-                                meshGridParent = candidate;
-                                break;
-                            }
-                            if(candidate->meshParentIndex == meshWalk) {
-                                break;
-                            }
-                            meshWalk = candidate->meshParentIndex;
-                        }
-                    }
-                    if(!meshGridParent && vn.meshType == 0 &&
-                       vn.meshControlPoints.empty()) {
-                        for(const auto *candidate : _externalMeshParents) {
-                            if(candidate &&
-                               detail::meshParentRequiresStableChildGrid(
-                                   candidate->meshType)) {
-                                meshGridParent = candidate;
-                                break;
-                            }
-                        }
-                    }
-                    const bool affineChildUnderMesh = meshGridParent != nullptr;
-                    if((vn.meshType == 1 || affineChildUnderMesh) && cw > 0 &&
-                       ch > 0) {
+                    if(vn.meshType == 1 && cw > 0 && ch > 0) {
                         const double mw11 = m11 * cw, mw12 = m12 * ch;
                         const double mw21 = m21 * cw, mw22 = m22 * ch;
                         const double det = mw11 * mw22 - mw12 * mw21;
@@ -529,12 +470,9 @@ namespace motion {
                             const bool keepDeformation =
                                 detail::nodeKeepsEmoteDeformation(
                                     vn.parameterizeIndex >= 0, hasUnitBp,
-                                    affineChildUnderMesh);
+                                    false);
                             const auto meshPlan = detail::planEmoteMeshDivision(
-                                affineChildUnderMesh
-                                    ? meshGridParent->meshDivision
-                                    : vn.meshDivision,
-                                _emoteMeshDivisionRatio,
+                                vn.meshDivision, _emoteMeshDivisionRatio,
                                 hasUnitBp, unitBpNearIdentity(unitPatch),
                                 keepDeformation, cw, ch);
                             const bool useAffineGrid = meshPlan.useAffineGrid;
@@ -581,14 +519,6 @@ namespace motion {
                                 }
                             }
                         }
-                        if(affineChildUnderMesh &&
-                           !vn.meshControlPoints.empty()) {
-                            // Keep the prepared item on the mesh path. The
-                            // points are warped below through the exact same
-                            // ancestor chain as authored mesh nodes.
-                            vn.meshWarpedQuad = true;
-                        }
-
                         // Cascade through mesh ancestors using each ancestor's
                         // unit mesh.bp + inverse/forward clip matrix. Never
                         // treat dense meshControlPoints as a 4×4 Bezier.
@@ -703,90 +633,6 @@ namespace motion {
                         warpThroughMeshAncestors(vx, vy);
                         vn.vertexPosX = vx;
                         vn.vertexPosY = vy;
-                    }
-
-                    static const bool geomProbe = [] {
-                        const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
-                        return env && env[0] != '\0' && env[0] != '0';
-                    }();
-                    static const bool eyeGeomProbe = [] {
-                        const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
-                        return env && env[0] != '\0' && env[0] != '0';
-                    }();
-                    // Structural filter, not a name allowlist: every Bezier
-                    // surface and everything sitting under one.  The previous
-                    // mabuta/shirome/目影/瞳 list silently excluded sibling
-                    // parts such as the eyelash, so a child that never
-                    // inherited the eyelid deformation could not show up in
-                    // the trace at all.  hasMeshData/meshFlags are printed
-                    // because they are what decides whether children follow
-                    // the parent surface.
-                    if(eyeGeomProbe &&
-                       (vn.meshType == 1 || vn.meshParentIndex >= 0)) {
-                        if(auto L = spdlog::get("plugin")) {
-                            L->info(
-                                "emote.eye-geom idx={} label={} parent={} "
-                                "meshParent={} meshType={} hasMeshData={} "
-                                "meshFlags={:#x} meshPts={} div=({}, {}) "
-                                "acc=({:.3f},{:.3f}) v0=({:.3f},{:.3f}) "
-                                "v1=({:.3f},{:.3f}) v2=({:.3f},{:.3f}) "
-                                "v3=({:.3f},{:.3f}) src={} bp={}",
-                                vn.index, vn.layerName.empty() ? "<none>"
-                                                               : vn.layerName,
-                                vn.parentIndex, vn.meshParentIndex, vn.meshType,
-                                vn.hasMeshData ? 1 : 0, vn.meshFlags,
-                                vn.meshControlPoints.size(), vn.meshDivX,
-                                vn.meshDivY, vn.accumulated.posX,
-                                vn.accumulated.posY, vn.vertices[0],
-                                vn.vertices[1], vn.vertices[2], vn.vertices[3],
-                                vn.vertices[4], vn.vertices[5], vn.vertices[6],
-                                vn.vertices[7],
-                                vn.interpolatedCache.src.empty()
-                                    ? "<none>"
-                                    : vn.interpolatedCache.src.c_str(),
-                                vn.interpolatedCache.meshBezierPoints.size());
-                        }
-                    }
-                    if(geomProbe) {
-                        const bool selfBodyUd = vn.parameterEntry &&
-                            vn.parameterEntry->id == "body_UD";
-                        bool parentBodyUd = false;
-                        if(vn.meshParentIndex >= 0 &&
-                           vn.meshParentIndex <
-                               static_cast<int>(nodes.size())) {
-                            const auto *pe =
-                                nodes[vn.meshParentIndex].parameterEntry;
-                            parentBodyUd = pe && pe->id == "body_UD";
-                        }
-                        if(selfBodyUd || parentBodyUd) {
-                            if(auto L = spdlog::get("plugin")) {
-                                L->info(
-                                    "emote.geom idx={} lbl={} selfUD={} "
-                                    "parentUD={} meshType={} hasMesh={} "
-                                    "meshPts={} meshParent={} "
-                                    "local=({:.2f},{:.2f}) "
-                                    "accum=({:.2f},{:.2f}) "
-                                    "vtx=({:.2f},{:.2f}) "
-                                    "v0=({:.2f},{:.2f}) "
-                                    "bp0={:.4f}",
-                                    vn.index,
-                                    vn.layerName.empty() ? "<none>"
-                                                         : vn.layerName,
-                                    selfBodyUd ? 1 : 0, parentBodyUd ? 1 : 0,
-                                    vn.meshType, vn.hasMeshData ? 1 : 0,
-                                    vn.meshControlPoints.size(),
-                                    vn.meshParentIndex, vn.localState.posX,
-                                    vn.localState.posY, vn.accumulated.posX,
-                                    vn.accumulated.posY, vn.vertexPosX,
-                                    vn.vertexPosY, vn.vertices[0],
-                                    vn.vertices[1],
-                                    vn.interpolatedCache.meshBezierPoints
-                                            .empty()
-                                        ? -1.0
-                                        : vn.interpolatedCache
-                                              .meshBezierPoints[1]);
-                            }
-                        }
                     }
 
                     // forceVisible TJS property writing (0x6BD38C..0x6BD72C)

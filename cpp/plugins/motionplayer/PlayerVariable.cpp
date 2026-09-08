@@ -7,11 +7,6 @@
 using namespace motion::internal;
 
 namespace {
-    static const bool eyeDiagRequested = [] {
-        const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
-        return env && env[0] != '\0' && env[0] != '0';
-    }();
-
     float variableEaseWeightLike_0x671228(double ease) {
         if(ease > 0.0) {
             return static_cast<float>(ease + 1.0);
@@ -372,14 +367,6 @@ namespace motion {
             }
             it->second = value;
             child->_emoteDirty = true;
-            if(eyeDiagRequested && label.rfind("face_", 0) == 0) {
-                if(auto L = spdlog::get("plugin")) {
-                    L->info(
-                        "emote.prop label={} value={:.2f} childNodes={}",
-                        label, value,
-                        static_cast<int>(child->_runtime->nodes.size()));
-                }
-            }
         };
 
         for(auto &node : _runtime->nodes) {
@@ -415,29 +402,6 @@ namespace motion {
                 continue;
             }
             const double raw = initialParameterRawValueLike_0x6B1ABC(entry.id);
-            if(eyeDiagRequested) {
-                static std::unordered_set<std::string> syncPerfLogged;
-                const std::string perfKey =
-                    entry.id + "@" + std::to_string(_runtime->nodes.size());
-                if(syncPerfLogged.insert(perfKey).second) {
-                    std::string inputKeys;
-                    for(const auto &[key, val] :
-                        _runtime->inheritedVariableInputs) {
-                        inputKeys += key;
-                        inputKeys += "=";
-                        inputKeys += fmt::format("{:.2f} ", val);
-                    }
-                    if(auto L = spdlog::get("plugin")) {
-                        L->info(
-                            "emote.syncperf label={} raw={:.3f} ownVars={} "
-                            "ownEval={} inputs=[{}]",
-                            entry.id, raw,
-                            static_cast<int>(_variableValues.size()),
-                            static_cast<int>(_evalResultValues.size()),
-                            inputKeys);
-                    }
-                }
-            }
             // F01（REF emotemotion::getTickByIdx 单轨契约）：不区分
             // direct-controller 帧号，所有参数化统一 transToTick。
             // 原 directControllerFrame clamp 分支为历史 WIP，删除。
@@ -466,22 +430,6 @@ namespace motion {
                                                    int mode, double value) {
         if(label.empty()) {
             return;
-        }
-        // TEMP audit: every write to diff-timeline target labels.
-        static const bool audit = [] {
-            const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
-            return env && env[0] != '\0' && env[0] != '0';
-        }();
-        if(audit && label == "body_UD") {
-            if(auto logger = spdlog::get("plugin")) {
-                logger->info(
-                    "emote.write.audit site={} path={} v={:.3f}",
-                    g_emoteWriteSite, 
-                    _runtime && _runtime->activeMotion
-                        ? _runtime->activeMotion->path
-                        : std::string{},
-                    value);
-            }
         }
         ensureEvalResultSlotLike_0x686944(label) = value;
         _variableValues[label] = value;

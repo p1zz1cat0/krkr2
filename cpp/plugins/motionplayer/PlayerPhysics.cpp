@@ -651,19 +651,6 @@ namespace motion {
                     output[1];
                 _controllerState->stagedPhysicsOutputs[config.varUd] =
                     output[2];
-                static const bool pendDiag = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_GEOM_DUMP");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(pendDiag) {
-                    if(auto logger = spdlog::get("plugin")) {
-                        logger->warn(
-                            "emote.pend var={} lr={:.4f} lrm={:.4f} "
-                            "ud={:.4f} dt={:.4f}",
-                            config.varLr, output[0], output[1], output[2],
-                            dt);
-                    }
-                }
             };
         for(auto &control : _controllerState->hair) {
             writePend(control, _controllerState->hairForce, _hairScale);

@@ -187,21 +187,7 @@ namespace {
         method->SetParameterColor4B(colorId, color);
         if(alphaTest) {
             const int thresholdId = method->EnumParameterID("alpha_threshold");
-            // Forensic override (KRKR_EMOTE_ALPHA_TEST_THRESH): the shipped
-            // value 64 hard-cuts the mask silhouette at alpha<25%, which
-            // turns the mask's authored AA ramp into a 1px staircase that
-            // every stencil-clipped part inherits. The env override lets an
-            // A/B run measure how much of the visible edge damage this
-            // discard actually contributes; 0 disables the discard.
-            static const int thresholdOverride = [] {
-                const char *env =
-                    std::getenv("KRKR_EMOTE_ALPHA_TEST_THRESH");
-                if(!env || !*env) {
-                    return 64;
-                }
-                return std::max(0, std::atoi(env));
-            }();
-            method->SetParameterOpa(thresholdId, thresholdOverride);
+            method->SetParameterOpa(thresholdId, 64);
         }
         return method;
     }
@@ -608,22 +594,8 @@ namespace {
                     _renderQueueLike_0x6DDBD8);
             beginPrivateMotionGLLStencilLike_0x6DD56C(targetTexture,
                                                       stencilEnabled);
-            // KRKR_EMOTE_GLL_OFFS_X/Y (experiment): additive delta on the
-            // private-GLL draw offset (shipped convention x−0.5). Runtime
-            // A/B sweep for the sampling phase; unset env keeps the
-            // shipped behavior.
-            static const double gllDeltaX = [] {
-                const char *env = std::getenv("KRKR_EMOTE_GLL_OFFS_X");
-                return env && *env ? std::atof(env) : 0.0;
-            }();
-            static const double gllDeltaY = [] {
-                const char *env = std::getenv("KRKR_EMOTE_GLL_OFFS_Y");
-                return env && *env ? std::atof(env) : 0.0;
-            }();
-            const double xOffset =
-                static_cast<double>(x) - 0.5 + gllDeltaX;
-            const double yOffset =
-                static_cast<double>(y) - 0.5 + gllDeltaY;
+            const double xOffset = static_cast<double>(x) - 0.5;
+            const double yOffset = static_cast<double>(y) - 0.5;
 
             for(const auto &item : _renderQueueLike_0x6DDBD8) {
                 auto *sourceTexture =

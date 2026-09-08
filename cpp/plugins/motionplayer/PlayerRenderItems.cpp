@@ -699,23 +699,6 @@ namespace motion {
                                                 node.priorDraw != 0,
                                                 static_cast<int>(i));
             }
-            if(node.stencilCompositeMaskReferenced) {
-                static const bool maskDiag = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(maskDiag) {
-                    LOGGER->warn(
-                        "emote.mask.leaf node={} label='{}' type={} active={} "
-                        "visible={} hasSource={} src='{}' drawFlag={} opa={}",
-                        i, node.layerName, node.nodeType,
-                        node.accumulated.active ? 1 : 0,
-                        node.accumulated.visible ? 1 : 0,
-                        hasRenderableSource(node) ? 1 : 0,
-                        node.interpolatedCache.src, node.drawFlag ? 1 : 0,
-                        node.accumulated.opacity);
-                }
-            }
             if(!node.accumulated.active)
                 continue;
             if(!_preview) {
@@ -1568,31 +1551,6 @@ namespace motion {
             for(const int maskNodeIndex : group.stencilMaskNodeIndices) {
                 const auto it = entryPtrByNode.find(maskNodeIndex);
                 if(it == entryPtrByNode.end() || it->second == &group) {
-                    // TEMP diag: mask leaf resolution miss under foreign
-                    // flattening.  The group declares authored mask inputs
-                    // that the numeric namespace cannot resolve — this is
-                    // the eye-mask binding hole behind missing eyeball
-                    // eyelid/eyewhite rendering.
-                    static const bool maskDiag = [] {
-                        const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
-                        return env && env[0] != '\0' && env[0] != '0';
-                    }();
-                    if(maskDiag) {
-                        LOGGER->warn(
-                            "emote.mask.bind.fail groupNode={} "
-                            "groupLabel='{}' maskNodeIndex={} player={}",
-                            group.nodeIndex,
-                            group.nodeIndex >= 0 &&
-                                    static_cast<size_t>(
-                                        group.nodeIndex) <
-                                        _runtime->nodes.size()
-                                ? _runtime->nodes[static_cast<size_t>(
-                                                      group.nodeIndex)]
-                                      .layerName
-                                : std::string("<none>"),
-                            maskNodeIndex,
-                            static_cast<const void *>(this));
-                    }
                     continue;
                 }
                 auto *mask = it->second;
@@ -1712,21 +1670,6 @@ namespace motion {
             if(group.stencilMaskNodeIndices.empty()) {
                 continue;
             }
-            {
-                static const bool maskDiag = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_MASK_DIAG");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(maskDiag) {
-                    LOGGER->warn(
-                        "emote.mask.group node={} masksDeclared={} "
-                        "maskItems={} childItems={} groupOnly={} drawFlag={}",
-                        group.nodeIndex, group.stencilMaskNodeIndices.size(),
-                        group.stencilMaskItems.size(),
-                        group.childItems.size(), group.groupOnly ? 1 : 0,
-                        group.drawFlag ? 1 : 0);
-                }
-            }
             for(auto *child : group.childItems) {
                 if(child) {
                     unionPreparedPaintBox(group, *child);
@@ -1744,91 +1687,6 @@ namespace motion {
         // above restore that composition without changing the direct render
         // status of ordinary facial leaves.
 
-        // KRKR_TRACE_EMOTE_NESTED=1 exposes the post-flattening ownership
-        // contract without dumping game paths or pixels. This is the probe
-        // needed to distinguish a source-cache miss from a broken nested
-        // command tree in a commercial title: every foreign item should have
-        // a synthetic namespace, and every non-root foreign item should bind
-        // to a parent command.
-        static const bool traceNested = [] {
-            const char *value = std::getenv("KRKR_TRACE_EMOTE_NESTED");
-            return value && value[0] != '\0' && value[0] != '0';
-        }();
-        static const bool traceNestedDetail = [] {
-            const char *value = std::getenv("KRKR_TRACE_EMOTE_NESTED_DETAIL");
-            return value && value[0] != '\0' && value[0] != '0';
-        }();
-        if(traceNested) {
-            std::size_t foreignItems = 0;
-            std::size_t foreignWithParent = 0;
-            std::size_t foreignRoots = 0;
-            std::size_t localItems = 0;
-            std::size_t maskGroups = 0;
-            std::size_t maskInputs = 0;
-            std::size_t nodeMaskGroups = 0;
-            std::size_t nodeMaskInputs = 0;
-            std::size_t ownerMaskGroups = 0;
-            for(const auto &node : _runtime->nodes) {
-                if(!node.stencilCompositeMaskNodeIndices.empty()) {
-                    ++nodeMaskGroups;
-                    nodeMaskInputs +=
-                        node.stencilCompositeMaskNodeIndices.size();
-                }
-            }
-            for(const auto &entry : _runtime->preparedRenderItems) {
-                if(entry.nativeLifetimeOwner &&
-                   entry.nativeLifetimeKey >= 0 &&
-                   static_cast<size_t>(entry.nativeLifetimeKey) <
-                       entry.nativeLifetimeOwner->nodes.size() &&
-                   !entry.nativeLifetimeOwner
-                        ->nodes[static_cast<size_t>(entry.nativeLifetimeKey)]
-                        .stencilCompositeMaskNodeIndices.empty()) {
-                    ++ownerMaskGroups;
-                }
-                if(!entry.stencilMaskNodeIndices.empty()) {
-                    ++maskGroups;
-                    maskInputs += entry.stencilMaskItems.size();
-                }
-                if(isLocalPreparedItem(entry)) {
-                    ++localItems;
-                    continue;
-                }
-                ++foreignItems;
-                if(entry.parentItem) {
-                    ++foreignWithParent;
-                } else {
-                    ++foreignRoots;
-                }
-            }
-            if(auto logger = spdlog::get("plugin")) {
-                if(traceNestedDetail) {
-                    for(const auto &node : _runtime->nodes) {
-                        if(node.stencilCompositeMaskNodeIndices.empty()) {
-                            continue;
-                        }
-                        logger->info(
-                            "emote.nested.node index={} label={} type={} "
-                            "visibleAncestor={} parentIndex={} stencilType={} "
-                            "maskCount={}",
-                            node.index, node.layerName, node.nodeType,
-                            node.visibleAncestorIndex, node.parentIndex,
-                            node.stencilType,
-                            node.stencilCompositeMaskNodeIndices.size());
-                    }
-                }
-                logger->info(
-                    "emote.nested namespace={} localItems={} "
-                    "foreignItems={} foreignWithParent={} foreignRoots={} "
-                    "preparedItems={} maskGroups={} maskInputs={} "
-                    "nodeMaskGroups={} nodeMaskInputs={} ownerMaskGroups={}",
-                    _runtime->activeMotion ? _runtime->activeMotion->path
-                                            : std::string("<none>"),
-                    localItems, foreignItems, foreignWithParent, foreignRoots,
-                    _runtime->preparedRenderItems.size(), maskGroups,
-                    maskInputs, nodeMaskGroups, nodeMaskInputs,
-                    ownerMaskGroups);
-            }
-        }
 #if defined(KRKR2_WASMTIME_HEADLESS)
         detail::motionTraceRenderBuildItemsLeave(this);
 #endif

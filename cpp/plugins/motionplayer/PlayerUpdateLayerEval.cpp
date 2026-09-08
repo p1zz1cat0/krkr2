@@ -5,13 +5,6 @@
 
 #include <cmath>
 
-namespace {
-    const bool eyeEvalProbe = [] {
-        const char *env = std::getenv("KRKR_EMOTE_EYE_DIAG");
-        return env && env[0] != '\0' && env[0] != '0';
-    }();
-} // namespace
-
 namespace motion::internal {
 
     namespace {
@@ -877,15 +870,6 @@ namespace motion {
             // players.
             for(const auto &[label, value] : _variableValues) {
                 bindParameterValueLike_0x6C4668(label, 0, value);
-                if(eyeEvalProbe && label.rfind("face_", 0) == 0) {
-                    if(auto L = spdlog::get("plugin")) {
-                        L->info(
-                            "emote.bind pid={} label={} value={:.2f} "
-                            "localNodes={}",
-                            _runtime->diagPlayerId, label, value,
-                            static_cast<int>(_runtime->nodes.size()));
-                    }
-                }
             }
             // 参考 sdl3 emotemotion::getTickByIdx（不编译）：每帧从变量表刷新
             // parameter entry，驱动 parameterize 节点（口/眼等）帧选择。
@@ -991,45 +975,6 @@ namespace motion {
 
             auto state = advanceNodeFrameSelectionLike_0x6926B4(
                 node, nodeEvalTime, emoteLike, layerList);
-            if(eyeEvalProbe &&
-               (node.layerName == "mabuta" || node.layerName == "eye_R" ||
-                node.layerName == "eye_L" || node.layerName == "shirome" ||
-                node.layerName.find("目影") != std::string::npos ||
-                node.layerName.find("瞳") != std::string::npos ||
-                node.layerName.find("目") != std::string::npos ||
-                node.layerName.find("眉") != std::string::npos ||
-                node.layerName.find("口") != std::string::npos ||
-                node.layerName.find("mabuta") != std::string::npos ||
-                node.layerName.find("shirome") != std::string::npos)) {
-                if(auto L = spdlog::get("plugin")) {
-                    double raw = 0.0;
-                    const auto *probeClip = selectActiveClip();
-                    if(probeClip && probeClip->defaultParameterIndex >= 0 &&
-                       static_cast<size_t>(probeClip->defaultParameterIndex) <
-                           _runtime->parameterEntries.size()) {
-                        raw = initialParameterRawValueLike_0x6B1ABC(
-                            _runtime->parameterEntries[static_cast<size_t>(
-                                probeClip->defaultParameterIndex)].id);
-                    }
-                    L->info(
-                        "emote.eye-eval pid={} label={} evalTime={:.3f} "
-                        "raw={:.3f} "
-                        "src={} frame={} activeTime={:.3f} nextTime={:.3f} "
-                        "param={} clip={} dpi={} entries={}",
-                        _runtime->diagPlayerId, node.layerName, nodeEvalTime,
-                        raw,
-                        state.src.empty() ? "<none>" : state.src.c_str(),
-                        state.debugActiveIndex, state.debugFrameATime,
-                        state.debugFrameBTime, node.parameterizeIndex,
-                        probeClip
-                            ? probeClip->label
-                            : std::string("<null>"),
-                        probeClip
-                            ? probeClip->defaultParameterIndex
-                            : -999,
-                        static_cast<int>(_runtime->parameterEntries.size()));
-                }
-            }
             if(detail::logoChainTraceEnabled(_runtime->activeMotion) &&
                state.debugEvaluated) {
                 detail::logoChainTraceLogf(
@@ -1078,67 +1023,8 @@ namespace motion {
             populateDeltaStateFromFrameState(
                 node.delta, frameStateFromNodeSlots(node, selectionTime));
 
-            // TEMP probe: parameterized pose-node evaluation flow.
-            static const bool evalProbe = [] {
-                const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT");
-                return env && env[0] != '\0' && env[0] != '0';
-            }();
-            if(evalProbe && node.parameterEntry &&
-               node.parameterEntry->id == "body_UD") {
-                const double selT =
-                    frameSelectionTimeLike_0x6B7E44(node, nodeEvalTime,
-                                                    emoteLike);
-                if(auto L = spdlog::get("plugin")) {
-                    L->info(
-                        "emote.eval2 path={} lbl={} idx={} selT={:.2f} "
-                        "active={} cf={} otherDone={} dirty={}",
-                        motionPath,
-                        node.layerName.empty() ? "<none>" : node.layerName,
-                        node.index, selT,
-                        node.activeSlot().frameIndex,
-                        node.activeSlot().crossfading ? 1 : 0,
-                        node.otherSlot().done ? 1 : 0,
-                        timelineDirtyArg ? 1 : 0);
-                }
-            }
-            const bool timelineUpdated = [&]() {
-                const bool __updated = evaluateTimelineLike_0x699AE4(
-                    node, timelineDirtyArg, nodeEvalTime, emoteLike,
-                    nodeLim);
-                if(evalProbe && node.parameterEntry &&
-                   node.parameterEntry->id == "body_UD") {
-                    if(auto L = spdlog::get("plugin")) {
-                        L->info(
-                            "emote.snap idx={} cf={} oDone={} aIdx={} "
-                            "oIdx={} aTime={:.2f} oTime={:.2f} selT={:.2f} "
-                            "updated={} meshA={:.3f}",
-                            node.index,
-                            node.activeSlot().crossfading ? 1 : 0,
-                            node.otherSlot().done ? 1 : 0,
-                            node.activeSlot().frameIndex,
-                            node.otherSlot().frameIndex,
-                            node.activeSlot().clipStartTime,
-                            node.otherSlot().clipStartTime,
-                            nodeEvalTime, __updated ? 1 : 0,
-                            node.interpolatedCache.meshBezierPoints.empty()
-                                ? -1.0
-                                : node.interpolatedCache.meshBezierPoints[0]);
-                    }
-                }
-                return __updated;
-            }();
-            if(evalProbe && node.parameterEntry &&
-               node.parameterEntry->id == "body_UD") {
-                if(auto L = spdlog::get("plugin")) {
-                    L->info(
-                        "emote.eval3 idx={} x={:.2f} y={:.2f} "
-                        "meshPts={} interpRatio={:.3f}",
-                        node.index, node.interpolatedCache.x,
-                        node.interpolatedCache.y,
-                        node.interpolatedCache.meshBezierPoints.size(),
-                        node.timelineEvalRatio);
-                }
-            }
+            const bool timelineUpdated = evaluateTimelineLike_0x699AE4(
+                node, timelineDirtyArg, nodeEvalTime, emoteLike, nodeLim);
             if(!timelineUpdated) {
                 continue;
             }
@@ -1349,33 +1235,6 @@ namespace motion {
                         rootNode.accumulated.m12 * lm22;
                     node.accumulated.m22 = rootNode.accumulated.m21 * lm12 +
                         rootNode.accumulated.m22 * lm22;
-                }
-            }
-
-            if(evalProbe &&
-               ((node.parameterEntry &&
-                 (node.parameterEntry->id == "body_UD" ||
-                  node.parameterEntry->id == "move_UD")) ||
-                (parent.parameterEntry &&
-                 parent.parameterEntry->id == "body_UD"))) {
-                if(auto L = spdlog::get("plugin")) {
-                    L->info(
-                        "emote.eval4 idx={} lbl={} param={} "
-                        "local=({:.2f},{:.2f}) interp=({:.2f},{:.2f}) "
-                        "accum=({:.2f},{:.2f}) "
-                        "m=({:.4f},{:.4f},{:.4f},{:.4f}) "
-                        "meshPts={} parentIdx={}",
-                        node.index,
-                        node.layerName.empty() ? "<none>" : node.layerName,
-                        node.parameterEntry ? node.parameterEntry->id
-                                            : "<none>",
-                        node.localState.posX, node.localState.posY,
-                        node.interpolatedCache.x, node.interpolatedCache.y,
-                        node.accumulated.posX, node.accumulated.posY,
-                        node.accumulated.m11, node.accumulated.m12,
-                        node.accumulated.m21, node.accumulated.m22,
-                        node.interpolatedCache.meshBezierPoints.size(),
-                        parentIdx);
                 }
             }
 

@@ -334,18 +334,6 @@ namespace motion {
                 value +=
                     static_cast<double>(state.controlTrackValues[trackIndex]) *
                     state.blendRatio;
-                if(const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT")) {
-                    if(env[0] != '0' && env[0] != '\0' && label == "body_UD") {
-                        if(auto L = spdlog::get("plugin")) {
-                            L->info(
-                                "emote.acc2 tl={} +={:.3f} -> {:.3f} t={:.2f}",
-                                timelineLabel,
-                                state.controlTrackValues[trackIndex] *
-                                    state.blendRatio,
-                                value, state.currentTime);
-                        }
-                    }
-                }
             }
         }
     }
@@ -355,15 +343,6 @@ namespace motion {
         if(!activeMotion) {
             return;
         }
-        // TEMP experiment: clamp disable switch for twitch diagnosis.
-        static const bool clampDisabled = [] {
-            const char *env = std::getenv("KRKR_EMOTE_NO_CLAMP");
-            return env && env[0] != '\0' && env[0] != '0';
-        }();
-        if(clampDisabled) {
-            return;
-        }
-
         for(const auto &binding : activeMotion->clampControls) {
             if(binding.varLr.empty() || binding.varUd.empty()) {
                 continue;
@@ -469,18 +448,6 @@ namespace motion {
                 outputValue = -outputValue;
             }
             g_emoteWriteSite = "postProcess";
-            if(const char *env = std::getenv("KRKR_EMOTE_WRITE_AUDIT")) {
-                if(env[0] != '0' && env[0] != '\0' &&
-                   entry.label == "body_UD") {
-                    if(auto L = spdlog::get("plugin")) {
-                        L->info(
-                            "emote.pp2 base={:.3f} pd_old={:.3f} out={:.3f} "
-                            "pd_new={:.3f}",
-                            entry.value + entry.pendingDiff,
-                            entry.pendingDiff, preMirror, entry.pendingDiff);
-                    }
-                }
-            }
             writeEvalResultValueLike_0x6C4668(entry.label, outputValue);
             // writeEvalResultValue stored the mirrored final; keep the
             // unmirrored base+diff so next frame's subtraction matches.
@@ -728,49 +695,6 @@ namespace motion {
                     }
                 }
 
-                // TEMP diagnosis: diff-timeline internal track values vs
-                // published variables (env-gated).
-                static const bool tlStepDiag = [] {
-                    const char *env = std::getenv("KRKR_EMOTE_TL_DIAG");
-                    return env && env[0] != '\0' && env[0] != '0';
-                }();
-                if(tlStepDiag) {
-                    std::string trackVals;
-                    for(size_t ti = 0;
-                        ti < binding->tracks.size() &&
-                        ti < state.controlTrackValues.size();
-                        ++ti) {
-                        trackVals += fmt::format(
-                            "{}={:.2f}(q{}) ",
-                            binding->tracks[ti].label,
-                            state.controlTrackValues[ti],
-                            state.controlTrackAnimators[ti].queue.size());
-                    }
-                    double published = 0.0;
-                    bool hasPublished = false;
-                    if(const auto it =
-                           _variableValues.find(binding->tracks.empty()
-                                                    ? std::string{}
-                                                    : binding->tracks
-                                                          .front()
-                                                          .label);
-                       it != _variableValues.end()) {
-                        published = it->second;
-                        hasPublished = true;
-                    }
-                    if(auto logger = spdlog::get("plugin")) {
-                        logger->info(
-                            "emote.tlstep.diag path={} tl={} t={:.2f} "
-                            "blend={:.2f} published={} tracks=[{}]",
-                            _runtime->activeMotion
-                                ? _runtime->activeMotion->path
-                                : std::string{},
-                            label, state.currentTime, state.blendRatio,
-                            hasPublished ? fmt::format("{:.3f}", published)
-                                         : std::string("none"),
-                            trackVals);
-                    }
-                }
             }
 
             if(!keepPlaying && state.wasPlaying) {

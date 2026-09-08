@@ -63,14 +63,6 @@ namespace motion::internal::render_detail {
     std::vector<tTVPPointD> buildMeshPoints(const std::vector<float> &points,
                                             float xOffset, float yOffset);
 
-    // KRKR_EMOTE_MESH_OFFS_X/Y (experiment): absolute override of the
-    // direct-path draw offset convention. The shipped convention is
-    // −0.5/−0.5 (pixel-center↔corner conversion); the env override lets a
-    // runtime A/B sweep the sampling phase without rebuilding. First call
-    // freezes the value; unset env keeps the caller's default.
-    float emoteDrawOffsetX(float fallback);
-    float emoteDrawOffsetY(float fallback);
-
     motion::D3DAdaptor *
     ensureSharedD3DAdaptor(iTJSDispatch2 *targetLayerObject);
 

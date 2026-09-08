@@ -189,12 +189,6 @@ TEST_CASE("nodeKeepsEmoteDeformation follows mesh data, not names") {
         motion::detail::nodeKeepsEmoteDeformation(false, false, false));
 }
 
-TEST_CASE("Bezier parents keep child mesh topology stable at rest") {
-    REQUIRE(motion::detail::meshParentRequiresStableChildGrid(1));
-    REQUIRE_FALSE(motion::detail::meshParentRequiresStableChildGrid(0));
-    REQUIRE_FALSE(motion::detail::meshParentRequiresStableChildGrid(2));
-}
-
 TEST_CASE("planEmoteMeshDivision honors authored density without name folds") {
     // G01: division clamps to 1..50 only; the unit-bp → 2x2 fold and the
     // extra cap of 20 are gone. meshDivisionRatio is the perf knob.

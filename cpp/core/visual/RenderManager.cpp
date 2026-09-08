@@ -3518,22 +3518,6 @@ public:
                           const tTVPRect &rcclip, const tTVPPointD *pttar,
                           const tRenderTexQuadArray &textures) override {
         ++_drawCount;
-        {
-            static const bool triLog = [] {
-                const char *env = std::getenv("KRKR_EMOTE_TRI_LOG");
-                return env && env[0] != '\0' && env[0] != '0';
-            }();
-            static std::atomic<unsigned> triCalls{ 0 };
-            if(triLog && triCalls.fetch_add(1) < 24) {
-                std::fprintf(
-                    stderr,
-                    "emote.tri.sw call=%u pt0=(%.2f,%.2f) pt1=(%.2f,%.2f) "
-                    "clip=[%d,%d,%d,%d] ntri=%d\n",
-                    triCalls.load(), pttar[0].x, pttar[0].y, pttar[1].x,
-                    pttar[1].y, rcclip.left, rcclip.top, rcclip.right,
-                    rcclip.bottom, nTriangles);
-            }
-        }
         assert(textures.size() == 1);
         for(int i = 0; i < textures.size(); ++i) {
             textures[i].first->GetScanLineForRead(
@@ -4914,22 +4898,6 @@ iTVPRenderManager *TVPGetRenderManager() {
         ttstr str =
             IndividualConfigManager::GetInstance()->GetValue<std::string>(
                 "renderer", "software");
-        {
-            // KRKR_EMOTE_RENDERER (experiment): override the layer
-            // compositing render manager selection at runtime.
-            const char *env = std::getenv("KRKR_EMOTE_RENDERER");
-            if(env && *env) {
-                str = ttstr(env);
-            }
-            static const bool triLog = [] {
-                const char *env2 = std::getenv("KRKR_EMOTE_TRI_LOG");
-                return env2 && env2[0] != '\0' && env2[0] != '0';
-            }();
-            if(triLog) {
-                std::fprintf(stderr, "emote.tri.mgr selected='%ls'\n",
-                             str.c_str());
-            }
-        }
         _RenderManager = TVPGetRenderManager(str);
     }
     return _RenderManager;
