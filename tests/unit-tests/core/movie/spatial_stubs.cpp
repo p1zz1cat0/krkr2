@@ -9,6 +9,7 @@ extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
     return false;
 }
 extern "C" void YoghourtKrKrSpatialShutdown() {}
+extern "C" void YoghourtKrKrTelemetryRecordFrameStages(double, double, double) {}
 #endif
 // 链接锚点桩：与 tests/unit-tests/core/tjs2/spatial_stubs.cpp 一致
 extern "C" void TVPGetLangNamePluginAnchor() {}
