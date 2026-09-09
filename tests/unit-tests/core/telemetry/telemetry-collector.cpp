@@ -109,7 +109,8 @@ TEST_CASE("collector emits snapshot and aggregate records on the injected clock"
     // aggregate cadence.
     for (int i = 0; i < 61; ++i) {
         advanceFakeClockMs(17);
-        collector.onFrameSubmitted();
+        const uint64_t frameIndex = collector.onFrameSubmitted();
+        collector.onFrameStages(frameIndex, 2.0, 0.75, 16.7);
     }
     collector.shutdown(TelemetryCollector::kShutdownDrainTimeoutMs);
 
@@ -119,15 +120,23 @@ TEST_CASE("collector emits snapshot and aggregate records on the injected clock"
     REQUIRE(snapshots >= 3);
     REQUIRE(aggregates >= 1);
 
+    bool sawStageWindow = false;
     for (const auto &line : lines) {
         if (line.find("\"kind\":\"snapshot\"") == std::string::npos &&
             line.find("\"kind\":\"aggregate\"") == std::string::npos) {
             continue;
         }
         REQUIRE(line.find("\"intervalCount\"") != std::string::npos);
+        REQUIRE(line.find("\"stageCount\"") != std::string::npos);
+        if (extractUint(line, "stageCount") == 0) continue;
+        sawStageWindow = true;
+        REQUIRE(line.find("\"tickP50Ms\":2.000") != std::string::npos);
+        REQUIRE(line.find("\"renderP50Ms\":0.750") != std::string::npos);
+        REQUIRE(line.find("\"swapP50Ms\":16.700") != std::string::npos);
         REQUIRE(line.find("\"gpuTimingLateDrop\":0") != std::string::npos);
         REQUIRE(line.find("\"telemetryDropped\":0") != std::string::npos);
     }
+    REQUIRE(sawStageWindow);
 }
 
 TEST_CASE("burst drains prehistory rows and emits the burst record", "[telemetry][collector]") {

@@ -83,12 +83,16 @@ std::unique_ptr<IOSurfaceRing> gRing;
 // spatial scaler it still records frame cadence while leaving native
 // presentation untouched.
 yoghourt_telemetry::TelemetryCollector *gTelemetry = nullptr;
+uint64_t gSwapTelemetryFrameIndex = 0;
 
 // Bridges the engine-agnostic presenter hook to the KrKr2 collector. Lives
 // for the whole process; gTelemetry may be null while disabled.
 class KrKrTelemetryBridge final : public yoghourt_spatial::FrameTelemetryObserver {
 public:
-    uint64_t onFrameSubmitted() override { return gTelemetry ? gTelemetry->onFrameSubmitted() : 0; }
+    uint64_t onFrameSubmitted() override {
+        gSwapTelemetryFrameIndex = gTelemetry ? gTelemetry->onFrameSubmitted() : 0;
+        return gSwapTelemetryFrameIndex;
+    }
     void onFramePresented(uint64_t frameIndex) override {
         if (gTelemetry) gTelemetry->onFramePresented(frameIndex);
     }
@@ -593,12 +597,23 @@ extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(
     gSource.flippedY = flippedY;
 }
 
+extern "C" void YoghourtKrKrTelemetryRecordFrameStages(
+    double tickMs,
+    double renderMs,
+    double swapMs) {
+    if (gTelemetry && gSwapTelemetryFrameIndex != 0) {
+        gTelemetry->onFrameStages(gSwapTelemetryFrameIndex, tickMs, renderMs, swapMs);
+    }
+    gSwapTelemetryFrameIndex = 0;
+}
+
 extern "C" bool YoghourtKrKrSpatialPresent(
     EGLDisplay display,
     EGLSurface windowSurface,
     EGLConfig config,
     EGLContext context,
     void *nativeWindow) {
+    gSwapTelemetryFrameIndex = 0;
     if (gSource.name == 0 || gSource.width <= 0 || gSource.height <= 0 ||
         display == EGL_NO_DISPLAY || windowSurface == EGL_NO_SURFACE ||
         context == EGL_NO_CONTEXT || !nativeWindow) {
@@ -614,6 +629,7 @@ extern "C" bool YoghourtKrKrSpatialPresent(
     if (!IsEnabled()) {
         if (gTelemetry) {
             const uint64_t frameIndex = gTelemetry->onFrameSubmitted();
+            gSwapTelemetryFrameIndex = frameIndex;
             if (frameIndex != 0) {
                 gTelemetry->onFrameCompleted(frameIndex, 0, false);
             }
@@ -710,6 +726,7 @@ extern "C" void YoghourtKrKrSpatialShutdown() {
     if (gTelemetry) {
         gTelemetry->shutdown(yoghourt_telemetry::TelemetryCollector::kShutdownDrainTimeoutMs);
     }
+    gSwapTelemetryFrameIndex = 0;
     gSource = {};
     gLogged = false;
     gGenerationDisabled = false;

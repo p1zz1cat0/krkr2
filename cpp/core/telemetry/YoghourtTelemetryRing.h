@@ -36,6 +36,10 @@ public:
     // left untouched, and no sample is produced.
     bool completeGpu(uint64_t frameIndex, double gpuFrameMs, bool succeeded, FrameSample &out);
 
+    // Render thread: backfills the three CPU/wait stages measured around
+    // cocos Director::drawScene. Returns false if this frame was not sampled.
+    bool completeStages(uint64_t frameIndex, double tickMs, double renderMs, double swapMs);
+
     // Present thread: marks the drawable as presented; a late arrival is
     // ignored (the flag is best-effort, the ring keeps the final truth).
     void markPresented(uint64_t frameIndex);

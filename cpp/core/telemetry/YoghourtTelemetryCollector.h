@@ -57,6 +57,7 @@ public:
     // Returns the frame index for this submission, or 0 when the collector
     // is already stopped (hooks then ignore the matching callbacks).
     uint64_t onFrameSubmitted();
+    void onFrameStages(uint64_t frameIndex, double tickMs, double renderMs, double swapMs);
     void onFramePresented(uint64_t frameIndex);
     void onFrameCompleted(uint64_t frameIndex, uint64_t gpuDurationNs, bool succeeded);
     void onOutputRebuild(uint32_t oldWidth, uint32_t oldHeight, uint32_t newWidth, uint32_t newHeight);
@@ -86,7 +87,22 @@ private:
     void emitBurstPrehistory(uint64_t triggerIndex, uint64_t nowNs);
     void tryStreamFrame(uint64_t frameIndex, bool allowIncomplete = false);
     void warnGpuLateOnce();
+    void pushStageSample(double tickMs, double renderMs, double swapMs);
     uint64_t nowNs() const { return clockOverride_ ? clockOverride_() : MonotonicNs(); }
+
+    struct StageWindowSnapshot {
+        uint32_t count = 0;
+        double tickP50Ms = 0.0;
+        double tickP99Ms = 0.0;
+        double tickMaxMs = 0.0;
+        double renderP50Ms = 0.0;
+        double renderP99Ms = 0.0;
+        double renderMaxMs = 0.0;
+        double swapP50Ms = 0.0;
+        double swapP99Ms = 0.0;
+        double swapMaxMs = 0.0;
+    };
+    StageWindowSnapshot stageWindow() const;
 
     TelemetryQueue queue_;
     FrameSampleRing ring_;
@@ -112,6 +128,11 @@ private:
     uint64_t lastAggregateNs_ = 0;
     uint64_t lastRingBusyEventNs_ = 0;
     uint64_t coalescedRingBusyDrops_ = 0;
+    double tickSamples_[kIntervalWindowSize] = {};
+    double renderSamples_[kIntervalWindowSize] = {};
+    double swapSamples_[kIntervalWindowSize] = {};
+    size_t stageSampleCount_ = 0;
+    size_t stageSampleCursor_ = 0;
     // Set when a burst opens so future frames in [T, T+299] are streamed;
     // ordinary frames outside anomaly/burst ranges stay in the runtime ring.
     std::atomic<uint64_t> activeBurstStartFrame_{0};

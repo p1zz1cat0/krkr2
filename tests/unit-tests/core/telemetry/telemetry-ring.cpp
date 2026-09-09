@@ -59,6 +59,18 @@ TEST_CASE("ring keeps presented and reason flags across backfill", "[telemetry][
     REQUIRE(out.presented);
 }
 
+TEST_CASE("ring backfills frame stage timings for the exact frame", "[telemetry][ring]") {
+    FrameSampleRing ring;
+    ring.write(makeSample(9));
+    REQUIRE(ring.completeStages(9, 2.25, 0.75, 16.7));
+    FrameSample out;
+    REQUIRE(ring.read(9, out));
+    REQUIRE(out.tickMs == Catch::Approx(2.25));
+    REQUIRE(out.renderMs == Catch::Approx(0.75));
+    REQUIRE(out.swapMs == Catch::Approx(16.7));
+    REQUIRE_FALSE(ring.completeStages(10, 1.0, 1.0, 1.0));
+}
+
 TEST_CASE("gpu window exposes percentiles and count", "[telemetry][ring]") {
     FrameSampleRing ring;
     for (uint64_t i = 1; i <= 100; ++i) {

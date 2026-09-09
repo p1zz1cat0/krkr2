@@ -2,11 +2,23 @@
 
 #include "YoghourtTelemetryClock.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
 namespace yoghourt_telemetry {
+
+namespace {
+
+double percentileOf(const double *sorted, size_t count, double fraction) {
+    if (count == 0) return 0.0;
+    const size_t index = static_cast<size_t>(static_cast<double>(count - 1) * fraction);
+    return sorted[index];
+}
+
+} // namespace
 
 void StdoutOutputSink::writeLine(const char *data, size_t size) {
     // One stdio call per line: stdio is internally locked per call on
@@ -101,6 +113,49 @@ uint64_t TelemetryCollector::onFrameSubmitted() {
     return index;
 }
 
+void TelemetryCollector::onFrameStages(uint64_t frameIndex, double tickMs, double renderMs, double swapMs) {
+    if (frameIndex == 0 || stopped_.load(std::memory_order_acquire)) return;
+    if (!std::isfinite(tickMs) || !std::isfinite(renderMs) || !std::isfinite(swapMs) ||
+        tickMs < 0.0 || renderMs < 0.0 || swapMs < 0.0) {
+        return;
+    }
+    if (!ring_.completeStages(frameIndex, tickMs, renderMs, swapMs)) return;
+    pushStageSample(tickMs, renderMs, swapMs);
+}
+
+void TelemetryCollector::pushStageSample(double tickMs, double renderMs, double swapMs) {
+    tickSamples_[stageSampleCursor_] = tickMs;
+    renderSamples_[stageSampleCursor_] = renderMs;
+    swapSamples_[stageSampleCursor_] = swapMs;
+    stageSampleCursor_ = (stageSampleCursor_ + 1) % kIntervalWindowSize;
+    stageSampleCount_ = std::min(stageSampleCount_ + 1, kIntervalWindowSize);
+}
+
+TelemetryCollector::StageWindowSnapshot TelemetryCollector::stageWindow() const {
+    double tick[kIntervalWindowSize];
+    double render[kIntervalWindowSize];
+    double swap[kIntervalWindowSize];
+    std::memcpy(tick, tickSamples_, sizeof(double) * stageSampleCount_);
+    std::memcpy(render, renderSamples_, sizeof(double) * stageSampleCount_);
+    std::memcpy(swap, swapSamples_, sizeof(double) * stageSampleCount_);
+    std::sort(tick, tick + stageSampleCount_);
+    std::sort(render, render + stageSampleCount_);
+    std::sort(swap, swap + stageSampleCount_);
+
+    StageWindowSnapshot snapshot;
+    snapshot.count = static_cast<uint32_t>(stageSampleCount_);
+    snapshot.tickP50Ms = percentileOf(tick, stageSampleCount_, 0.50);
+    snapshot.tickP99Ms = percentileOf(tick, stageSampleCount_, 0.99);
+    snapshot.tickMaxMs = stageSampleCount_ > 0 ? tick[stageSampleCount_ - 1] : 0.0;
+    snapshot.renderP50Ms = percentileOf(render, stageSampleCount_, 0.50);
+    snapshot.renderP99Ms = percentileOf(render, stageSampleCount_, 0.99);
+    snapshot.renderMaxMs = stageSampleCount_ > 0 ? render[stageSampleCount_ - 1] : 0.0;
+    snapshot.swapP50Ms = percentileOf(swap, stageSampleCount_, 0.50);
+    snapshot.swapP99Ms = percentileOf(swap, stageSampleCount_, 0.99);
+    snapshot.swapMaxMs = stageSampleCount_ > 0 ? swap[stageSampleCount_ - 1] : 0.0;
+    return snapshot;
+}
+
 void TelemetryCollector::onFramePresented(uint64_t frameIndex) {
     if (frameIndex == 0 || stopped_.load(std::memory_order_acquire)) return;
     ring_.markPresented(frameIndex);
@@ -189,6 +244,7 @@ void TelemetryCollector::emitPeriodic(uint64_t nowNs) {
 
     const auto intervalStats = detector_.window();
     const auto gpuStats = ring_.gpuWindow();
+    const auto stageStats = stageWindow();
 
     const auto fill = [&](TelemetryRecord &record) {
         record.monotonicNs = nowNs;
@@ -202,6 +258,16 @@ void TelemetryCollector::emitPeriodic(uint64_t nowNs) {
         record.stats.gpuP99Ms = gpuStats.p99Ms;
         record.stats.gpuMaxMs = gpuStats.maxMs;
         record.stats.lastGpuFrameMs = gpuStats.lastMs;
+        record.stats.stageCount = stageStats.count;
+        record.stats.tickP50Ms = stageStats.tickP50Ms;
+        record.stats.tickP99Ms = stageStats.tickP99Ms;
+        record.stats.tickMaxMs = stageStats.tickMaxMs;
+        record.stats.renderP50Ms = stageStats.renderP50Ms;
+        record.stats.renderP99Ms = stageStats.renderP99Ms;
+        record.stats.renderMaxMs = stageStats.renderMaxMs;
+        record.stats.swapP50Ms = stageStats.swapP50Ms;
+        record.stats.swapP99Ms = stageStats.swapP99Ms;
+        record.stats.swapMaxMs = stageStats.swapMaxMs;
         record.stats.gpuTimingLateDrop = ring_.gpuTimingLateDrop();
         record.stats.telemetryDropped = queue_.normalDropped();
         record.stats.criticalTelemetryDropped = queue_.criticalDropped();

@@ -72,6 +72,16 @@ bool FrameSampleRing::completeGpu(uint64_t frameIndex, double gpuFrameMs, bool s
     return true;
 }
 
+bool FrameSampleRing::completeStages(uint64_t frameIndex, double tickMs, double renderMs, double swapMs) {
+    Slot &slot = slotFor(frameIndex);
+    SlotLock lock(slot.guard);
+    if (slot.tag.load(std::memory_order_acquire) != frameIndex) return false;
+    slot.sample.tickMs = tickMs;
+    slot.sample.renderMs = renderMs;
+    slot.sample.swapMs = swapMs;
+    return true;
+}
+
 void FrameSampleRing::markPresented(uint64_t frameIndex) {
     Slot &slot = slotFor(frameIndex);
     SlotLock lock(slot.guard);

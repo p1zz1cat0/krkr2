@@ -48,6 +48,9 @@ struct FrameSample {
     double engineIntervalMs = 0.0;
     bool hasInterval = false;  // false for the first frame and across discontinuities
     double gpuFrameMs = -1.0;  // -1 until completion backfill lands
+    double tickMs = -1.0;      // scheduler/update phase wall time
+    double renderMs = -1.0;    // scene traversal + renderer wall time
+    double swapMs = -1.0;      // present/swap call wall time
     bool presented = false;
     uint64_t telemetryDropped = 0;
     uint64_t criticalTelemetryDropped = 0;
@@ -74,6 +77,16 @@ struct TelemetryRecord {
         double gpuP99Ms = 0.0;
         double gpuMaxMs = 0.0;
         double lastGpuFrameMs = -1.0;
+        uint32_t stageCount = 0;
+        double tickP50Ms = 0.0;
+        double tickP99Ms = 0.0;
+        double tickMaxMs = 0.0;
+        double renderP50Ms = 0.0;
+        double renderP99Ms = 0.0;
+        double renderMaxMs = 0.0;
+        double swapP50Ms = 0.0;
+        double swapP99Ms = 0.0;
+        double swapMaxMs = 0.0;
         uint64_t gpuTimingLateDrop = 0;
         uint64_t telemetryDropped = 0;
         uint64_t criticalTelemetryDropped = 0;

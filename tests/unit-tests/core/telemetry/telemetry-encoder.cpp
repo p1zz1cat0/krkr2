@@ -20,6 +20,9 @@ TelemetryRecord frameRecord() {
     record.frame.engineIntervalMs = 16.666;
     record.frame.hasInterval = true;
     record.frame.gpuFrameMs = 4.25;
+    record.frame.tickMs = 2.25;
+    record.frame.renderMs = 0.75;
+    record.frame.swapMs = 16.7;
     record.frame.presented = true;
     record.frame.telemetryDropped = 2;
     record.frame.criticalTelemetryDropped = 1;
@@ -44,6 +47,9 @@ TEST_CASE("frame line carries the reserved prefix and envelope", "[telemetry][en
     REQUIRE(contains(line, "\"frameIndex\":7"));
     REQUIRE(contains(line, "\"engineIntervalMs\":16.666"));
     REQUIRE(contains(line, "\"gpuFrameMs\":4.250"));
+    REQUIRE(contains(line, "\"tickMs\":2.250"));
+    REQUIRE(contains(line, "\"renderMs\":0.750"));
+    REQUIRE(contains(line, "\"swapMs\":16.700"));
     REQUIRE(contains(line, "\"presented\":true"));
     REQUIRE(contains(line, "\"telemetryDropped\":2"));
     REQUIRE(contains(line, "\"criticalTelemetryDropped\":1"));
@@ -56,10 +62,14 @@ TEST_CASE("unavailable numeric fields are omitted instead of NaN", "[telemetry][
     TelemetryRecord record = frameRecord();
     record.frame.hasInterval = false;
     record.frame.gpuFrameMs = -1.0;
+    record.frame.tickMs = -1.0;
+    record.frame.renderMs = -1.0;
+    record.frame.swapMs = -1.0;
     TelemetryEncoder encoder("s");
     const std::string line = encoder.encode(1, record);
     REQUIRE_FALSE(contains(line, "engineIntervalMs"));
     REQUIRE_FALSE(contains(line, "gpuFrameMs"));
+    REQUIRE_FALSE(contains(line, "tickMs"));
 
     record.frame.gpuFrameMs = std::nan("");
     REQUIRE_FALSE(contains(encoder.encode(2, record), "gpuFrameMs"));
@@ -103,6 +113,16 @@ TEST_CASE("snapshot and aggregate lines carry window stats and drop counters", "
     record.stats.gpuP99Ms = 9.5;
     record.stats.gpuMaxMs = 12.0;
     record.stats.lastGpuFrameMs = 5.0;
+    record.stats.stageCount = 120;
+    record.stats.tickP50Ms = 2.0;
+    record.stats.tickP99Ms = 3.5;
+    record.stats.tickMaxMs = 4.0;
+    record.stats.renderP50Ms = 0.7;
+    record.stats.renderP99Ms = 1.1;
+    record.stats.renderMaxMs = 1.4;
+    record.stats.swapP50Ms = 16.7;
+    record.stats.swapP99Ms = 17.2;
+    record.stats.swapMaxMs = 18.0;
     record.stats.gpuTimingLateDrop = 0;
     record.stats.telemetryDropped = 3;
     record.stats.criticalTelemetryDropped = 4;
@@ -111,6 +131,10 @@ TEST_CASE("snapshot and aggregate lines carry window stats and drop counters", "
     REQUIRE(contains(line, "\"kind\":\"aggregate\""));
     REQUIRE(contains(line, "\"fps\":59.94"));
     REQUIRE(contains(line, "\"intervalCount\":120"));
+    REQUIRE(contains(line, "\"stageCount\":120"));
+    REQUIRE(contains(line, "\"tickP50Ms\":2.000"));
+    REQUIRE(contains(line, "\"renderP50Ms\":0.700"));
+    REQUIRE(contains(line, "\"swapP50Ms\":16.700"));
     REQUIRE(contains(line, "\"gpuTimingLateDrop\":0"));
     REQUIRE(contains(line, "\"telemetryDropped\":3"));
     REQUIRE(contains(line, "\"criticalTelemetryDropped\":4"));

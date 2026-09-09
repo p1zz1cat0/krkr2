@@ -99,6 +99,11 @@ std::string TelemetryEncoder::encode(uint64_t sequence, const TelemetryRecord &r
         if (record.frame.gpuFrameMs >= 0.0) {
             appendDouble(out, "gpuFrameMs", record.frame.gpuFrameMs, "%.3f");
         }
+        if (record.frame.tickMs >= 0.0 && record.frame.renderMs >= 0.0 && record.frame.swapMs >= 0.0) {
+            appendDouble(out, "tickMs", record.frame.tickMs, "%.3f");
+            appendDouble(out, "renderMs", record.frame.renderMs, "%.3f");
+            appendDouble(out, "swapMs", record.frame.swapMs, "%.3f");
+        }
         appendBool(out, "presented", record.frame.presented);
         appendUint(out, "telemetryDropped", record.frame.telemetryDropped);
         appendUint(out, "criticalTelemetryDropped", record.frame.criticalTelemetryDropped);
@@ -124,6 +129,16 @@ std::string TelemetryEncoder::encode(uint64_t sequence, const TelemetryRecord &r
         if (record.stats.lastGpuFrameMs >= 0.0) {
             appendDouble(out, "lastGpuFrameMs", record.stats.lastGpuFrameMs, "%.3f");
         }
+        appendUint(out, "stageCount", record.stats.stageCount);
+        appendDouble(out, "tickP50Ms", record.stats.tickP50Ms, "%.3f");
+        appendDouble(out, "tickP99Ms", record.stats.tickP99Ms, "%.3f");
+        appendDouble(out, "tickMaxMs", record.stats.tickMaxMs, "%.3f");
+        appendDouble(out, "renderP50Ms", record.stats.renderP50Ms, "%.3f");
+        appendDouble(out, "renderP99Ms", record.stats.renderP99Ms, "%.3f");
+        appendDouble(out, "renderMaxMs", record.stats.renderMaxMs, "%.3f");
+        appendDouble(out, "swapP50Ms", record.stats.swapP50Ms, "%.3f");
+        appendDouble(out, "swapP99Ms", record.stats.swapP99Ms, "%.3f");
+        appendDouble(out, "swapMaxMs", record.stats.swapMaxMs, "%.3f");
         appendUint(out, "gpuTimingLateDrop", record.stats.gpuTimingLateDrop);
         appendUint(out, "telemetryDropped", record.stats.telemetryDropped);
         appendUint(out, "criticalTelemetryDropped", record.stats.criticalTelemetryDropped);

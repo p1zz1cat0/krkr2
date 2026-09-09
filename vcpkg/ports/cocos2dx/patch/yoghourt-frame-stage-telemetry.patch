@@ -1,0 +1,72 @@
+diff --git a/cocos/base/CCDirector.cpp b/cocos/base/CCDirector.cpp
+--- a/cocos/base/CCDirector.cpp
++++ b/cocos/base/CCDirector.cpp
+@@ -32,6 +32,14 @@ THE SOFTWARE.
+ // standard includes
+ #include <string>
+ 
++#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
++#include <chrono>
++#include <cstdlib>
++#include <cstring>
++extern "C" void YoghourtKrKrTelemetryRecordFrameStages(
++    double tickMs, double renderMs, double swapMs);
++#endif
++
+ #include "2d/CCDrawingPrimitives.h"
+ #include "2d/CCSpriteFrameCache.h"
+ #include "platform/CCFileUtils.h"
+@@ -258,6 +266,15 @@ THE SOFTWARE.
+ // Draw the Scene
+ void Director::drawScene()
+ {
++#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
++    static const bool yoghourtTelemetryEnabled = [] {
++        const char *flag = std::getenv("YOGHOURT_TELEMETRY");
++        return flag && std::strcmp(flag, "1") == 0;
++    }();
++    std::chrono::steady_clock::time_point yoghourtFrameStart;
++    if (yoghourtTelemetryEnabled)
++        yoghourtFrameStart = std::chrono::steady_clock::now();
++#endif
+     // calculate "global" dt
+     calculateDeltaTime();
+     
+@@ -273,6 +290,12 @@ void Director::drawScene()
+         _scheduler->update(_deltaTime);
+         _eventDispatcher->dispatchEvent(_eventAfterUpdate);
+     }
++
++#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
++    std::chrono::steady_clock::time_point yoghourtTickEnd;
++    if (yoghourtTelemetryEnabled)
++        yoghourtTickEnd = std::chrono::steady_clock::now();
++#endif
+ 
+     _renderer->clear();
+     experimental::FrameBuffer::clearAllFBOs();
+@@ -327,10 +350,24 @@ void Director::drawScene()
+ 
+     _totalFrames++;
+ 
++#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
++    std::chrono::steady_clock::time_point yoghourtSwapStart;
++    if (yoghourtTelemetryEnabled)
++        yoghourtSwapStart = std::chrono::steady_clock::now();
++#endif
+     // swap buffers
+     if (_openGLView)
+     {
+         _openGLView->swapBuffers();
++#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
++        if (yoghourtTelemetryEnabled) {
++            const auto yoghourtSwapEnd = std::chrono::steady_clock::now();
++            YoghourtKrKrTelemetryRecordFrameStages(
++                std::chrono::duration<double, std::milli>(yoghourtTickEnd - yoghourtFrameStart).count(),
++                std::chrono::duration<double, std::milli>(yoghourtSwapStart - yoghourtTickEnd).count(),
++                std::chrono::duration<double, std::milli>(yoghourtSwapEnd - yoghourtSwapStart).count());
++        }
++#endif
+     }
+ 
+     if (_displayStats)
