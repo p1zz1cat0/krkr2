@@ -68,9 +68,8 @@ bool TVPFreeUnusedLayerCache = false;
 //---------------------------------------------------------------------------
 
 static bool IsGPU() {
-    static bool isGPU = !TVPIsSoftwareRenderManager() &&
-        !IndividualConfigManager::GetInstance()->GetValue<bool>(
-            "ogl_accurate_render", false);
+    static bool isGPU =
+        !TVPIsSoftwareRenderManager() && !TVPGetOglAccurateRender();
     return isGPU;
 }
 

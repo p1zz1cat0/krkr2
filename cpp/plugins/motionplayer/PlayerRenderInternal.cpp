@@ -1,6 +1,7 @@
 // PlayerRenderInternal.cpp — shared render helpers moved from PlayerRender.cpp
 // Split from PlayerRender.cpp for maintainability.
 //
+#include <cstdlib>
 #include "PlayerRenderInternal.h"
 #include "ConfigManager/IndividualConfigManager.h"
 #include "MotionTraceWeb.h"
@@ -644,11 +645,7 @@ namespace motion::internal::render_detail {
         if(renderManager && renderManager->IsSoftware()) {
             return true;
         }
-        auto *config = IndividualConfigManager::GetInstance();
-        if(!config) {
-            return false;
-        }
-        return config->GetValue<bool>("ogl_accurate_render", false);
+        return TVPGetOglAccurateRender();
     }
 
     tTVPRect localRectFromItem(

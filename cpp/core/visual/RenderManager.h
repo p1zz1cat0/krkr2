@@ -314,3 +314,10 @@ namespace TJS {
 }
 iTVPRenderManager *TVPGetRenderManager(const TJS::tTJSString &name);
 bool TVPIsSoftwareRenderManager();
+
+/// `ogl_accurate_render` 的唯一读取点。该键在三处控制互相耦合的行为
+/// （PiledCopy 的矩形归零、LayerBitmap 的 GPU 快路径、motionplayer 的
+/// accurate SLA），必须同源，否则会出现"accurate SLA 开着但图层路径仍走
+/// GPU 快捷方式"这类自相矛盾的状态。KRKR_EMOTE_OGL_ACCURATE 是诊断用覆盖；
+/// 未设置时行为与直接读配置完全一致。
+bool TVPGetOglAccurateRender();

@@ -12,6 +12,7 @@
 #include "SysInitIntf.h"
 #include <assert.h>
 #include <sstream>
+#include <atomic>
 #include "base/CCDirector.h"
 #include "base/CCEventListenerCustom.h"
 #include "base/CCEventDispatcher.h"
@@ -873,6 +874,18 @@ protected:
     unsigned int internalH;
     unsigned char *PixelData = nullptr; // read only
     int PixelDataCounter = 0;
+
+    // GPU 渲染写入本纹理后必须丢弃 CPU 侧读回缓存。GetScanLineForRead 只在
+    // PixelData 为空时才重新 glReadPixels，且每次调用都把老化计数器重置回 5，
+    // 因此不显式丢弃就会把渲染前的旧像素一直返回给 getMainPixel 之类的 CPU
+    // 读取者——画面在 GPU 上已经变了，读回值却纹丝不动。Update()（CPU→GPU
+    // 上传）已有等价处理，渲染路径此前缺这一环。
+    void DiscardReadbackCache() {
+        if(PixelData) {
+            delete[] PixelData;
+            PixelData = nullptr;
+        }
+    }
     float _scaleW = 1, _scaleH = 1;
 
     tTVPOGLTexture2D(unsigned int w, unsigned int h, TVPTextureFormat::e format,
@@ -1077,15 +1090,47 @@ public:
     const void *GetScanLineForRead(tjs_uint l) override;
 
     tjs_uint32 GetPoint(int x, int y) override {
-        if(PixelData)
-            return *(uint32_t *)&PixelData[y * GetPitch() + x * 4];
-        unsigned long clr = 0;
-        TVPSetRenderTarget(texture);
-        glViewport(0, 0, internalW, internalH);
-        glPixelStorei(GL_PACK_ALIGNMENT, 4);
-        glReadPixels(x * _scaleW, y * _scaleH, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                     &clr);
-        return clr;
+        // KRKR_EMOTE_OGL_POINT: CPU 侧采样点取值。canvasRasterSamples 每次调用
+        // 是固定网格，因此输出天然按调用分块；比较相邻两块即可判定"改 mesh 变量
+        // 后画布是否响应"，这是当前唯一失败断言的直接判据。
+        static const bool ogl_point_log = [] {
+            const char *e = std::getenv("KRKR_EMOTE_OGL_POINT");
+            return e && e[0] != '\0' && e[0] != '0';
+        }();
+        tjs_uint32 result;
+        bool fromCache;
+        if(PixelData) {
+            fromCache = true;
+            result = *(uint32_t *)&PixelData[y * GetPitch() + x * 4];
+        } else {
+            fromCache = false;
+            unsigned long clr = 0;
+            TVPSetRenderTarget(texture);
+            glViewport(0, 0, internalW, internalH);
+            glPixelStorei(GL_PACK_ALIGNMENT, 4);
+            glReadPixels(x * _scaleW, y * _scaleH, 1, 1, GL_RGBA,
+                         GL_UNSIGNED_BYTE, &clr);
+            result = (tjs_uint32)clr;
+        }
+        if(ogl_point_log) {
+            // 同时按 GL 左下原点读一次镜像行，判定 CPU 读取是否漏了 Y 翻转。
+            unsigned long flipped = 0;
+            const int flippedY = (int)internalH - 1 - y;
+            if(flippedY >= 0) {
+                TVPSetRenderTarget(texture);
+                glViewport(0, 0, internalW, internalH);
+                glPixelStorei(GL_PACK_ALIGNMENT, 4);
+                glReadPixels((GLint)(x * _scaleW), (GLint)(flippedY * _scaleH),
+                             1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &flipped);
+            }
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-point] tex=%p %dx%d (%d,%d) argb=%08x "
+                         "flip=%08x cache=%d\n",
+                         (void *)this, (int)internalW, (int)internalH, x, y,
+                         (unsigned)result, (unsigned)flipped,
+                         fromCache ? 1 : 0);
+        }
+        return result;
     }
 
     tjs_int GetPitch() const override {
@@ -2389,6 +2434,24 @@ const void *tTVPOGLTexture2D::GetScanLineForRead(tjs_uint l) {
                           4); // always dword aligned
             glReadPixels(0, 0, internalW, internalH, GL_RGBA, GL_UNSIGNED_BYTE,
                          PixelData);
+            // KRKR_EMOTE_OGL_GEOM: 真实读回发生处。CPU 侧每次采样画布都会命中
+            // 这里一次，因此它同时是 op 流的相位分隔点，也直接给出"画布内容
+            // 到底变没变"的判据——哈希不变即 GPU 上的画面确实没变。
+            static const bool ogl_readback_log = [] {
+                const char *e = std::getenv("KRKR_EMOTE_OGL_GEOM");
+                return e && e[0] != '\0' && e[0] != '0';
+            }();
+            if(ogl_readback_log) {
+                unsigned long long rh = 1469598103934665603ull;
+                const size_t total = (size_t)internalW * internalH * 4;
+                for(size_t i = 0; i < total; ++i) {
+                    rh ^= PixelData[i];
+                    rh *= 1099511628211ull;
+                }
+                std::fprintf(stderr,
+                             "[Yoghourt][OGL-readback] tex=%p %dx%d hash=%016llx\n",
+                             (void *)this, (int)internalW, (int)internalH, rh);
+            }
         }
         return &PixelData[l * internalW * 4];
     } else {
@@ -4085,6 +4148,37 @@ public:
 #endif
     }
 
+    // 非 OGL 纹理桥（E-mote GPU 收编）：RenderManager 抽象允许异构纹理对
+    // 象（例如 E-mote 部件位图恒为 tTVPBaseBitmap，其纹理来自 software
+    // manager）进入 Operate，而 OGL 路径的成员访问假定同一继承树——跨树
+    // 强转的虚调用会按错位槽位跳转。对异类纹理按 CPU 像素 materialize 成
+    // 临时 OGL 纹理；返回对象带一次引用，调用方用毕 Release。
+    // 注意：materialize 逐帧重复上传，性能收编（缓存+dirty 跟踪）为后续
+    // 优化项。
+    tTVPOGLTexture2D *EnsureOGLTexture(iTVPTexture2D *tex) {
+        if(!tex)
+            return nullptr;
+        if(dynamic_cast<tTVPOGLTexture2D *>(tex)) {
+            tex->AddRef();
+            return static_cast<tTVPOGLTexture2D *>(tex);
+        }
+        const tjs_uint w = tex->GetWidth();
+        const tjs_uint h = tex->GetHeight();
+        const TVPTextureFormat::e format = tex->GetFormat();
+        const tjs_int pitch = tex->GetPitch();
+        tTVPOGLTexture2D_mutatble *bridge = new tTVPOGLTexture2D_mutatble(
+            nullptr, 0, w, h, format, 1.f, 1.f);
+        for(tjs_uint l = 0; l < h; ++l) {
+            const void *scanline = tex->GetScanLineForRead(l);
+            if(scanline) {
+                bridge->Update(scanline, format, pitch,
+                               tTVPRect(0, (tjs_int)l, (tjs_int)w,
+                                        (tjs_int)l + 1));
+            }
+        }
+        return bridge;
+    }
+
     tTVPOGLTexture2D *tempTexture;
     tTVPOGLTexture2D *GetTempTexture2D(tTVPOGLTexture2D *src,
                                        const tTVPRect &rcsrc) {
@@ -4511,7 +4605,16 @@ public:
                      const tRenderTexRectArray &textures) override {
         ++_drawCount;
         tTVPOGLRenderMethod *method = (tTVPOGLRenderMethod *)_method;
-        tTVPOGLTexture2D *tar = (tTVPOGLTexture2D *)_tar;
+        tTVPOGLTexture2D *tar = dynamic_cast<tTVPOGLTexture2D *>(_tar);
+        if(!tar) {
+            std::fprintf(stderr, "[Yoghourt][OGL] OperateRect: target is not an OGL texture\n");
+            return;
+        }
+        // 本次 op 将渲染进 tar，其 CPU 读回缓存就此失效。
+        tar->DiscardReadbackCache();
+        // 非 OGL 纹理（异构 manager 的对象）经 EnsureOGLTexture 桥进入本次
+        // op；生命周期延伸到 glDraw 之后，函数尾统一 Release。
+        std::vector<tTVPOGLTexture2D *> transientTextures;
         if(reftar == _tar)
             reftar = nullptr;
         if(method->CustomProc &&
@@ -4523,7 +4626,10 @@ public:
         std::vector<GLVertexInfo> texlist;
         texlist.resize(textures.size() + (method->tar_as_src ? 1 : 0));
         for(unsigned int i = 0; i < textures.size(); ++i) {
-            tTVPOGLTexture2D *tex = (tTVPOGLTexture2D *)(textures[i].first);
+            tTVPOGLTexture2D *tex = EnsureOGLTexture(textures[i].first);
+            if(!tex)
+                continue;
+            transientTextures.push_back(tex);
             tex->SyncPixel();
             GLVertexInfo &texitem = texlist[i];
             if(/*_duplicateTargetTexture &&*/ tex == tar) {
@@ -4613,6 +4719,8 @@ public:
         //}
         method->onFinish();
         CHECK_GL_ERROR_DEBUG();
+        for(tTVPOGLTexture2D *transient : transientTextures)
+            transient->Release();
         // #ifdef _DEBUG
         //         static bool check = false;
         //         if(check) {
@@ -4652,8 +4760,90 @@ public:
                           const tTVPRect &rcclip, const tTVPPointD *_pttar,
                           const tRenderTexQuadArray &textures) override {
         ++_drawCount;
+        // 生命周期诊断探针（阶段 0，随收编移除）：OGL 模式下曾出现 vptr 指向
+        // type_info vtable 的崩溃，打印前若干次 op 的纹理对象头以定位来源。
+        static std::atomic<int> ogl_tex_diag_count{0};
+        if(ogl_tex_diag_count.fetch_add(1, std::memory_order_relaxed) < 4096) {
+            void *tarObj = _tar;
+            void *tarVptr = tarObj ? *(void **)tarObj : nullptr;
+            void *srcObj = textures.size() ? textures[0].first : nullptr;
+            void *srcVptr = srcObj ? *(void **)srcObj : nullptr;
+            void *methodObj = _method;
+            void *methodVptr = methodObj ? *(void **)methodObj : nullptr;
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-diag] op#%d nTri=%d tar=%p tarVptr=%p "
+                         "src=%p srcVptr=%p method=%p methodVptr=%p\n",
+                         ogl_tex_diag_count.load(std::memory_order_relaxed),
+                         nTriangles, tarObj, tarVptr, srcObj, srcVptr,
+                         methodObj, methodVptr);
+        }
+        // 一次性上下文诊断：opengl 后端在 macOS 上表现为画布全透明，存在两种
+        // 互斥的失败模式，两者症状相同——(a) 当前线程没有可用的 GL 上下文，
+        // 所有 GL 调用落空；(b) 上下文正常，但传入的是软件管理器创建的纹理，
+        // 下面的 dynamic_cast 失败导致每次绘制提前返回。这一行同时打印两者的
+        // 判据，避免在错误的假设上开工。
+        static std::atomic<bool> ogl_ctx_diag_done{ false };
+        if(!ogl_ctx_diag_done.exchange(true, std::memory_order_relaxed)) {
+            const char *glVersion = (const char *)glGetString(GL_VERSION);
+#if(TARGET_OS_MAC && !TARGET_OS_IPHONE) || defined(__ANDROID__)
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-ctx] eglContext=%p eglDisplay=%p "
+                         "eglDrawSurface=%p glVersion=%s glError=0x%04x\n",
+                         (void *)eglGetCurrentContext(),
+                         (void *)eglGetCurrentDisplay(),
+                         (void *)eglGetCurrentSurface(EGL_DRAW),
+                         glVersion ? glVersion : "(null)",
+                         (unsigned)glGetError());
+#else
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-ctx] glVersion=%s glError=0x%04x\n",
+                         glVersion ? glVersion : "(null)",
+                         (unsigned)glGetError());
+#endif
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-ctx] targetIsOGLTexture=%d srcCount=%d "
+                         "srcIsOGLTexture=%d\n",
+                         dynamic_cast<tTVPOGLTexture2D *>(_tar) ? 1 : 0,
+                         (int)textures.size(),
+                         textures.size() && dynamic_cast<tTVPOGLTexture2D *>(
+                                                textures[0].first)
+                             ? 1
+                             : 0);
+        }
+
         tTVPOGLRenderMethod *method = (tTVPOGLRenderMethod *)_method;
-        tTVPOGLTexture2D *tar = (tTVPOGLTexture2D *)_tar;
+        tTVPOGLTexture2D *tar = dynamic_cast<tTVPOGLTexture2D *>(_tar);
+        if(!tar) {
+            std::fprintf(stderr, "[Yoghourt][OGL] OperateTriangles: target is not an OGL texture\n");
+            return;
+        }
+        // 本次 op 将渲染进 tar，其 CPU 读回缓存就此失效。
+        tar->DiscardReadbackCache();
+        // KRKR_EMOTE_OGL_GEOM: 打印本次 op 的目标顶点几何摘要。用途是判定
+        // mesh 变量改变后几何是否真的重算——摘要不变说明问题在上游（几何没
+        // 重算），摘要变化说明问题在下游（画了但没反映到读回结果）。
+        static const bool ogl_geom_log = [] {
+            const char *e = std::getenv("KRKR_EMOTE_OGL_GEOM");
+            return e && e[0] != '\0' && e[0] != '0';
+        }();
+        if(ogl_geom_log && _pttar && nTriangles > 0) {
+            unsigned long long h = 1469598103934665603ull;
+            for(int i = 0; i < nTriangles * 3; ++i) {
+                const double coords[2] = { _pttar[i].x, _pttar[i].y };
+                const unsigned char *bytes = (const unsigned char *)coords;
+                for(size_t k = 0; k < sizeof(coords); ++k) {
+                    h ^= bytes[k];
+                    h *= 1099511628211ull;
+                }
+            }
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-geom] tri n=%d tar=%p vhash=%016llx "
+                         "v0=(%.2f,%.2f)\n",
+                         nTriangles, (void *)_tar, h, _pttar[0].x, _pttar[0].y);
+        }
+
+        // 非 OGL 纹理桥同 OperateRect（transient 生命周期到 glDraw 之后）。
+        std::vector<tTVPOGLTexture2D *> transientTextures;
         if(_tar == reftar)
             reftar = nullptr;
         int ptcount = nTriangles * 3;
@@ -4661,7 +4851,10 @@ public:
         std::vector<GLVertexInfo> texlist;
         texlist.resize(textures.size() + (method->tar_as_src ? 1 : 0));
         for(unsigned int i = 0; i < textures.size(); ++i) {
-            tTVPOGLTexture2D *tex = (tTVPOGLTexture2D *)(textures[i].first);
+            tTVPOGLTexture2D *tex = EnsureOGLTexture(textures[i].first);
+            if(!tex)
+                continue;
+            transientTextures.push_back(tex);
             tex->SyncPixel();
             GLVertexInfo &texitem = texlist[i];
             if(/*_duplicateTargetTexture &&*/ tex == tar) {
@@ -4776,6 +4969,8 @@ public:
         glDrawArrays(GL_TRIANGLES, 0, ptcount);
         method->onFinish();
         CHECK_GL_ERROR_DEBUG();
+        for(tTVPOGLTexture2D *transient : transientTextures)
+            transient->Release();
         // #ifdef _DEBUG
         //         static bool check = false;
         //         if(check) {
@@ -4851,7 +5046,36 @@ public:
                             const tTVPPointD *_pttar /*quad{lt,rt,lb,rb}*/,
                             const tRenderTexQuadArray &textures) override {
         ++_drawCount;
-        tTVPOGLTexture2D *tar = (tTVPOGLTexture2D *)_tar;
+        tTVPOGLTexture2D *tar = dynamic_cast<tTVPOGLTexture2D *>(_tar);
+        if(!tar) {
+            std::fprintf(stderr, "[Yoghourt][OGL] OperatePerspective: target is not an OGL texture\n");
+            return;
+        }
+        // 本次 op 将渲染进 tar，其 CPU 读回缓存就此失效。
+        tar->DiscardReadbackCache();
+        // KRKR_EMOTE_OGL_GEOM: 打印本次 op 的目标顶点几何摘要。用途是判定
+        // mesh 变量改变后几何是否真的重算——摘要不变说明问题在上游（几何没
+        // 重算），摘要变化说明问题在下游（画了但没反映到读回结果）。
+        static const bool ogl_geom_log = [] {
+            const char *e = std::getenv("KRKR_EMOTE_OGL_GEOM");
+            return e && e[0] != '\0' && e[0] != '0';
+        }();
+        if(ogl_geom_log && _pttar && nQuads > 0) {
+            unsigned long long h = 1469598103934665603ull;
+            for(int i = 0; i < nQuads * 4; ++i) {
+                const double coords[2] = { _pttar[i].x, _pttar[i].y };
+                const unsigned char *bytes = (const unsigned char *)coords;
+                for(size_t k = 0; k < sizeof(coords); ++k) {
+                    h ^= bytes[k];
+                    h *= 1099511628211ull;
+                }
+            }
+            std::fprintf(stderr,
+                         "[Yoghourt][OGL-geom] persp n=%d tar=%p vhash=%016llx "
+                         "v0=(%.2f,%.2f)\n",
+                         nQuads, (void *)_tar, h, _pttar[0].x, _pttar[0].y);
+        }
+
 
         tTVPOGLRenderMethod_Perspective *method =
             (tTVPOGLRenderMethod_Perspective *)_method;

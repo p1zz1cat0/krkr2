@@ -1,4 +1,5 @@
 #include "RenderManager.h"
+#include <cstdlib>
 #include "renderer/CCTexture2D.h"
 typedef cocos2d::Texture2D::PixelFormat CCPixelFormat;
 #include "MsgIntf.h"
@@ -4898,9 +4899,30 @@ iTVPRenderManager *TVPGetRenderManager() {
         ttstr str =
             IndividualConfigManager::GetInstance()->GetValue<std::string>(
                 "renderer", "software");
+        // KRKR_EMOTE_RENDERER: 图层合成 render manager 的诊断用运行时覆盖。
+        // 未设置或为空时保持配置值，因此发布默认值（"software"）不变。
+        // 存在的意义是让 opengl 后端可以在不写入游戏目录 Kirikiroid2Preference.xml
+        // 的前提下被选中——游戏目录是只读边界。
+        if(const char *rendererOverride = std::getenv("KRKR_EMOTE_RENDERER");
+           rendererOverride && *rendererOverride) {
+            str = ttstr(rendererOverride);
+        }
         _RenderManager = TVPGetRenderManager(str);
     }
     return _RenderManager;
+}
+
+bool TVPGetOglAccurateRender() {
+    static const bool value = [] {
+        if(const char *env = std::getenv("KRKR_EMOTE_OGL_ACCURATE");
+           env && *env) {
+            return env[0] != '0';
+        }
+        auto *config = IndividualConfigManager::GetInstance();
+        return config ? config->GetValue<bool>("ogl_accurate_render", false)
+                      : false;
+    }();
+    return value;
 }
 
 bool TVPIsSoftwareRenderManager() {
