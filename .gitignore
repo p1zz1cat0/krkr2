@@ -24,3 +24,7 @@ cpp/plugins/motionplayer/origin/
 
 # Local runtime console output from manual plugin smokes
 tests/test_files/savedata/
+
+# Engine-written per-game preference file left behind by a fixture run
+# (deliberately narrow: the extNagano and extrans-transitions fixtures track theirs)
+tests/test_files/motionplayer/Kirikiroid2Preference.xml
