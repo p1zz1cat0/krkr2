@@ -23,6 +23,9 @@ NS_KRMOVIE_BEGIN
 TVPMoviePlayer::TVPMoviePlayer() { m_pPlayer = new BasePlayer(this); }
 
 TVPMoviePlayer::~TVPMoviePlayer() {
+    // m_pPlayer 析构会 join 解码线程；先放开画面缓冲等待，否则线程可能
+    // 一直睡在接下来就要销毁的条件变量上
+    AbortPictureBuffer();
     delete m_pPlayer;
     if(img_convert_ctx)
         sws_freeContext(img_convert_ctx), img_convert_ctx = nullptr;
@@ -147,13 +150,21 @@ void TVPMoviePlayer::GetEnableVideoStreamNum(long *num) {
     *num = m_pPlayer->GetVideoStream();
 }
 
+void TVPMoviePlayer::AbortPictureBuffer() {
+    // 持锁置位，与等待谓词的检查互斥，保证不会丢失这次唤醒
+    std::lock_guard<std::mutex> lk(m_mtxPicture);
+    m_bAbortPicture = true;
+    m_condPicture.notify_all();
+}
+
 int TVPMoviePlayer::WaitForBuffer(volatile std::atomic_bool &bStop,
                                   int timeout) {
     int remainBuf = MAX_BUFFER_COUNT - m_usedPicture;
     if(remainBuf > 0)
         return remainBuf;
     std::unique_lock<std::mutex> lk(m_mtxPicture);
-    while(!bStop && MAX_BUFFER_COUNT <= m_usedPicture && timeout > 0) {
+    while(!bStop && !m_bAbortPicture && MAX_BUFFER_COUNT <= m_usedPicture &&
+          timeout > 0) {
         timeout -= 10;
         m_condPicture.wait_for(lk, std::chrono::milliseconds(10));
     }
@@ -167,6 +178,8 @@ void TVPMoviePlayer::Flush() {
     }
     m_curpts = 0.0;
     m_usedPicture = 0;
+    // 清空缓冲即释放了等待者需要的空间，必须唤醒，否则又是一次丢失唤醒
+    m_condPicture.notify_all();
 }
 
 void TVPMoviePlayer::FrameMove() { m_pPlayer->FrameMove(); }
@@ -182,12 +195,17 @@ int TVPMoviePlayer::AddVideoPicture(DVDVideoPicture &pic, int index) {
     if(pic.pts == DVD_NOPTS_VALUE)
         return 0;
 
-    if(m_usedPicture >= MAX_BUFFER_COUNT) {
+    {
+        // 缓冲满时等消费者释放空间。必须带谓词和超时并响应
+        // AbortPictureBuffer()：原来的无谓词 wait 一旦错过唤醒就会永远
+        // 睡在这里，销毁时 join 解码线程随之卡死。
         std::unique_lock<std::mutex> lk(m_mtxPicture);
-        m_condPicture.wait(lk);
+        while(!m_bAbortPicture && m_usedPicture >= MAX_BUFFER_COUNT) {
+            m_condPicture.wait_for(lk, std::chrono::milliseconds(10));
+        }
+        if(m_bAbortPicture || m_usedPicture >= MAX_BUFFER_COUNT)
+            return -1;
     }
-    if(m_usedPicture >= MAX_BUFFER_COUNT)
-        return -1;
 
     int width = pic.iWidth, height = pic.iHeight;
     // YUV data passthrough
@@ -211,6 +229,13 @@ int TVPMoviePlayer::AddVideoPicture(DVDVideoPicture &pic, int index) {
 
     {
         std::lock_guard<std::mutex> lk(m_mtxPicture);
+        if(m_bAbortPicture || m_usedPicture >= MAX_BUFFER_COUNT) {
+            // 等待期间被销毁路径叫停：数据不能写进已放弃的缓冲
+            for(int i = 0; i < sizeof(yuvdata) / sizeof(yuvdata[0]); ++i)
+                if(yuvdata[i])
+                    TJSAlignedDealloc(yuvdata[i]);
+            return -1;
+        }
         BitmapPicture &picbuf =
             m_picture[(m_curPicture + m_usedPicture) & (MAX_BUFFER_COUNT - 1)];
         picbuf.Clear();
@@ -310,6 +335,8 @@ void KRMovie::VideoPresentOverlay::Stop() {
 
 MoviePlayerOverlay::~MoviePlayerOverlay() {
     assert(std::this_thread::get_id() == TVPMainThreadID);
+    // 这里在基类析构之前就 join 解码线程，必须提前放开画面缓冲等待
+    AbortPictureBuffer();
     delete m_pPlayer;
     m_pPlayer = nullptr;
 }

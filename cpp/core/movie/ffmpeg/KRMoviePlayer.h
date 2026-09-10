@@ -1,6 +1,8 @@
 #pragma once
 #define NOMINMAX
 
+#include <atomic>
+
 #include "VideoPlayer.h"
 #include "krmovie.h"
 #include "ComplexRect.h"
@@ -185,6 +187,11 @@ protected:
 
     iTVPSoundBuffer *GetSoundDevice();
 
+    //! 停止画面缓冲等待并唤醒等待者。销毁路径必须在 delete m_pPlayer
+    //! （join 解码线程）之前调用：解码线程可能正阻塞在 m_condPicture 上，
+    //! 不先放开等待，join 会卡死，锁和条件变量还会带着等待者一起析构。
+    void AbortPictureBuffer();
+
     uint32_t RefCount = 1;
     bool Visible = false;
 
@@ -215,7 +222,12 @@ protected:
     };
 
     BitmapPicture m_picture[MAX_BUFFER_COUNT];
-    int m_curPicture = 0, m_usedPicture = 0;
+    int m_curPicture = 0;
+    // 只在持锁时修改，但 PresentPicture / GetFrontBuffer / OnContinuousCallback
+    // 会先无锁快读一次再进锁；原子化消除这层 data race 和丢失唤醒窗口。
+    std::atomic_int m_usedPicture{0};
+    // 置位后 AddVideoPicture / WaitForBuffer 不再等待缓冲空间，直接失败返回。
+    std::atomic_bool m_bAbortPicture{false};
     std::mutex m_mtxPicture;
     std::condition_variable m_condPicture;
     struct SwsContext *img_convert_ctx = nullptr;

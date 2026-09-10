@@ -73,12 +73,16 @@ int VideoPresentLayer::AddVideoPicture(DVDVideoPicture &pic, int index) {
     if(pic.pts == DVD_NOPTS_VALUE)
         return 0;
 
-    if(m_usedPicture >= MAX_BUFFER_COUNT) {
+    {
+        // 同 TVPMoviePlayer::AddVideoPicture：谓词 + 超时 + 可被
+        // AbortPictureBuffer() 取消，避免解码线程永久睡在条件变量上
         std::unique_lock<std::mutex> lk(m_mtxPicture);
-        m_condPicture.wait(lk);
+        while(!m_bAbortPicture && m_usedPicture >= MAX_BUFFER_COUNT) {
+            m_condPicture.wait_for(lk, std::chrono::milliseconds(10));
+        }
+        if(m_bAbortPicture || m_usedPicture >= MAX_BUFFER_COUNT)
+            return -1;
     }
-    if(m_usedPicture >= MAX_BUFFER_COUNT)
-        return -1;
 
     int width = pic.iWidth, height = pic.iHeight;
 
@@ -95,6 +99,10 @@ int VideoPresentLayer::AddVideoPicture(DVDVideoPicture &pic, int index) {
 
     {
         std::lock_guard<std::mutex> lk(m_mtxPicture);
+        if(m_bAbortPicture || m_usedPicture >= MAX_BUFFER_COUNT) {
+            TJSAlignedDealloc(data);
+            return -1;
+        }
         BitmapPicture &picbuf =
             m_picture[(m_curPicture + m_usedPicture) & (MAX_BUFFER_COUNT - 1)];
         picbuf.Clear();
