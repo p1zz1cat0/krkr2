@@ -38,6 +38,45 @@ fi
 work_root_build="${work_root_build:-$repo_root/out}"
 log_dir="${YOGHOURT_QUALITY_LOG_DIR:-${work_root_build:h}/logs/quality-gate}"
 mkdir -p -- "$log_dir"
+
+# 环境前置检查。这两项缺失时 CMake 的报错离根因很远（toolchain 路径拼成
+# "/scripts/buildsystems/vcpkg.cmake"、bison 报语法要求），先在这里失败并
+# 给出可执行的修法。
+if [[ -z "${VCPKG_ROOT:-}" ]]; then
+  # 与 Scripts/bootstrap/common.sh 的默认值保持一致。
+  if [[ -d "$work_root_build/vcpkg/scripts/buildsystems" ]]; then
+    export VCPKG_ROOT="$work_root_build/vcpkg"
+  else
+    print -u2 "quality-gate: VCPKG_ROOT 未设置，且 $work_root_build/vcpkg 不存在。"
+    print -u2 "  先跑一次 Scripts/bootstrap-runtimes.sh build krkr2，或显式导出 VCPKG_ROOT。"
+    exit 78
+  fi
+fi
+if [[ ! -f "$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]]; then
+  print -u2 "quality-gate: VCPKG_ROOT=$VCPKG_ROOT 下找不到 scripts/buildsystems/vcpkg.cmake"
+  exit 78
+fi
+
+# tjs2 的 .y 文件要求 bison >= 3.8.2；macOS 自带的是 2.3。
+required_bison="3.8.2"
+bison_ok=0
+for candidate in "${BISON:-}" bison /opt/homebrew/opt/bison/bin/bison /usr/local/opt/bison/bin/bison; do
+  [[ -z "$candidate" ]] && continue
+  bison_path="$(command -v "$candidate" 2>/dev/null || true)"
+  [[ -z "$bison_path" ]] && continue
+  bison_version="$("$bison_path" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+  [[ -z "$bison_version" ]] && continue
+  if [[ "$(printf '%s\n' "$required_bison" "$bison_version" | sort -V | head -1)" == "$required_bison" ]]; then
+    export PATH="${bison_path:h}:$PATH"
+    bison_ok=1
+    break
+  fi
+done
+if (( ! bison_ok )); then
+  print -u2 "quality-gate: 需要 bison >= $required_bison，PATH 上只有更旧的版本（macOS 自带 2.3）。"
+  print -u2 "  brew install bison，或导出 BISON=<路径> 指向 3.8.2 以上的可执行文件。"
+  exit 78
+fi
 (setopt NULL_GLOB; rm -f -- "$log_dir"/*.log)
 print "quality_gate_logs=$log_dir"
 
@@ -108,8 +147,12 @@ for configuration in debug release; do
   # Linux stage already builds (line above in the linux branch). Without it
   # only whatever binaries happened to exist got discovered, so labelled
   # suites silently never ran here.
-  run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 plugin-tests "${targets[@]}"
+  run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 plugin-tests core-tests "${targets[@]}"
   run_logged "$configuration-ctest" ctest --test-dir "$build_dir" -L plugin --output-on-failure
+  # core-tests 与 -L core 必须成对出现：只加目标则用例被构建但不运行，只加
+  # 标签则 ctest 找不到二进制。此前两者都缺，core/{movie,visual,tjs2,telemetry}
+  # 四个套件在门里完全不可见。
+  run_logged "$configuration-ctest-core" ctest --test-dir "$build_dir" -L core --output-on-failure
 
   executable="$build_dir/bin/krkr2/krkr2.app/Contents/MacOS/krkr2"
   if [[ "$configuration" == release ]]; then
