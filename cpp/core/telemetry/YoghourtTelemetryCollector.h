@@ -61,6 +61,10 @@ public:
     void onFramePresented(uint64_t frameIndex);
     void onFrameCompleted(uint64_t frameIndex, uint64_t gpuDurationNs, bool succeeded);
     void onOutputRebuild(uint32_t oldWidth, uint32_t oldHeight, uint32_t newWidth, uint32_t newHeight);
+    /// 记录本次会话生效的图层合成 render manager。A/B 对比 software 与
+    /// opengl 时，performance.csv 自身不含渲染路径信息，缺这条记录就无法
+    /// 判断一组数字属于哪条路径。重复调用只发一次。
+    void onRendererSelected(const char *renderer, bool accurateRender);
     void onPipelineFailure(const char *reason);
     // Sustained saturation is coalesced to at most one event per
     // kRingBusyDropCoalesceMs with the suppressed count attached.
@@ -118,6 +122,7 @@ private:
     std::atomic<bool> workerExited_{false};
     std::atomic<bool> shutdownCalled_{false};
     std::atomic<bool> gpuLateWarned_{false};
+    std::atomic<bool> rendererRecorded_{false};
     std::atomic<uint64_t> sequence_{0}; // worker thread only
     std::atomic<uint64_t> linesEmitted_{0};
 

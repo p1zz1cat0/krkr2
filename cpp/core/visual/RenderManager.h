@@ -321,3 +321,8 @@ bool TVPIsSoftwareRenderManager();
 /// GPU 快捷方式"这类自相矛盾的状态。KRKR_EMOTE_OGL_ACCURATE 是诊断用覆盖；
 /// 未设置时行为与直接读配置完全一致。
 bool TVPGetOglAccurateRender();
+
+/// 当前生效的图层合成 render manager 名称（"software" / "opengl"），
+/// 在首次选择之前返回空字符串。遥测需要它来区分 A/B 会话：没有这一项，
+/// 一份 performance.csv 无法判断是哪条渲染路径产出的。
+const char *TVPGetActiveRenderManagerName();

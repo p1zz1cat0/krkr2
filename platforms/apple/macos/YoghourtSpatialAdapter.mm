@@ -597,11 +597,22 @@ extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(
     gSource.flippedY = flippedY;
 }
 
+// core 侧定义（cpp/core/visual/RenderManager.h）。这里前向声明以避免把
+// visual 的头文件引入平台适配层。
+const char *TVPGetActiveRenderManagerName();
+bool TVPGetOglAccurateRender();
+
 extern "C" void YoghourtKrKrTelemetryRecordFrameStages(
     double tickMs,
     double renderMs,
     double swapMs) {
     if (gTelemetry && gSwapTelemetryFrameIndex != 0) {
+        // render manager 是懒选择的，可能晚于 collector 构造，因此在帧边界
+        // 上报而不是在 collector 启动时；collector 内部保证只记一次。
+        const char *rendererName = TVPGetActiveRenderManagerName();
+        if (rendererName && *rendererName) {
+            gTelemetry->onRendererSelected(rendererName, TVPGetOglAccurateRender());
+        }
         gTelemetry->onFrameStages(gSwapTelemetryFrameIndex, tickMs, renderMs, swapMs);
     }
     gSwapTelemetryFrameIndex = 0;

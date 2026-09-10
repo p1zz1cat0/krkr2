@@ -238,3 +238,50 @@ TEST_CASE("late gpu completions are counted and never attached", "[telemetry][co
         REQUIRE(extractUint(line, "frameIndex") != 1);
     }
 }
+
+TEST_CASE("renderer selection is recorded once with the accurate-render flag",
+          "[telemetry][collector]") {
+    auto sink = std::make_unique<CapturingSink>();
+    CapturingSink *sinkPtr = sink.get();
+    TelemetryCollector collector("sess-renderer", std::move(sink), &fakeNow);
+
+    // 帧边界每帧都会调用；只有第一次可以留下记录，否则一场会话会被同一条
+    // 事实刷屏，A/B 会话的事件流也无法直接比对。
+    collector.onRendererSelected("opengl", true);
+    collector.onRendererSelected("opengl", true);
+    collector.onRendererSelected("software", false);
+    collector.shutdown(TelemetryCollector::kShutdownDrainTimeoutMs);
+
+    const auto lines = sinkPtr->lines();
+    size_t rendererLines = 0;
+    std::string recorded;
+    for (const auto &line : lines) {
+        if (line.find("\"event\":\"renderer_selected\"") != std::string::npos) {
+            ++rendererLines;
+            recorded = line;
+        }
+    }
+    REQUIRE(rendererLines == 1);
+    REQUIRE(recorded.find("\"kind\":\"lifecycle\"") != std::string::npos);
+    REQUIRE(recorded.find("renderer=opengl accurate=1") != std::string::npos);
+    REQUIRE(recorded.find("\"sessionID\":\"sess-renderer\"") != std::string::npos);
+}
+
+TEST_CASE("renderer selection tolerates an unset render manager name",
+          "[telemetry][collector]") {
+    auto sink = std::make_unique<CapturingSink>();
+    CapturingSink *sinkPtr = sink.get();
+    TelemetryCollector collector("sess-renderer-empty", std::move(sink), &fakeNow);
+
+    collector.onRendererSelected(nullptr, false);
+    collector.shutdown(TelemetryCollector::kShutdownDrainTimeoutMs);
+
+    std::string recorded;
+    for (const auto &line : sinkPtr->lines()) {
+        if (line.find("\"event\":\"renderer_selected\"") != std::string::npos) {
+            recorded = line;
+        }
+    }
+    REQUIRE(!recorded.empty());
+    REQUIRE(recorded.find("renderer=unknown accurate=0") != std::string::npos);
+}

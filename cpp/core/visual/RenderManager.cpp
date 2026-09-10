@@ -1,5 +1,6 @@
 #include "RenderManager.h"
 #include <cstdlib>
+#include <cstdio>
 #include "renderer/CCTexture2D.h"
 typedef cocos2d::Texture2D::PixelFormat CCPixelFormat;
 #include "MsgIntf.h"
@@ -4879,6 +4880,17 @@ void TVPRegisterRenderManager(const char *name, iTVPRenderManager *(*func)()) {
     _RenderManagerFactory->emplace(name, std::make_pair(func, nullptr));
 }
 
+static char _ActiveRenderManagerName[32] = {};
+
+static void TVPSetActiveRenderManagerName(const char *name) {
+    std::snprintf(_ActiveRenderManagerName, sizeof(_ActiveRenderManagerName),
+                  "%s", name ? name : "");
+}
+
+const char *TVPGetActiveRenderManagerName() {
+    return _ActiveRenderManagerName;
+}
+
 iTVPRenderManager *TVPGetRenderManager(const ttstr &name) {
     auto it = _RenderManagerFactory->find(name);
     if(it == _RenderManagerFactory->end()) {
@@ -4908,6 +4920,7 @@ iTVPRenderManager *TVPGetRenderManager() {
             str = ttstr(rendererOverride);
         }
         _RenderManager = TVPGetRenderManager(str);
+        TVPSetActiveRenderManagerName(str.AsNarrowStdString().c_str());
     }
     return _RenderManager;
 }

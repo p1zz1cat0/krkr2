@@ -208,6 +208,18 @@ void TelemetryCollector::onOutputRebuild(uint32_t oldWidth, uint32_t oldHeight, 
     emitRecord(record);
 }
 
+void TelemetryCollector::onRendererSelected(const char *renderer,
+                                            bool accurateRender) {
+    if (rendererRecorded_.exchange(true, std::memory_order_relaxed)) return;
+    TelemetryRecord record;
+    record.kind = RecordKind::lifecycle;
+    record.monotonicNs = nowNs();
+    std::snprintf(record.eventType, sizeof(record.eventType), "%s", "renderer_selected");
+    std::snprintf(record.detail, sizeof(record.detail), "renderer=%s accurate=%d",
+                  renderer && *renderer ? renderer : "unknown", accurateRender ? 1 : 0);
+    emitRecord(record);
+}
+
 void TelemetryCollector::onPipelineFailure(const char *reason) {
     if (stopped_.load(std::memory_order_acquire)) return;
     TelemetryRecord record;
