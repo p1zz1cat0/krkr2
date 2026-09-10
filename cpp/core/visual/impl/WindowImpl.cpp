@@ -32,6 +32,9 @@
 #include "TVPScreen.h"
 #include "tjsDictionary.h"
 #include "TVPWindow.h"
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+extern "C" bool YoghourtGameWindowIsFullscreen(void);
+#endif
 // #include "VSyncTimingThread.h"
 // #include "MouseCursor.h"
 
@@ -1765,12 +1768,24 @@ bool tTJSNI_Window::GetShowScrollBars() const {
 #endif
 //---------------------------------------------------------------------------
 void tTJSNI_Window::SetFullScreen(bool b) {
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    (void)b;
+    static bool logged = false;
+    if(!logged) {
+        TVPAddLog(TJS_W("[Yoghourt] Window.fullScreen script request ignored; the host owns native fullscreen."));
+        logged = true;
+    }
+    return;
+#endif
     if(!_form)
         return;
     _form->SetFullScreenMode(b);
 }
 //---------------------------------------------------------------------------
 bool tTJSNI_Window::GetFullScreen() const {
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    return YoghourtGameWindowIsFullscreen();
+#endif
     if(!_form)
         return false;
     return _form->GetFullScreenMode();

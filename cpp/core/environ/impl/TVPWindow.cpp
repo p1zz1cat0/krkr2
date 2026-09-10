@@ -1,4 +1,7 @@
 #include "TVPWindow.h"
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+#include "SurfaceLayout.h"
+#endif
 #include <cocos2d.h>
 #include <cocos-ext.h>
 
@@ -438,10 +441,20 @@ void TVPWindowLayer::RecalcPaintBox() {
     ResetDrawSprite();
     cocos2d::Size size = getViewSize();
     cocos2d::Size contSize = getContentSize();
-    float r = size.width / size.height;
-    float R = contSize.width / contSize.height;
     float scale;
     cocos2d::Vec2 offset;
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    const yoghourt_spatial::SurfaceLayout layout(
+        {size.width, size.height},
+        {size.width, size.height},
+        {contSize.width, contSize.height},
+        yoghourt_spatial::SurfacePolicy::fit);
+    scale = static_cast<float>(layout.scaleX());
+    const auto content = layout.contentRect();
+    offset.set(static_cast<float>(content.x), static_cast<float>(content.y));
+#else
+    float r = size.width / size.height;
+    float R = contSize.width / contSize.height;
     if(R > r) {
         scale = size.width / contSize.width;
         offset.x = 0;
@@ -451,6 +464,7 @@ void TVPWindowLayer::RecalcPaintBox() {
         offset.x = (size.width - contSize.width * scale) / 2;
         offset.y = 0;
     }
+#endif
     setMinScale(scale);
     setMaxScale(scale * 2);
     setZoomScale(scale);

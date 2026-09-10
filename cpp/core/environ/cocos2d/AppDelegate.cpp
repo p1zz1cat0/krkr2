@@ -24,7 +24,8 @@ std::string TVPGetCurrentLanguage();
 
 extern "C" void YoghourtApplyWindowPresentation(void *nativeWindow);
 
-extern "C" void YoghourtRefreshWindowLayout(int width, int height) {
+extern "C" void YoghourtRefreshWindowLayout(int width, int height, bool fullscreen) {
+    (void)fullscreen;
     if(width <= 0 || height <= 0)
         return;
 
@@ -41,7 +42,7 @@ extern "C" void YoghourtRefreshWindowLayout(int width, int height) {
     glview->setDesignResolutionSize(
         designResolutionSize.width,
         designResolutionSize.height,
-        ResolutionPolicy::NO_BORDER);
+        ResolutionPolicy::SHOW_ALL);
     director->setViewport();
 }
 
@@ -100,11 +101,9 @@ bool TVPAppDelegate::applicationDidFinishLaunching() {
                                     ResolutionPolicy::EXACT_FIT);
 #else
     // Set the design resolution
-    const char *displayMode = std::getenv("YOGHOURT_DISPLAY_MODE");
-    const bool coverScreen = displayMode && std::strcmp(displayMode, "fullscreen") == 0;
     glview->setDesignResolutionSize(designResolutionSize.width,
                                     designResolutionSize.height,
-                                    coverScreen ? ResolutionPolicy::NO_BORDER : ResolutionPolicy::SHOW_ALL);
+                                    ResolutionPolicy::SHOW_ALL);
     // glview->setFrameSize(designResolutionSize.width * 1.5f,
     //                      designResolutionSize.height * 1.5f);
 #endif
