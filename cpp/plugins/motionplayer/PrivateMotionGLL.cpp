@@ -545,6 +545,15 @@ namespace {
 
         void Draw_GPU(tTVPDrawable *target, int x, int y, const tTVPRect &r,
                       bool visiblecheck = true) override {
+            // 本层有两种内容来源：原生 SLA 路径把绘制项填进 _renderQueue 由此处
+            // 重放；command-graph / 直绘路径则把 E-mote 直接画进本层 MainImage，
+            // 队列保持为空。只重放队列会让后者在 GPU 合成下整层消失——立绘不可见，
+            // 而 E-mote 仍每帧在画。队列为空时退回基类合成 MainImage，与 CPU 合成
+            // 走的基类 Draw 语义一致；队列非空时仍按原生语义重放。
+            if(_renderQueueLike_0x6DDBD8.empty()) {
+                tTJSNI_BaseLayer::Draw_GPU(target, x, y, r, visiblecheck);
+                return;
+            }
             if(visiblecheck && !IsSeen()) {
                 return;
             }
