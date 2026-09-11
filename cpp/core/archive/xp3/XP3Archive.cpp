@@ -53,7 +53,15 @@ struct tTVPArchiveHandleCacheItem {
 static tTVPArchiveHandleCacheItem *TVPArchiveHandleCachePool = nullptr;
 static bool TVPArchiveHandleCacheInit = false;
 static bool TVPArchiveHandleCacheShutdown = false;
-static tTJSCriticalSection TVPArchiveHandleCacheCS;
+// 进程常驻临界区：本文件与 StorageIntf.cpp 的全局对象析构顺序由链接决定，
+// 不可控。archive cache 的静态析构可能在 atexit 清理之前再次经
+// TVPFreeArchiveHandlePoolByPointer 加锁；若临界区已析构，对已销毁的
+// std::mutex lock 会抛 EINVAL 并在静态析构中 terminate。这里有意不析构，
+// 退出时由系统回收。
+static tTJSCriticalSection &TVPArchiveHandleCacheCriticalSection() {
+    static tTJSCriticalSection *cs = new tTJSCriticalSection;
+    return *cs;
+}
 
 //---------------------------------------------------------------------------
 tTJSBinaryStream *TVPGetCachedArchiveHandle(void *pointer, const ttstr &name) {
@@ -63,7 +71,7 @@ tTJSBinaryStream *TVPGetCachedArchiveHandle(void *pointer, const ttstr &name) {
         return TVPCreateStream(name);
     }
 
-    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
+    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCriticalSection());
 
     if(!TVPArchiveHandleCacheInit) {
         // initialize the pool
@@ -102,7 +110,7 @@ tTJSBinaryStream *TVPGetCachedArchiveHandle(void *pointer, const ttstr &name) {
     if(!TVPArchiveHandleCacheInit)
         return;
 
-    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
+    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCriticalSection());
 
     // search empty cell in the pool
     tjs_uint oldest_age = 0;
@@ -145,7 +153,7 @@ tTJSBinaryStream *TVPGetCachedArchiveHandle(void *pointer, const ttstr &name) {
     if(!TVPArchiveHandleCacheInit)
         return;
 
-    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
+    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCriticalSection());
 
     for(tjs_int i = 0; i < TVP_MAX_ARCHIVE_HANDLE_CACHE; i++) {
         tTVPArchiveHandleCacheItem *item = TVPArchiveHandleCachePool + i;
@@ -165,7 +173,7 @@ static void TVPFreeArchiveHandlePool() {
     if(!TVPArchiveHandleCacheInit)
         return;
 
-    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
+    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCriticalSection());
 
     for(tjs_int i = 0; i < TVP_MAX_ARCHIVE_HANDLE_CACHE; i++) {
         tTVPArchiveHandleCacheItem *item = TVPArchiveHandleCachePool + i;
@@ -180,7 +188,7 @@ static void TVPFreeArchiveHandlePool() {
 //---------------------------------------------------------------------------
 static void TVPShutdownArchiveHandleCache() {
     // free all stream and shutdown the pool
-    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
+    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCriticalSection());
 
     TVPArchiveHandleCacheShutdown = true;
     if(!TVPArchiveHandleCacheInit)

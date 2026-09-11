@@ -47,10 +47,15 @@ public:
     void AddRef() { RefCount++; }
 
     void Release() {
-        if(RefCount == 1)
+        if(RefCount == 1) {
+            // 析构路径内会再次回调 Release：tTVPXP3Archive 释放 handle
+            // pool 时 stream 析构会调用 Owner->Release()。先清零，避免对
+            // 已经 delete 的对象第二次 delete this（double free / UAF）。
+            RefCount = 0;
             delete this;
-        else
+        } else if(RefCount > 1) {
             RefCount--;
+        }
     }
 
     //-- must be implemented by delivered class
