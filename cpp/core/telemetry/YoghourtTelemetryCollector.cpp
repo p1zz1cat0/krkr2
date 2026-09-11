@@ -212,7 +212,10 @@ void TelemetryCollector::onRendererSelected(const char *renderer,
                                             bool accurateRender) {
     if (rendererRecorded_.exchange(true, std::memory_order_relaxed)) return;
     TelemetryRecord record;
-    record.kind = RecordKind::lifecycle;
+    // event 而非 lifecycle：宿主把 lifecycle 当内部信号消费（runtime_exit 只
+    // 反映为 session.json 的 runtimeExitSeen），不写 events.csv；event 记录连同
+    // detail 才会落进 events.csv，A/B 会话才看得到渲染路径。
+    record.kind = RecordKind::event;
     record.monotonicNs = nowNs();
     std::snprintf(record.eventType, sizeof(record.eventType), "%s", "renderer_selected");
     std::snprintf(record.detail, sizeof(record.detail), "renderer=%s accurate=%d",

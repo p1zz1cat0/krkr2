@@ -256,13 +256,13 @@ TEST_CASE("renderer selection is recorded once with the accurate-render flag",
     size_t rendererLines = 0;
     std::string recorded;
     for (const auto &line : lines) {
-        if (line.find("\"event\":\"renderer_selected\"") != std::string::npos) {
+        if (line.find("\"eventType\":\"renderer_selected\"") != std::string::npos) {
             ++rendererLines;
             recorded = line;
         }
     }
     REQUIRE(rendererLines == 1);
-    REQUIRE(recorded.find("\"kind\":\"lifecycle\"") != std::string::npos);
+    REQUIRE(recorded.find("\"kind\":\"event\"") != std::string::npos);
     REQUIRE(recorded.find("renderer=opengl accurate=1") != std::string::npos);
     REQUIRE(recorded.find("\"sessionID\":\"sess-renderer\"") != std::string::npos);
 }
@@ -278,7 +278,7 @@ TEST_CASE("renderer selection tolerates an unset render manager name",
 
     std::string recorded;
     for (const auto &line : sinkPtr->lines()) {
-        if (line.find("\"event\":\"renderer_selected\"") != std::string::npos) {
+        if (line.find("\"eventType\":\"renderer_selected\"") != std::string::npos) {
             recorded = line;
         }
     }
