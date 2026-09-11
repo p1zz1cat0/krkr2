@@ -2,6 +2,7 @@
 #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
 #include "SurfaceLayout.h"
 #endif
+#include <algorithm>
 #include <cocos2d.h>
 #include <cocos-ext.h>
 
@@ -515,12 +516,30 @@ void TVPWindowLayer::UpdateDrawBuffer(iTVPTexture2D *tex) {
     }
 #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
     if(newtex) {
+        // The adapter texture keeps maxS/maxT at 1 even when the game frame
+        // lives in a padded power-of-two texture (1280x720 inside 2048x1024).
+        // The spatial copy pass samples the whole texture with those bounds,
+        // so the padding leaks into the shared surface and the presenter
+        // letterboxes it: the game then renders shrunk into a corner.
+        // Derive the sampled bounds from the sprite's texture rect, which is
+        // the same region the on-screen path draws.
+        const cocos2d::Size adapterSize = newtex->getContentSize();
+        const cocos2d::Rect displayRect = DrawSprite->getTextureRect();
+        const auto uvBound = [](double value) {
+            return static_cast<float>(std::min(1.0, std::max(0.0, value)));
+        };
+        const float maxS = adapterSize.width > 0
+            ? uvBound(displayRect.size.width / adapterSize.width)
+            : 1.0f;
+        const float maxT = adapterSize.height > 0
+            ? uvBound(displayRect.size.height / adapterSize.height)
+            : 1.0f;
         YoghourtKrKrSpatialRegisterSourceTexture(
             newtex->getName(),
             LayerWidth,
             LayerHeight,
-            newtex->getMaxS(),
-            newtex->getMaxT(),
+            maxS,
+            maxT,
             DrawSprite->isFlippedY());
     }
 #endif
