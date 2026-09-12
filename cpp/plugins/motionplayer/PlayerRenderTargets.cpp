@@ -1194,7 +1194,7 @@ namespace motion {
             detail::shouldUseContinuousEmoteMask(emoteLike, _maskMode);
         iTJSDispatch2 *targetLayerObject =
             tryResolveLayerDispatch(sla->getTargetLayer());
-        const bool accurateSla = isAccurateSlaRenderEnabled() || emoteLike;
+        const bool accurateSla = isAccurateSlaRenderEnabled();
         // Both SLA modes need the private Motion GLL target. Accurate mode
         // used to bypass this because its deleted legacy path painted part
         // Layers directly under targetLayerObject; the REF executor instead
