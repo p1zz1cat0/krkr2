@@ -2432,6 +2432,7 @@ const void *tTVPOGLTexture2D::GetScanLineForRead(tjs_uint l) {
             glViewport(0, 0, internalW, internalH);
             glPixelStorei(GL_PACK_ALIGNMENT,
                           4); // always dword aligned
+            TVPTexCountBump(TVPTexCount_OglReadback); // TEXCOUNT-TEMP
             glReadPixels(0, 0, internalW, internalH, GL_RGBA, GL_UNSIGNED_BYTE,
                          PixelData);
             // KRKR_EMOTE_OGL_GEOM: 真实读回发生处。CPU 侧每次采样画布都会命中
@@ -2673,6 +2674,7 @@ protected:
                                                 TVPTextureFormat::e fmt,
                                                 tjs_uint dstw, tjs_uint dsth,
                                                 bool isOpaque) {
+        TVPTexCountBump(TVPTexCount_StaticCreate); // TEXCOUNT-TEMP
         const tjs_uint8 *pixel = (const tjs_uint8 *)dib;
         tjs_uint8 *tmp = nullptr;
         tjs_uint w = tw, h = th;
@@ -4160,6 +4162,7 @@ public:
             return nullptr;
         if(dynamic_cast<tTVPOGLTexture2D *>(tex)) {
             tex->AddRef();
+            TVPTexCountBump(TVPTexCount_BridgeHit); // TEXCOUNT-TEMP
             return static_cast<tTVPOGLTexture2D *>(tex);
         }
         const tjs_uint w = tex->GetWidth();
@@ -4168,6 +4171,26 @@ public:
         const tjs_int pitch = tex->GetPitch();
         tTVPOGLTexture2D_mutatble *bridge = new tTVPOGLTexture2D_mutatble(
             nullptr, 0, w, h, format, 1.f, 1.f);
+        TVPTexCountBump(TVPTexCount_BridgeCreate); // TEXCOUNT-TEMP
+        // 整块上传而非逐行：InternalUpdate 已经用 GL_UNPACK_ROW_LENGTH（无该
+        // 扩展时用暂存拷贝）处理任意 pitch，一次 glTexSubImage2D 就能传完整张。
+        // 逐行版本对 h 行发 h 次 glTexSubImage2D，每次都要重新 bind 并设
+        // glPixelStorei，还要对源纹理调 h 次 GetScanLineForRead。E-mote 部件
+        // 每帧都要过这条路，嵌入式 runtime 采样里占主线程 36%（上传子树 44%）。
+        // 只有各行在内存中连续时才能这样合批，否则退回逐行以保正确性。
+        const unsigned char *base =
+            (const unsigned char *)tex->GetScanLineForRead(0);
+        bool contiguous = base != nullptr;
+        if(contiguous && h > 1) {
+            const unsigned char *second =
+                (const unsigned char *)tex->GetScanLineForRead(1);
+            contiguous = second == base + pitch;
+        }
+        if(contiguous) {
+            bridge->Update(base, format, pitch,
+                           tTVPRect(0, 0, (tjs_int)w, (tjs_int)h));
+            return bridge;
+        }
         for(tjs_uint l = 0; l < h; ++l) {
             const void *scanline = tex->GetScanLineForRead(l);
             if(scanline) {

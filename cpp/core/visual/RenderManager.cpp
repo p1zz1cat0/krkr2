@@ -1,5 +1,8 @@
 #include "RenderManager.h"
 #include <cstdlib>
+#include <string>
+#include <chrono>
+#include <atomic>
 #include <cstdio>
 #include "renderer/CCTexture2D.h"
 typedef cocos2d::Texture2D::PixelFormat CCPixelFormat;
@@ -4924,6 +4927,60 @@ iTVPRenderManager *TVPGetRenderManager() {
     }
     return _RenderManager;
 }
+
+// TEXCOUNT-TEMP begin
+static const char *kTexCountNames[TVPTexCount_Slots] = {
+    "meshConvert", "meshCopyConvert", "bridgeCreate",
+    "bridgeHit", "oglReadback", "staticCreate"
+};
+static std::atomic<unsigned long> gTexCounts[TVPTexCount_Slots];
+static std::chrono::steady_clock::time_point gTexCountLast;
+
+static void TVPTexCountDump(const char *tag) {
+    const auto now = std::chrono::steady_clock::now();
+    const double secs = std::chrono::duration<double>(now - gTexCountLast).count();
+    std::string line = "[Yoghourt][texcount] ";
+    line += tag;
+    for(int i = 0; i < TVPTexCount_Slots; ++i) {
+        const unsigned long v =
+            gTexCounts[i].exchange(0, std::memory_order_relaxed);
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), " %s=%lu(%.0f/s)", kTexCountNames[i], v,
+                      secs > 0 ? v / secs : 0.0);
+        line += buf;
+    }
+    std::fprintf(stderr, "%s\n", line.c_str());
+    std::fflush(stderr);
+    gTexCountLast = now;
+}
+
+void TVPTexCountBump(int slot) {
+    static const bool enabled = [] {
+        const char *e = std::getenv("KRKR_EMOTE_TEXCOUNT");
+        const bool on = e && *e && *e != '0';
+        if(on) {
+            gTexCountLast = std::chrono::steady_clock::now();
+            // 短进程（fixture）可能不足一个间隔就退出，退出时补一次汇总，
+            // 否则会误判成"路径没被命中"。
+            std::atexit([] { TVPTexCountDump("final"); });
+        }
+        return on;
+    }();
+    if(!enabled || slot < 0 || slot >= TVPTexCount_Slots)
+        return;
+    gTexCounts[slot].fetch_add(1, std::memory_order_relaxed);
+
+    static std::atomic<bool> dumping{ false };
+    const auto now = std::chrono::steady_clock::now();
+    if(std::chrono::duration_cast<std::chrono::milliseconds>(now - gTexCountLast)
+           .count() < 1000)
+        return;
+    if(dumping.exchange(true, std::memory_order_acq_rel))
+        return; // 只让一个线程输出，其余继续累加
+    TVPTexCountDump("1s");
+    dumping.store(false, std::memory_order_release);
+}
+// TEXCOUNT-TEMP end
 
 bool TVPGetOglAccurateRender() {
     static const bool value = [] {

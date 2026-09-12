@@ -4945,6 +4945,7 @@ void tTJSNI_BaseLayer::MeshCopy(const tTVPPointD *points, tjs_int divx,
         return;
     }
     if(manager != src->GetRenderManager()) {
+        TVPTexCountBump(TVPTexCount_MeshCopyConvert); // TEXCOUNT-TEMP
         const void *pixels = sourceTexture->GetScanLineForRead(0);
         if(!pixels) {
             return;
@@ -5171,6 +5172,7 @@ void tTJSNI_BaseLayer::OperateMesh(const tTVPPointD *points, tjs_int divx,
         return;
     }
     if(manager != src->GetRenderManager()) {
+        TVPTexCountBump(TVPTexCount_MeshConvert); // TEXCOUNT-TEMP
         const void *pixels = sourceTexture->GetScanLineForRead(0);
         if(!pixels) {
             return;

@@ -322,6 +322,19 @@ bool TVPIsSoftwareRenderManager();
 /// 未设置时行为与直接读配置完全一致。
 bool TVPGetOglAccurateRender();
 
+// TEXCOUNT-TEMP: 每帧 GPU 资源 churn 的调用方计数。KRKR_EMOTE_TEXCOUNT=1 开启，
+// 关闭时只是一次原子自增，不产生输出。槽位见 RenderManager.cpp 的 kTexCountNames。
+void TVPTexCountBump(int slot);
+enum {
+    TVPTexCount_MeshConvert = 0,   // OperateMesh 异构转换
+    TVPTexCount_MeshCopyConvert,   // MeshCopy 异构转换
+    TVPTexCount_BridgeCreate,      // EnsureOGLTexture 现造桥接纹理
+    TVPTexCount_BridgeHit,         // EnsureOGLTexture 命中原生 OGL 纹理
+    TVPTexCount_OglReadback,       // GetScanLineForRead 真正 glReadPixels
+    TVPTexCount_StaticCreate,      // CreateStaticTexture2D
+    TVPTexCount_Slots
+};
+
 /// 当前生效的图层合成 render manager 名称（"software" / "opengl"），
 /// 在首次选择之前返回空字符串。遥测需要它来区分 A/B 会话：没有这一项，
 /// 一份 performance.csv 无法判断是哪条渲染路径产出的。
