@@ -37,6 +37,7 @@ extern "C" void TVPShrinkCopyPluginAnchor();
 extern "C" void TVPLayerExRasterPluginAnchor();
 extern "C" void TVPFstatPluginAnchor();
 extern "C" void TVPLayerExBtoAPluginAnchor();
+extern "C" void TVPLayerExImagePluginAnchor();
 extern "C" void TVPPackinOnePluginAnchor();
 extern "C" void TVPExtransPluginAnchor();
 extern "C" void TVPAlphaMoviePluginAnchor();
@@ -125,6 +126,7 @@ void TVPLoadInternalPlugins() {
     TVPLayerExRasterPluginAnchor();
     TVPFstatPluginAnchor();
     TVPLayerExBtoAPluginAnchor();
+    TVPLayerExImagePluginAnchor();
     TVPPackinOnePluginAnchor();
     TVPExtransPluginAnchor();
     TVPAlphaMoviePluginAnchor();

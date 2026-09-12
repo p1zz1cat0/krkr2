@@ -21,6 +21,23 @@ PackinOne 的兼容入口。fixture 没有为 `resize`、`quality`、`loadCxImag
 `saveCxImage` 或 `flip` 提供足够证据，因此没有注册这些接口，也没有猜测
 `quality = 0/1/2` 的含义。
 
+## 独立 layerExImage.dll 注册面（2026-09-13）
+
+部分游戏脚本不经过 PackinOne，直接 `Plugins.link("layerExImage.dll")` 后
+调用同一组 Layer 成员。上游权威源
+<https://github.com/wtnbgo/layerExImage>（wamsoft）确认该模块的
+`Main.cpp` 用 `NCB_ATTACH_CLASS_WITH_HOOK(layerExImage, Layer)` 注册同一
+六个方法，manual.tjs 的参数语义与 PackinOne fixture 逆向结果一致——
+两个入口共享同一套像素算法。
+
+因此本仓库新增 `cpp/plugins/layerExImage/`（模块名 `layerExImage.dll`），
+与 PackinOne 共享 `common/LayerExImageOps.h` 中的算法实现。注册形态与
+上游不同：这里用普通函数注册（`NCB_ATTACH_FUNCTION`）而不是上游的类注册。
+原因：ncbind 的 `ncbAttachTJS2Class` 对同名 native class 重复注册会抛
+"Already registerd class:"，同时 link 两个模块（或先 PackinOne 后
+layerExImage）会失败；函数注册重复挂 Layer 是覆盖语义，两个模块可以共存。
+smoke fixture `tests/test_files/layerExImage` 覆盖了共存顺序。
+
 像素算法与官方参考实现对照：
 <https://github.com/krkrz/krkr2/tree/master/kirikiri2/trunk/kirikiri2/src/plugins/win32/layerExImage>
 

@@ -25,6 +25,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     layerExPerspective/layerExPerspective.cpp
     fftgraph/fftgraph.cpp
     common/LayerExBase.cpp
+    layerExImage/layerExImage.cpp
     Extrans/Extrans.cpp
     Extrans/ExtransMath.cpp
     xp3filter/xp3filter.cpp
