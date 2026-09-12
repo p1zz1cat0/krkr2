@@ -151,6 +151,43 @@ namespace motion {
                 accumulated + (((255 - accumulated) * source) / 255));
         }
 
+        // 一个 mask surface 与目标矩形的交集，输出目标局部坐标的 dst 位置与
+        // surface 局部坐标的 src 位置。覆盖判定与 CPU 逐像素版一致：
+        // surface 像素被采用当且仅当 sourceX/Y 落在 surface 尺寸内且目标
+        // 坐标落在目标矩形内。无交集返回 false。
+        struct MotionMaskSurfaceRect {
+            int dstLeft = 0;
+            int dstTop = 0;
+            int srcLeft = 0;
+            int srcTop = 0;
+            int width = 0;
+            int height = 0;
+        };
+
+        inline bool motionMaskSurfaceRect(int dstWorldLeft, int dstWorldTop,
+                                          int dstWidth, int dstHeight,
+                                          int surfaceWorldLeft,
+                                          int surfaceWorldTop,
+                                          int surfaceWidth, int surfaceHeight,
+                                          MotionMaskSurfaceRect &out) {
+            const int left = std::max(0, surfaceWorldLeft - dstWorldLeft);
+            const int top = std::max(0, surfaceWorldTop - dstWorldTop);
+            const int right = std::min(
+                dstWidth, surfaceWorldLeft + surfaceWidth - dstWorldLeft);
+            const int bottom = std::min(
+                dstHeight, surfaceWorldTop + surfaceHeight - dstWorldTop);
+            if(left >= right || top >= bottom) {
+                return false;
+            }
+            out.dstLeft = left;
+            out.dstTop = top;
+            out.srcLeft = left + dstWorldLeft - surfaceWorldLeft;
+            out.srcTop = top + dstWorldTop - surfaceWorldTop;
+            out.width = right - left;
+            out.height = bottom - top;
+            return true;
+        }
+
         inline std::uint8_t applyMotionCompositeMaskAlpha(
             std::uint8_t destinationAlpha, std::uint8_t unionAlpha,
             int compositeFlags, int maskMode, int threshold) {

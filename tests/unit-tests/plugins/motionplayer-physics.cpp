@@ -179,6 +179,46 @@ TEST_CASE("Composite mask unions sources before cropping the colour group") {
               200, 255, 5, 0, threshold) == 200);
 }
 
+TEST_CASE("GPU mask union clips each surface to the composite rect") {
+    motion::detail::MotionMaskSurfaceRect area;
+
+    // 完全包含在目标内：dst 是偏移，src 从 surface 原点起。
+    CHECK(motion::detail::motionMaskSurfaceRect(100, 200, 64, 48, 110, 210, 16,
+                                                12, area));
+    CHECK(area.dstLeft == 10);
+    CHECK(area.dstTop == 10);
+    CHECK(area.srcLeft == 0);
+    CHECK(area.srcTop == 0);
+    CHECK(area.width == 16);
+    CHECK(area.height == 12);
+
+    // 越过目标左上角：src 必须跟着裁掉同样多的像素，尺寸两边一致。
+    CHECK(motion::detail::motionMaskSurfaceRect(100, 200, 64, 48, 90, 195, 32,
+                                                20, area));
+    CHECK(area.dstLeft == 0);
+    CHECK(area.dstTop == 0);
+    CHECK(area.srcLeft == 10);
+    CHECK(area.srcTop == 5);
+    CHECK(area.width == 22);
+    CHECK(area.height == 15);
+
+    // 越过目标右下角：只裁尺寸，起点不动。
+    CHECK(motion::detail::motionMaskSurfaceRect(100, 200, 64, 48, 150, 230, 40,
+                                                40, area));
+    CHECK(area.dstLeft == 50);
+    CHECK(area.dstTop == 30);
+    CHECK(area.srcLeft == 0);
+    CHECK(area.srcTop == 0);
+    CHECK(area.width == 14);
+    CHECK(area.height == 18);
+
+    // 无交集（相邻但不重叠）不产生绘制。
+    CHECK_FALSE(motion::detail::motionMaskSurfaceRect(100, 200, 64, 48, 164,
+                                                      200, 16, 16, area));
+    CHECK_FALSE(motion::detail::motionMaskSurfaceRect(100, 200, 64, 48, 100,
+                                                      152, 16, 48, area));
+}
+
 TEST_CASE("Top-level zero dt does not initialize post-Core physics") {
     motion::physics::BustControl bust(bustConfig());
     const auto zeroOutput =

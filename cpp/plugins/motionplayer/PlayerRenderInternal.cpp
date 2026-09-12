@@ -709,6 +709,132 @@ namespace motion::internal::render_detail {
         return std::max(1, std::min(TVPGetThreadNum(), height));
     }
 
+    // 连续遮罩（playerStencilType != 0）的三个 op 都只改目标 alpha、不动
+    // RGB，且 CPU 式子在实数域上就是 separate blend 的定义式，所以不需要把
+    // 目标当输入采样：一个只转发源 alpha 的 shader 配三种 alpha blend 因子
+    // 即可，省掉 target-as-src 的临时纹理拷贝与对 framebuffer fetch 扩展的
+    // 依赖。RGB 一律 (ZERO, ONE)，即保持目标不变。
+    //   op1 multiply : d.a = d.a * s.a           alpha(ZERO, SRC_ALPHA)
+    //   op2 erase    : d.a = d.a * (1 - s.a)     alpha(ZERO, ONE_MINUS_SRC_ALPHA)
+    //   op5/6 over   : d.a = s.a + d.a * (1-s.a) alpha(ONE,  ONE_MINUS_SRC_ALPHA)
+    // 与 detail::applyMotionMaskAlpha 的差异只有定点舍入：CPU 走 /255 截断，
+    // GPU 写 RGBA8 四舍五入，单次 ≤ 1/255。遮罩每帧作用在新合成的图层上、
+    // 不迭代，误差不累积。
+    iTVPRenderMethod *motionMaskRenderMethod(int operation) {
+        // 软件 manager 的 GetRenderMethodFromScript 返回 nullptr，而
+        // CompileRenderMethod 会无条件 RegisterRenderMethod，必须提前挡掉。
+        if(TVPIsSoftwareRenderManager()) {
+            return nullptr;
+        }
+        static const char kMaskAlphaShader[] =
+            "void main(){\n"
+            "    gl_FragColor = vec4(0.0, 0.0, 0.0,\n"
+            "                        texture2D(tex0, v_texCoord0).a);\n"
+            "}";
+        struct MaskMethodSlot {
+            const char *name;
+            int srcAlphaFactor;
+            int dstAlphaFactor;
+            std::uint32_t hint;
+        };
+        static MaskMethodSlot slots[] = {
+            { "MotionMaskMultiply", GL_ZERO, GL_SRC_ALPHA, 0 },
+            { "MotionMaskErase", GL_ZERO, GL_ONE_MINUS_SRC_ALPHA, 0 },
+            { "MotionMaskOver", GL_ONE, GL_ONE_MINUS_SRC_ALPHA, 0 },
+        };
+        MaskMethodSlot *slot = nullptr;
+        switch(operation) {
+            case 1:
+                slot = &slots[0];
+                break;
+            case 2:
+                slot = &slots[1];
+                break;
+            case 5:
+            case 6:
+                slot = &slots[2];
+                break;
+            default:
+                return nullptr;
+        }
+        auto *method = TVPGetRenderManager()->GetOrCompileRenderMethod(
+            slot->name, &slot->hint, kMaskAlphaShader, 1);
+        if(!method) {
+            return nullptr;
+        }
+        // method 是 manager 生命周期内的单例，混合状态是它的固有属性；
+        // 每次取用重设一遍是 5 次整数赋值，顺带覆盖 manager 重建后的新实例。
+        method->SetBlendFuncSeparate(GL_FUNC_ADD, GL_ZERO, GL_ONE,
+                                     slot->srcAlphaFactor,
+                                     slot->dstAlphaFactor);
+        return method;
+    }
+
+    // 在 GPU 上把 srcRect 的 alpha 按 operation 作用到 dstRect。任何前提不
+    // 成立都返回 false 且不触碰目标，调用方回落到 CPU 逐像素路径。
+    bool blendMaskAlphaOnGpu(iTVPBaseBitmap *dstBitmap, const tTVPRect &dstRect,
+                             const iTVPBaseBitmap *srcBitmap,
+                             const tTVPRect &srcRect, int operation) {
+        if(!dstBitmap || !srcBitmap) {
+            return false;
+        }
+        if(dstRect.get_width() <= 0 || dstRect.get_height() <= 0 ||
+           srcRect.get_width() != dstRect.get_width() ||
+           srcRect.get_height() != dstRect.get_height()) {
+            return false;
+        }
+        auto *manager = TVPGetRenderManager();
+        // 异构 manager 的位图在 OperateRect 里会 dynamic_cast 失败并静默退出，
+        // 那样会"成功"地什么都没做；在这里判掉，让调用方走 CPU。
+        auto *mutableSrc = const_cast<iTVPBaseBitmap *>(srcBitmap);
+        if(dstBitmap->GetRenderManager() != manager ||
+           mutableSrc->GetRenderManager() != manager) {
+            return false;
+        }
+        auto *method = motionMaskRenderMethod(operation);
+        if(!method) {
+            return false;
+        }
+        // 先取目标：GetTextureForRender 会 Independ，把目标从可能与源共享的
+        // CoW 缓冲里摘出来，之后取到的源纹理必然是另一个对象。
+        iTVPTexture2D *target =
+            dstBitmap->GetTextureForRender(method->IsBlendTarget(), &dstRect);
+        iTVPTexture2D *source = mutableSrc->GetTexture();
+        if(!target || !source || target == source) {
+            return false;
+        }
+        tRenderTexRectArray::Element sourceTextures[] = {
+            tRenderTexRectArray::Element(source, srcRect)
+        };
+        manager->OperateRect(method, target, nullptr, dstRect,
+                             tRenderTexRectArray(sourceTextures));
+        return true;
+    }
+
+    // 多 surface 的 union 暂存面。union 后的 alpha 对 op1 不可分解，必须先
+    // 合成再一次性作用，所以需要一张离屏面；op2 顺带复用同一条路径，免得为
+    // "顺序 erase 等价于 union erase"再补一份舍入等价性论证。
+    // 渲染在主线程单线程执行，一张按需增长的静态面足够；不做静态析构（GL
+    // 上下文先于静态对象销毁），生命周期内只此一张。
+    iTVPBaseBitmap *ensureMaskUnionScratch(int width, int height) {
+        if(width <= 0 || height <= 0 || TVPIsSoftwareRenderManager()) {
+            return nullptr;
+        }
+        static tTVPBaseTexture *scratch = nullptr;
+        if(!scratch || static_cast<int>(scratch->GetWidth()) < width ||
+           static_cast<int>(scratch->GetHeight()) < height) {
+            const auto newWidth = static_cast<tjs_uint>(std::max(
+                width, scratch ? static_cast<int>(scratch->GetWidth()) : 0));
+            const auto newHeight = static_cast<tjs_uint>(std::max(
+                height, scratch ? static_cast<int>(scratch->GetHeight()) : 0));
+            delete scratch;
+            scratch = new tTVPBaseTexture(newWidth, newHeight, 32);
+        }
+        // CreateTexture2D(nullptr, ...) 不保证清零，union 必须从 alpha=0 起算。
+        scratch->Fill(tTVPRect(0, 0, width, height), 0);
+        return scratch;
+    }
+
     bool applyMotionAlphaMaskLike_0x6AF104(
         iTJSDispatch2 *dstLayerObject, int dstX, int dstY,
         iTJSDispatch2 *srcLayerObject, int srcX, int srcY, int width,
@@ -786,37 +912,50 @@ namespace motion::internal::render_detail {
             return true;
         }
 
-        auto *dstBase = static_cast<std::uint8_t *>(
-            dstBmp->GetScanLineForWrite(0));
-        const auto *srcBase = static_cast<const std::uint8_t *>(
-            srcBmp->GetScanLine(0));
-        const int dstPitch = dstBmp->GetPitchBytes();
-        const int srcPitch = srcBmp->GetPitchBytes();
-        const int threadCount = motionMaskThreadCount(width, height);
-        TVPExecThreadTask(threadCount, [&](int taskIndex) {
-            const int y0 = height * taskIndex / threadCount;
-            const int y1 = height * (taskIndex + 1) / threadCount;
-            for(int y = y0; y < y1; ++y) {
-                auto *dstRow = dstBase + (dstY + y) * dstPitch + dstX * 4;
-                const auto *srcRow = srcBase + (srcY + y) * srcPitch + srcX * 4;
-                for(int x = 0; x < width; ++x) {
-                    auto *dstPixel = dstRow + x * 4;
-                    const auto *srcPixel = srcRow + x * 4;
-                    dstPixel[3] = detail::applyMotionMaskAlpha(
-                        dstPixel[3], srcPixel[3], itemFlags, playerStencilType,
-                        threshold);
+        // 阈值化遮罩（playerStencilType == 0）另有 stencil 路径，GPU 混合
+        // 表达不了它的 threshold 分支，只有连续遮罩走 GPU。
+        const bool appliedOnGpu =
+            playerStencilType != 0 &&
+            blendMaskAlphaOnGpu(dstBmp, overlapRect, srcBmp,
+                                tTVPRect(srcX, srcY, srcX + width,
+                                         srcY + height),
+                                itemFlags);
+        if(!appliedOnGpu) {
+            auto *dstBase = static_cast<std::uint8_t *>(
+                dstBmp->GetScanLineForWrite(0));
+            const auto *srcBase = static_cast<const std::uint8_t *>(
+                srcBmp->GetScanLine(0));
+            const int dstPitch = dstBmp->GetPitchBytes();
+            const int srcPitch = srcBmp->GetPitchBytes();
+            const int threadCount = motionMaskThreadCount(width, height);
+            TVPExecThreadTask(threadCount, [&](int taskIndex) {
+                const int y0 = height * taskIndex / threadCount;
+                const int y1 = height * (taskIndex + 1) / threadCount;
+                for(int y = y0; y < y1; ++y) {
+                    auto *dstRow = dstBase + (dstY + y) * dstPitch + dstX * 4;
+                    const auto *srcRow =
+                        srcBase + (srcY + y) * srcPitch + srcX * 4;
+                    for(int x = 0; x < width; ++x) {
+                        auto *dstPixel = dstRow + x * 4;
+                        const auto *srcPixel = srcRow + x * 4;
+                        dstPixel[3] = detail::applyMotionMaskAlpha(
+                            dstPixel[3], srcPixel[3], itemFlags,
+                            playerStencilType, threshold);
+                    }
                 }
-            }
-        });
+            });
+        }
 
         motion::detail::logoChainTraceLogf(
             motionPath, "execute.mask", "0x6AF104", frameTime,
             "dstNode={} srcNode={} itemFlags={} playerStencilType={} "
-            "threshold={} requested=[{},{},{},{}] overlap=[{},{},{},{}]",
+            "threshold={} requested=[{},{},{},{}] overlap=[{},{},{},{}] "
+            "path={}",
             dstNodeIndex, srcNodeIndex, itemFlags, playerStencilType, threshold,
             requestedRect.left, requestedRect.top, requestedRect.right,
             requestedRect.bottom, overlapRect.left, overlapRect.top,
-            overlapRect.right, overlapRect.bottom);
+            overlapRect.right, overlapRect.bottom,
+            appliedOnGpu ? "gpu" : "cpu");
         return true;
     }
 
@@ -864,6 +1003,54 @@ namespace motion::internal::render_detail {
         height = std::min(height, static_cast<int>(dstBitmap->GetHeight()));
         if(width <= 0 || height <= 0) {
             return false;
+        }
+
+        // 先在 union 暂存面上按 op5（alpha over，即 REF 的 union 语义）叠出
+        // 并集，再整块作用到目标：与 CPU 版同一结合顺序，只差定点舍入。
+        const auto applyCompositeOnGpu = [&]() -> bool {
+            if(playerStencilType == 0) {
+                return false;
+            }
+            auto *unionScratch = ensureMaskUnionScratch(width, height);
+            if(!unionScratch) {
+                return false;
+            }
+            for(const auto &surface : resolved) {
+                detail::MotionMaskSurfaceRect area;
+                if(!detail::motionMaskSurfaceRect(
+                       dstWorldLeft, dstWorldTop, width, height,
+                       surface.worldLeft, surface.worldTop, surface.width,
+                       surface.height, area)) {
+                    continue;
+                }
+                // 失败时只写过暂存面，目标未被触碰，CPU 回落仍然正确。
+                if(!blendMaskAlphaOnGpu(
+                       unionScratch,
+                       tTVPRect(area.dstLeft, area.dstTop,
+                                area.dstLeft + area.width,
+                                area.dstTop + area.height),
+                       surface.bitmap,
+                       tTVPRect(area.srcLeft, area.srcTop,
+                                area.srcLeft + area.width,
+                                area.srcTop + area.height),
+                       5)) {
+                    return false;
+                }
+            }
+            return blendMaskAlphaOnGpu(
+                dstBitmap, tTVPRect(0, 0, width, height), unionScratch,
+                tTVPRect(0, 0, width, height), compositeFlags & 3);
+        };
+        const bool appliedOnGpu = applyCompositeOnGpu();
+        if(appliedOnGpu) {
+            detail::logoChainTraceLogf(
+                motionPath, "execute.compositeMask", "0x6AF104", frameTime,
+                "dstNode={} flags={} operation={} surfaces={} "
+                "world=[{},{},{},{}] path=gpu",
+                dstNodeIndex, compositeFlags, compositeFlags & 3,
+                resolved.size(), dstWorldLeft, dstWorldTop,
+                dstWorldLeft + width, dstWorldTop + height);
+            return true;
         }
 
         auto *dstBase = static_cast<std::uint8_t *>(
@@ -918,7 +1105,8 @@ namespace motion::internal::render_detail {
 
         detail::logoChainTraceLogf(
             motionPath, "execute.compositeMask", "0x6AF104", frameTime,
-            "dstNode={} flags={} operation={} surfaces={} world=[{},{},{},{}]",
+            "dstNode={} flags={} operation={} surfaces={} "
+            "world=[{},{},{},{}] path=cpu",
             dstNodeIndex, compositeFlags, compositeFlags & 3, resolved.size(),
             dstWorldLeft, dstWorldTop, dstWorldLeft + width,
             dstWorldTop + height);
