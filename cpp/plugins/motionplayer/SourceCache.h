@@ -21,6 +21,7 @@
 class iTVPBaseBitmap;
 class iTVPTexture2D;
 class tTVPBaseBitmap;
+class tTVPBaseTexture;
 
 namespace motion {
 
@@ -52,6 +53,12 @@ namespace motion {
             std::shared_ptr<tTVPBaseBitmap> baseBitmap;
             std::shared_ptr<tTVPBaseBitmap> backingBitmap;
             iTVPTexture2D *sourceTexture = nullptr;
+            // Render-manager-backed view of sourceTexture. Mesh draws go
+            // through the active render manager, and tTVPBaseBitmap always
+            // reports the software manager, so handing them backingBitmap
+            // makes MeshCopy/OperateMesh read back and re-upload the source
+            // on every call. Owned here so it dies with the texture.
+            std::shared_ptr<tTVPBaseTexture> meshSourceBitmap;
             // Flattened nested players can reuse the same source key. Cache
             // entries therefore retain the snapshot that owns that key.
             std::shared_ptr<detail::MotionSnapshot> sourceMotion;
@@ -84,10 +91,16 @@ namespace motion {
         // Returning the cached backing bitmap avoids materializing a temporary
         // SourceCache Layer for every leaf on every frame; the output scratch
         // layers remain owned by the executor.
+        // meshImageOut, when non-null, also receives a render-manager-backed
+        // view of the same entry for mesh draws; it stays null under the
+        // software manager, where no conversion would happen anyway. It is
+        // owned by the cache entry and must not outlive the next
+        // clearCache/eraseSource/tint change.
         std::shared_ptr<tTVPBaseBitmap> loadRenderSourceBitmapByName(
             const ttstr &name, const tTJSVariant &currentSource, int blendMode,
             const std::array<std::uint32_t, 4> &packedColors,
-            const std::shared_ptr<detail::MotionSnapshot> &sourceMotion);
+            const std::shared_ptr<detail::MotionSnapshot> &sourceMotion,
+            iTVPBaseBitmap **meshImageOut);
         iTVPTexture2D *loadRenderSourceTextureByName(
             const ttstr &name, const tTJSVariant &currentSource, int blendMode,
             const std::array<std::uint32_t, 4> &packedColors,
@@ -118,6 +131,8 @@ namespace motion {
             Entry &entry, const std::string &key, int blendMode,
             const std::array<std::uint32_t, 4> &packedColors,
             const std::shared_ptr<detail::MotionSnapshot> &sourceMotion);
+        iTVPTexture2D *ensureEntryTexture(Entry &entry);
+        iTVPBaseBitmap *ensureEntryMeshSource(Entry &entry);
         void releaseEntryTexture(Entry &entry);
         tTJSVariant loadRawSourceVariant(const ttstr &name,
                                          std::string &resolvedKey) const;

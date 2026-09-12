@@ -1172,6 +1172,11 @@ namespace motion {
 
         struct ResolvedSourceObject {
             std::shared_ptr<tTVPBaseBitmap> bitmap;
+            // Render-manager-backed view of the same source, for the mesh
+            // draws only. AffineCopy and the CPU mask helpers blit through
+            // the bitmap impl and would read this back from the GPU, so they
+            // keep using `image`. Null under the software manager.
+            iTVPBaseBitmap *meshImage = nullptr;
             // Kept for the headless post-draw probes. Normal rendering no
             // longer materializes a SourceCache Layer just to obtain pixels.
             iTJSDispatch2 *layerObject = nullptr;
@@ -1191,7 +1196,7 @@ namespace motion {
             resolved.bitmap =
                 _runtime->sourceCacheNative->loadRenderSourceBitmapByName(
                     detail::widen(item.sourceKey), item.srcRef, item.blendMode,
-                    item.packedColors, item.sourceMotion);
+                    item.packedColors, item.sourceMotion, &resolved.meshImage);
             if(!resolved.bitmap) {
                 return resolved;
             }
@@ -1323,7 +1328,8 @@ namespace motion {
         auto renderItemSourceToLayer =
             [&](PreparedRenderItem &item, iTJSDispatch2 *targetLayerObject,
                 tTJSNI_BaseLayer *targetLayer, iTVPBaseBitmap *srcImage,
-                const tTVPRect &sourceRect, const char *branch) -> bool {
+                iTVPBaseBitmap *meshSrcImage, const tTVPRect &sourceRect,
+                const char *branch) -> bool {
             if(!targetLayerObject || !targetLayer) {
                 return false;
             }
@@ -1392,7 +1398,10 @@ namespace motion {
                     buildMeshPoints(item.localMeshPoints, 0.0f, 0.0f);
                 if(item.meshType == 1 || item.meshType == 2) {
                     targetLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
-                                          item.meshDivY, srcImage, sourceRect,
+                                          item.meshDivY,
+                                          meshSrcImage ? meshSrcImage
+                                                       : srcImage,
+                                          sourceRect,
                                           emoteStretchType, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                     recordPostDrawCandidate(
@@ -1490,7 +1499,9 @@ namespace motion {
                 buildMeshPoints(item.meshPoints, offsetX, offsetY);
             if(item.meshType == 1 || item.meshType == 2) {
                 candidateLayer->MeshCopy(localMeshPoints.data(), item.meshDivX,
-                                         item.meshDivY, source.image,
+                                         item.meshDivY,
+                                         source.meshImage ? source.meshImage
+                                                          : source.image,
                                          sourceRect, emoteStretchType, true);
                 recordPostDrawCandidate(candidateLayerObject,
                                         "Player::executeLayerRenderCommands."
@@ -1805,7 +1816,8 @@ namespace motion {
                 }
 
                 if(!renderItemSourceToLayer(item, leafLayerObject, leafLayer,
-                                            source.image, sourceRect,
+                                            source.image, source.meshImage,
+                                            sourceRect,
                                             "item.leaf.affineCopy")) {
                     return false;
                 }
@@ -2157,7 +2169,10 @@ namespace motion {
 #endif
                             drawTargetLayer->OperateMesh(
                                 worldMeshPoints.data(), item.meshDivX,
-                                item.meshDivY, source.image, sourceRect,
+                                item.meshDivY,
+                                source.meshImage ? source.meshImage
+                                                 : source.image,
+                                sourceRect,
                                 blendMode, opa, emoteStretchType, _clearEnabled);
 #if defined(KRKR2_WASMTIME_HEADLESS)
                             emitDirectProbe(

@@ -625,7 +625,11 @@ namespace motion {
     SourceCache::loadRenderSourceBitmapByName(
         const ttstr &name, const tTJSVariant &currentSource, int blendMode,
         const std::array<std::uint32_t, 4> &packedColors,
-        const std::shared_ptr<detail::MotionSnapshot> &sourceMotion) {
+        const std::shared_ptr<detail::MotionSnapshot> &sourceMotion,
+        iTVPBaseBitmap **meshImageOut) {
+        if(meshImageOut) {
+            *meshImageOut = nullptr;
+        }
         const auto key = detail::narrow(name);
         if(key.empty()) {
             return nullptr;
@@ -659,6 +663,9 @@ namespace motion {
         if(!ensureEntryBackingBitmap(entry, key, blendMode, packedColors,
                                      effectiveMotion)) {
             return nullptr;
+        }
+        if(meshImageOut) {
+            *meshImageOut = ensureEntryMeshSource(entry);
         }
         return entry.backingBitmap;
     }
@@ -703,8 +710,15 @@ namespace motion {
                                      effectiveMotion)) {
             return nullptr;
         }
+        return ensureEntryTexture(entry);
+    }
+
+    iTVPTexture2D *SourceCache::ensureEntryTexture(Entry &entry) {
         if(entry.sourceTexture) {
             return entry.sourceTexture;
+        }
+        if(!entry.backingBitmap) {
+            return nullptr;
         }
 
         const auto width = entry.backingBitmap->GetWidth();
@@ -734,6 +748,27 @@ namespace motion {
             }
         }
         return entry.sourceTexture;
+    }
+
+    iTVPBaseBitmap *SourceCache::ensureEntryMeshSource(Entry &entry) {
+        // Under the software manager the mesh branch never converts, so the
+        // wrapper would only add an allocation and a second owner.
+        if(TVPIsSoftwareRenderManager()) {
+            return nullptr;
+        }
+        auto *texture = ensureEntryTexture(entry);
+        if(!texture) {
+            return nullptr;
+        }
+        if(!entry.meshSourceBitmap) {
+            // Size comes from AssignTexture; the 1x1 allocation here is
+            // released by it on the same call.
+            entry.meshSourceBitmap = std::make_shared<tTVPBaseTexture>(1, 1);
+        }
+        // Idempotent: AssignTexture returns early when the texture is already
+        // the assigned one, so the steady-state cost is a pointer compare.
+        entry.meshSourceBitmap->AssignTexture(texture);
+        return entry.meshSourceBitmap.get();
     }
 
     tTJSVariant SourceCache::findSource(ttstr name) {
@@ -928,6 +963,10 @@ namespace motion {
     }
 
     void SourceCache::releaseEntryTexture(Entry &entry) {
+        // The wrapper holds its own reference (AssignTexture AddRefs), so it
+        // must go first; otherwise a stale wrapper keeps the old tint alive
+        // and later draws paint the previous colour.
+        entry.meshSourceBitmap.reset();
         if(entry.sourceTexture) {
             entry.sourceTexture->Release();
             entry.sourceTexture = nullptr;
