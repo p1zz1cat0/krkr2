@@ -573,10 +573,9 @@ namespace motion {
         std::string resolvedKey;
         tTJSVariant rawSource;
         Entry *entryPtr =
-            findRenderEntry(key, blendMode, sourceIdentity);
+            findRenderEntry(key, blendMode, sourceIdentity, packedColors);
         if(entryPtr) {
-            if(entryPtr->packedColors == packedColors &&
-               entryPtr->sourceObject.Type() == tvtObject &&
+            if(entryPtr->sourceObject.Type() == tvtObject &&
                entryPtr->sourceObject.AsObjectNoAddRef()) {
                 return entryPtr->sourceObject;
             }
@@ -645,7 +644,8 @@ namespace motion {
             effectiveMotion ? effectiveMotion->path : std::string{}, key);
         std::string resolvedKey;
         tTJSVariant rawSource;
-        Entry *entryPtr = findRenderEntry(key, blendMode, sourceIdentity);
+        Entry *entryPtr =
+            findRenderEntry(key, blendMode, sourceIdentity, packedColors);
         if(entryPtr) {
             resolvedKey = entryPtr->resolvedKey;
             rawSource = entryPtr->rawSource;
@@ -687,10 +687,9 @@ namespace motion {
         std::string resolvedKey;
         tTJSVariant rawSource;
         Entry *entryPtr =
-            findRenderEntry(key, blendMode, sourceIdentity);
+            findRenderEntry(key, blendMode, sourceIdentity, packedColors);
         if(entryPtr) {
-            if(entryPtr->packedColors == packedColors &&
-               entryPtr->sourceTexture) {
+            if(entryPtr->sourceTexture) {
                 return entryPtr->sourceTexture;
             }
             resolvedKey = entryPtr->resolvedKey;
@@ -837,11 +836,13 @@ namespace motion {
 
     SourceCache::Entry *SourceCache::findRenderEntry(
         const std::string &key, int blendMode,
-        const std::string &sourceIdentity) {
+        const std::string &sourceIdentity,
+        const std::array<std::uint32_t, 4> &packedColors) {
         for(auto it = _entries.begin(); it != _entries.end(); ++it) {
             if((it->key == key || it->resolvedKey == key) &&
                it->blendMode == blendMode &&
-               it->sourceIdentity == sourceIdentity) {
+               it->sourceIdentity == sourceIdentity &&
+               it->packedColors == packedColors) {
                 _entries.splice(_entries.begin(), _entries, it);
                 return &_entries.front();
             }
@@ -867,7 +868,7 @@ namespace motion {
                                  &sourceMotion,
                              const std::string &sourceIdentity) {
         if(auto *entry =
-               findRenderEntry(key, blendMode, sourceIdentity)) {
+               findRenderEntry(key, blendMode, sourceIdentity, packedColors)) {
             return *entry;
         }
 
@@ -875,8 +876,23 @@ namespace motion {
         entry.key = key;
         entry.resolvedKey = resolvedKey.empty() ? key : resolvedKey;
         entry.blendMode = blendMode;
+        entry.packedColors = packedColors;
         entry.sourceMotion = sourceMotion;
         entry.sourceIdentity = sourceIdentity;
+        // 同一 source 的其它颜色变体已经解码过就直接共享：baseBitmap 是不可变
+        // 的解码结果，各变体只在 backingBitmap（烘焙后的派生）上分岔。不共享
+        // 会让一张图按颜色数重复解码并常驻多份全尺寸位图。
+        for(const auto &sibling : _entries) {
+            if((sibling.key == key || sibling.resolvedKey == key) &&
+               sibling.blendMode == blendMode &&
+               sibling.sourceIdentity == sourceIdentity &&
+               sibling.baseBitmap) {
+                entry.baseBitmap = sibling.baseBitmap;
+                entry.rawSource = sibling.rawSource;
+                entry.backingLoadAttempted = sibling.backingLoadAttempted;
+                break;
+            }
+        }
         _entries.push_front(std::move(entry));
         return _entries.front();
     }
@@ -894,8 +910,10 @@ namespace motion {
             entry.backingLoadAttempted = false;
         }
 
-        const bool colorsChanged = entry.packedColors != packedColors;
-        if(entry.backingBitmap && !colorsChanged) {
+        // entry.packedColors 由 findRenderEntry/ensureEntry 保证等于入参——
+        // 颜色是 entry 身份的一部分，一个 entry 只对应一种烘焙结果，因此
+        // backingBitmap 一旦建好就不会再因换色而失效。
+        if(entry.backingBitmap) {
             return entry.backingBitmap->GetWidth() > 0 &&
                 entry.backingBitmap->GetHeight() > 0;
         }
@@ -928,10 +946,6 @@ namespace motion {
             return false;
         }
 
-        if(colorsChanged) {
-            releaseEntryTexture(entry);
-        }
-        entry.packedColors = packedColors;
         const bool useHalfAlphaTint = (blendMode & 0xF0) == 0x10;
         const bool needsTint =
             !packedColorsAreDefault(packedColors[0], packedColors[1],

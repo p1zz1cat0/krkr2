@@ -118,8 +118,13 @@ namespace motion {
     private:
         Entry *findEntry(const std::string &key, int blendMode,
                          const std::array<std::uint32_t, 4> &packedColors);
+        // packedColors 属于身份的一部分：同一 source 被不同颜色的 item 共用时，
+        // 若共享一个 entry，两者会每帧交替改写 backingBitmap——一次全图 tint
+        // 烘焙加一次纹理销毁重建。颜色取自 authored 关键帧、从不做算术插值
+        // （全插件没有任何对 packedColors 的混合），所以变体数由素材决定、有界。
         Entry *findRenderEntry(const std::string &key, int blendMode,
-                               const std::string &sourceIdentity);
+                               const std::string &sourceIdentity,
+                               const std::array<std::uint32_t, 4> &packedColors);
         Entry *findEntryByKey(const std::string &key);
         Entry &ensureEntry(const std::string &key,
                            const std::string &resolvedKey, int blendMode,
