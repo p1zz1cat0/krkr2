@@ -2432,7 +2432,6 @@ const void *tTVPOGLTexture2D::GetScanLineForRead(tjs_uint l) {
             glViewport(0, 0, internalW, internalH);
             glPixelStorei(GL_PACK_ALIGNMENT,
                           4); // always dword aligned
-            TVPTexCountBump(TVPTexCount_OglReadback); // TEXCOUNT-TEMP
             glReadPixels(0, 0, internalW, internalH, GL_RGBA, GL_UNSIGNED_BYTE,
                          PixelData);
             // KRKR_EMOTE_OGL_GEOM: 真实读回发生处。CPU 侧每次采样画布都会命中
@@ -2674,7 +2673,6 @@ protected:
                                                 TVPTextureFormat::e fmt,
                                                 tjs_uint dstw, tjs_uint dsth,
                                                 bool isOpaque) {
-        TVPTexCountBump(TVPTexCount_StaticCreate); // TEXCOUNT-TEMP
         const tjs_uint8 *pixel = (const tjs_uint8 *)dib;
         tjs_uint8 *tmp = nullptr;
         tjs_uint w = tw, h = th;
@@ -4162,7 +4160,6 @@ public:
             return nullptr;
         if(dynamic_cast<tTVPOGLTexture2D *>(tex)) {
             tex->AddRef();
-            TVPTexCountBump(TVPTexCount_BridgeHit); // TEXCOUNT-TEMP
             return static_cast<tTVPOGLTexture2D *>(tex);
         }
         const tjs_uint w = tex->GetWidth();
@@ -4171,7 +4168,6 @@ public:
         const tjs_int pitch = tex->GetPitch();
         tTVPOGLTexture2D_mutatble *bridge = new tTVPOGLTexture2D_mutatble(
             nullptr, 0, w, h, format, 1.f, 1.f);
-        TVPTexCountBump(TVPTexCount_BridgeCreate); // TEXCOUNT-TEMP
         // 整块上传而非逐行：InternalUpdate 已经用 GL_UNPACK_ROW_LENGTH（无该
         // 扩展时用暂存拷贝）处理任意 pitch，一次 glTexSubImage2D 就能传完整张。
         // 逐行版本对 h 行发 h 次 glTexSubImage2D，每次都要重新 bind 并设
