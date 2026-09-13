@@ -2,6 +2,7 @@
 #define YOGHOURT_PLUGIN_SAFETY_H
 
 #include "tjs.h"
+#include "ScriptMgnIntf.h"
 
 #include <cmath>
 #include <cstddef>
@@ -237,19 +238,47 @@ inline SafetyResult<LayerLayout> validateLayerLayout(tjs_int width,
 
 namespace detail {
 
-inline SafetyResult<tjs_int64> readIntegerProperty(iTJSDispatch2 *object,
+// Layer pixel operations must read the native Layer properties through the
+// Layer class object with the layer as objthis (the lookup pattern upstream
+// layerExBTOA uses). Game-side TJS subclasses (KAGEX3 AffineLayer and friends)
+// override properties such as imageWidth/imageHeight with logical values whose
+// getter may return a real; reading them straight from the instance would make
+// the layout validation reject a perfectly valid layer buffer.
+inline iTJSDispatch2 *nativeLayerClass() noexcept {
+    try {
+        tTJS *engine = TVPGetScriptEngine();
+        if(!engine)
+            return nullptr;
+        iTJSDispatch2 *global = engine->GetGlobalNoAddRef();
+        if(!global)
+            return nullptr;
+        tTJSVariant value;
+        if(TJS_FAILED(global->PropGet(0, TJS_W("Layer"), nullptr, &value,
+                                      global)))
+            return nullptr;
+        return value.AsObjectNoAddRef();
+    } catch(...) {
+        return nullptr;
+    }
+}
+
+inline SafetyResult<tjs_int64> readIntegerProperty(iTJSDispatch2 *layerClass,
+                                                   iTJSDispatch2 *object,
                                                    const tjs_char *name) noexcept {
     tTJSVariant value;
-    if(TJS_FAILED(object->PropGet(0, name, nullptr, &value, object)))
+    if(!layerClass ||
+       TJS_FAILED(layerClass->PropGet(0, name, nullptr, &value, object)))
         return SafetyResult<tjs_int64>::failure(SafetyError::missingProperty);
     return readBoundedInteger(value, std::numeric_limits<tjs_int>::min(),
                               std::numeric_limits<tjs_int>::max());
 }
 
 inline SafetyResult<tjs_intptr_t>
-readPointerProperty(iTJSDispatch2 *object, const tjs_char *name) noexcept {
+readPointerProperty(iTJSDispatch2 *layerClass, iTJSDispatch2 *object,
+                    const tjs_char *name) noexcept {
     tTJSVariant value;
-    if(TJS_FAILED(object->PropGet(0, name, nullptr, &value, object)))
+    if(!layerClass ||
+       TJS_FAILED(layerClass->PropGet(0, name, nullptr, &value, object)))
         return SafetyResult<tjs_intptr_t>::failure(SafetyError::missingProperty);
     const auto integer = readBoundedInteger(
         value, static_cast<tjs_int64>(std::numeric_limits<tjs_intptr_t>::min()),
@@ -263,13 +292,16 @@ readPointerProperty(iTJSDispatch2 *object, const tjs_char *name) noexcept {
 }
 
 inline SafetyResult<LayerLayout> readLayerLayout(iTJSDispatch2 *object) noexcept {
-    if(!object || object->IsInstanceOf(0, nullptr, nullptr, TJS_W("Layer"),
-                                      object) != TJS_S_TRUE)
+    if(!object || TJS_FAILED(object->IsInstanceOf(0, nullptr, nullptr,
+                                                  TJS_W("Layer"), object)))
         return SafetyResult<LayerLayout>::failure(SafetyError::invalidLayer);
-    const auto width = readIntegerProperty(object, TJS_W("imageWidth"));
-    const auto height = readIntegerProperty(object, TJS_W("imageHeight"));
-    const auto pitch =
-        readIntegerProperty(object, TJS_W("mainImageBufferPitch"));
+    iTJSDispatch2 *layerClass = nativeLayerClass();
+    const auto width =
+        readIntegerProperty(layerClass, object, TJS_W("imageWidth"));
+    const auto height =
+        readIntegerProperty(layerClass, object, TJS_W("imageHeight"));
+    const auto pitch = readIntegerProperty(layerClass, object,
+                                           TJS_W("mainImageBufferPitch"));
     if(!width)
         return SafetyResult<LayerLayout>::failure(width.error);
     if(!height)
@@ -290,8 +322,8 @@ public:
         const auto layout = detail::readLayerLayout(object);
         if(!layout)
             return SafetyResult<LayerReadView>::failure(layout.error);
-        const auto pointer =
-            detail::readPointerProperty(object, TJS_W("mainImageBuffer"));
+        const auto pointer = detail::readPointerProperty(
+            detail::nativeLayerClass(), object, TJS_W("mainImageBuffer"));
         if(!pointer)
             return SafetyResult<LayerReadView>::failure(pointer.error);
         return SafetyResult<LayerReadView>::success(LayerReadView(
@@ -331,7 +363,8 @@ public:
         if(!layout)
             return SafetyResult<LayerWriteView>::failure(layout.error);
         const auto pointer = detail::readPointerProperty(
-            object, TJS_W("mainImageBufferForWrite"));
+            detail::nativeLayerClass(), object,
+            TJS_W("mainImageBufferForWrite"));
         if(!pointer)
             return SafetyResult<LayerWriteView>::failure(pointer.error);
         return SafetyResult<LayerWriteView>::success(LayerWriteView(
