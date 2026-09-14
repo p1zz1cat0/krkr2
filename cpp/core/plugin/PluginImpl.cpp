@@ -35,6 +35,8 @@
 extern "C" void TVPGetLangNamePluginAnchor();
 extern "C" void TVPShrinkCopyPluginAnchor();
 extern "C" void TVPLayerExRasterPluginAnchor();
+extern "C" void TVPLayerExAreaAveragePluginAnchor();
+extern "C" void TVPLayerExSavePluginAnchor();
 extern "C" void TVPFstatPluginAnchor();
 extern "C" void TVPLayerExBtoAPluginAnchor();
 extern "C" void TVPLayerExImagePluginAnchor();
@@ -124,6 +126,8 @@ void TVPLoadInternalPlugins() {
     TVPGetLangNamePluginAnchor();
     TVPShrinkCopyPluginAnchor();
     TVPLayerExRasterPluginAnchor();
+    TVPLayerExAreaAveragePluginAnchor();
+    TVPLayerExSavePluginAnchor();
     TVPFstatPluginAnchor();
     TVPLayerExBtoAPluginAnchor();
     TVPLayerExImagePluginAnchor();

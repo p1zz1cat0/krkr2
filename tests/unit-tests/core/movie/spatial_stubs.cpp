@@ -16,6 +16,8 @@ extern "C" void YoghourtKrKrTelemetryRecordFrameStages(double, double, double) {
 extern "C" void TVPGetLangNamePluginAnchor() {}
 extern "C" void TVPShrinkCopyPluginAnchor() {}
 extern "C" void TVPLayerExRasterPluginAnchor() {}
+extern "C" void TVPLayerExAreaAveragePluginAnchor() {}
+extern "C" void TVPLayerExSavePluginAnchor() {}
 extern "C" void TVPFstatPluginAnchor() {}
 extern "C" void TVPLayerExBtoAPluginAnchor() {}
 extern "C" void TVPLayerExImagePluginAnchor() {}

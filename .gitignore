@@ -28,3 +28,10 @@ tests/test_files/savedata/
 # Engine-written per-game preference file left behind by a fixture run
 # (deliberately narrow: the extNagano and extrans-transitions fixtures track theirs)
 tests/test_files/motionplayer/Kirikiroid2Preference.xml
+# Saved-file artifacts written by the layerExSave smoke fixture (the fork's
+# storage layer resolves the fixture's System.exePath back into the data dir
+# and its parent, depending on which path registration wins)
+tests/test_files/layerexsave_smoke*.tlg
+tests/test_files/layerexsave_smoke*.png
+tests/test_files/layerExSave/*.tlg
+tests/test_files/layerExSave/*.png

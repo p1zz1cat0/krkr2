@@ -1,0 +1,73 @@
+// layerExAreaAverage.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+// 在首次创建 Window/Layer 前加载，覆盖原生类惰性初始化场景。
+// Plugins.link 的原生 API 返回 void，加载结果由导出的成员确认。
+Plugins.link("layerExAreaAverage.dll");
+
+// 颜色约定（core 实测行为，lldb 矩阵采样确认）：
+//   fillRect/setMainPixel 的 TJS 参数 = 标准 0xAARRGGBB/0x00RRGGBB，
+//   core 换序后按 fork 的 mainImageBuffer 位序 A<<24|B<<16|G<<8|R 存储；
+//   24 位参数（无 alpha 字节）写出的像素 alpha=0，不透明像素必须传
+//   0xFFxxxxxx；getMainPixel 直读内部 24 位（返回 0x00BBGGRR，与
+//   setMainPixel 不对称），断言值 = 写入值的 R/B 交换。
+var testWindow = new Window();
+var src = new Layer(testWindow, null);
+src.setImageSize(8, 8);
+src.fillRect(0, 0, 8, 8, 0x7F3F1F);
+check(src.hasImage, "src hasImage");
+
+var dst = new Layer(testWindow, src);
+dst.setImageSize(4, 4);
+
+// 真实调用：纯色源 8x8 → 4x4，面积平均必须回到原色。
+// getMainPixel 返回不含 alpha 的 24 位像素。
+dst.stretchCopyAA(0, 0, 4, 4, src, 0, 0, 8, 8);
+check(dst.hasImage, "dst hasImage after stretchCopyAA");
+check(dst.imageWidth == 4 && dst.imageHeight == 4, "dst size preserved");
+for (var y = 0; y < 4; y++)
+    for (var x = 0; x < 4; x++)
+        pluginAssertEqual("solid shrink pixel " + x + "," + y, 0x1F3F7F,
+                          dst.getMainPixel(x, y));
+
+// alpha 感知：不透明蓝 + 全透明(0x123456) → 平均 alpha 127，颜色纯蓝
+var src2 = new Layer(testWindow, src);
+src2.setImageSize(2, 1);
+src2.fillRect(0, 0, 1, 1, 0xFF0000FF);
+src2.setMainPixel(1, 0, 0x123456);
+var dst2 = new Layer(testWindow, src);
+dst2.setImageSize(1, 1);
+dst2.stretchCopyAA(0, 0, 1, 1, src2, 0, 0, 2, 1);
+pluginAssertEqual("alpha-aware color ignores transparent tint", 0xFF0000,
+                  dst2.getMainPixel(0, 0));
+
+// 全透明源：totalarea_rgb 为 0 时回退到透明像素颜色（上游语义）
+var src3 = new Layer(testWindow, src);
+src3.setImageSize(2, 2);
+for (var ty = 0; ty < 2; ty++)
+    for (var tx = 0; tx < 2; tx++)
+        src3.setMainPixel(tx, ty, 0xABCDEF);
+var dst3 = new Layer(testWindow, src);
+dst3.setImageSize(1, 1);
+dst3.stretchCopyAA(0, 0, 1, 1, src3, 0, 0, 2, 2);
+pluginAssertEqual("fully transparent source keeps its color", 0xEFCDAB,
+                  dst3.getMainPixel(0, 0));
+
+// 裁剪：目标矩形 (2,2,4,4) 超出 4x4 目标层，按比例收缩为 (2,2,2,2)；
+// 裁剪区域写入源色，其余区域保持底色
+dst.fillRect(0, 0, 4, 4, 0x000000);
+dst.stretchCopyAA(2, 2, 4, 4, src, 0, 0, 8, 8);
+pluginAssertEqual("clipped region painted with source color", 0x1F3F7F,
+                  dst.getMainPixel(2, 2));
+pluginAssertEqual("pixel outside clipped rect untouched", 0x000000,
+                  dst.getMainPixel(0, 0));
+
+// 错误路径（放大拒绝、负坐标、零尺寸、参数不足）在壳层返回错误码或抛
+// TJS 异常，smoke runner 会把任何 "An exception occurred" 日志判为失败，
+// 因此这些路径由 C++ 单测的 ValidateParams 用例覆盖，fixture 不在此触发。
+pluginSmokePass("layerExAreaAverage.dll");
+System.exit(0);

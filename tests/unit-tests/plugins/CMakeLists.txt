@@ -6,6 +6,8 @@ set(SOURCES
         psbfile-dll.cpp
         shrinkCopy-dll.cpp
         layerExImage-dll.cpp
+        layerExAreaAverage-dll.cpp
+        layerExSave-dll.cpp
         extrans-dll.cpp
         alphamovie-dll.cpp
         extNagano-dll.cpp
@@ -47,6 +49,9 @@ foreach(name ${ALL_TARGETS})
             PUBLIC
                 krkr2plugin krkr2core
         )
+        # layerExSave-dll 的 PNG 编码器直接使用 zlib（deflate/CRC/uncompress）
+        find_package(ZLIB REQUIRED)
+        target_link_libraries(${name} PRIVATE ZLIB::ZLIB)
     endif()
     target_include_directories(${name}
         PRIVATE

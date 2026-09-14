@@ -39,6 +39,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     getLangName/getLangName.cpp
     shrinkCopy/shrinkCopy.cpp
     layerExRaster/layerExRaster.cpp
+    layerExAreaAverage/layerExAreaAverage.cpp
     alphamovie/AlphaMovie.cpp
     wuvorbis/WuVorbisShim.cpp
 )
@@ -77,6 +78,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC krkr2core)
 
 add_subdirectory(psdfile)
 add_subdirectory(psbfile)
+add_subdirectory(layerExSave)
 add_subdirectory(layerExDraw)
 add_subdirectory(layerExBtoA)
 add_subdirectory(motionplayer)
@@ -90,6 +92,7 @@ add_subdirectory(extNagano)
 target_link_libraries(${PROJECT_NAME} PUBLIC
         psdfile
         psbfile
+        layerExSave
         layerExDraw
         layerExBtoA
         motionplayer
