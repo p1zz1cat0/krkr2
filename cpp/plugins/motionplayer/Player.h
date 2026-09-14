@@ -350,6 +350,9 @@ namespace motion {
         void setVariable(ttstr label, double value, double transition = 0.0,
                          double ease = 0.0);
         double getVariable(ttstr label);
+        // mouthControl talkLabel (face_talk) is a write-only lip-sync input:
+        // it drives the mouth but reads back as its resting value 0.
+        bool isTalkInputLabel(const std::string &label) const;
         tjs_int countVariables();
         ttstr getVariableLabelAt(tjs_int idx);
         tjs_int countVariableFrameAt(tjs_int idx);

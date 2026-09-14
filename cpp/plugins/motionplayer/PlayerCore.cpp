@@ -1441,6 +1441,9 @@ namespace motion {
         // keep the idle sway offset after the diff loop stopped.
         const auto baseValue = [this](const std::string &label,
                                       double published) {
+            if(isTalkInputLabel(label)) {
+                return 0.0;
+            }
             const auto it = _evalResultListIndex.find(label);
             return it != _evalResultListIndex.end()
                 ? it->second->value - it->second->pendingDiff

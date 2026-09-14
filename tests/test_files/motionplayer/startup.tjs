@@ -471,6 +471,52 @@ var stableSig2 = canvasRasterSamples(stackRoot, 0, 0, 1280, 720);
 check(stableSig != 0, "stable redraw keeps a non-blank canvas");
 check(stableSig == stableSig2, "identical redraw does not jitter parts");
 
+// A10: NEKOPARA lip sync writes face_talk every frame through
+// CopyValueAction; a click-skip runs Action.tjs stopAction, which reads the
+// variable and writes it back. The talk input must still open the mouth, but
+// read back as its resting value so the write-back closes it again.
+function a10Canvas() {
+    // progress(0) republishes variables without advancing the zero-interval
+    // blink this fixture configures, so frames are comparable.
+    stackPlayer.progress(0);
+    stackPlayer.draw(stackAdaptor);
+    var out = new Layer(new Window(), null);
+    out.setImageSize(1280, 720);
+    out.setSize(1280, 720);
+    out.piledCopy(0, 0, stackRoot, 0, 0, 1280, 720);
+    var px = [];
+    for (var y = 0; y < 720; y += 3) {
+        for (var x = 0; x < 1280; x += 3) {
+            px.add(out.getMainPixel(x, y));
+        }
+    }
+    return px;
+}
+function a10Diff(a, b) {
+    var n = 0;
+    for (var i = 0; i < a.count; i++) {
+        if (a[i] != b[i]) n++;
+    }
+    return n;
+}
+stackPlayer.setVariable("face_talk", 0);
+a10Canvas();
+var a10closed = a10Canvas();
+pluginAssertEqual("A10 closed-mouth canvas is stable", 0,
+    a10Diff(a10Canvas(), a10closed));
+stackPlayer.setVariable("face_talk", 4);
+a10Canvas();
+check(a10Diff(a10Canvas(), a10closed) > 0,
+    "A10 face_talk input opens the rendered mouth");
+pluginAssertEqual("A10 face_talk reads back as its resting value", 0,
+    stackPlayer.getVariable("face_talk"));
+pluginAssertEqual("A10 serialize stores the resting talk value", 0,
+    stackPlayer.serialize().variables.face_talk);
+stackPlayer.setVariable("face_talk", stackPlayer.getVariable("face_talk"));
+a10Canvas();
+pluginAssertEqual("A10 stopAction write-back closes the mouth", 0,
+    a10Diff(a10Canvas(), a10closed));
+
 player.setDrawAffineTranslateMatrix(1, 0, 0, 1, 4096, 0);
 player.draw(adaptor);
 check(player.contains(hitX + 4096, hitY),

@@ -634,7 +634,7 @@ namespace motion {
     double Player::getVariable(ttstr label) {
         ensureMotionLoaded();
         const auto key = detail::narrow(label);
-        if(key.empty()) {
+        if(key.empty() || isTalkInputLabel(key)) {
             return 0.0;
         }
 
@@ -659,6 +659,22 @@ namespace motion {
         }
 
         return 0.0;
+    }
+
+    // NEKOPARA lip sync (custom.tjs EmoteTalkPlugin -> Action.tjs
+    // CopyValueAction) captures initValue = getVariable at voice start and
+    // restores it at the end; a click-skip runs stopAction, which writes the
+    // read-back value again. Returning the live talk level froze the mouth
+    // open on skip and poisoned the next line's initValue.
+    bool Player::isTalkInputLabel(const std::string &label) const {
+        const auto *activeMotion =
+            _runtime ? _runtime->activeMotion.get() : nullptr;
+        if(!activeMotion) {
+            return false;
+        }
+        const auto it = activeMotion->controllerBindings.find(label);
+        return it != activeMotion->controllerBindings.end() &&
+            it->second.type == 6 && it->second.role == "talkLabel";
     }
 
     tjs_int Player::countVariables() {
