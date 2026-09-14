@@ -2024,13 +2024,11 @@ namespace motion {
                             true;
                     }
                 }
-                for(const int maskIndex : command.stencilMaskCommandIndices) {
-                    if(maskIndex >= 0 &&
-                       maskIndex < static_cast<int>(consumedByParent.size())) {
-                        consumedByParent[static_cast<size_t>(maskIndex)] =
-                            true;
-                    }
-                }
+                // Stencil mask inputs are not consumed: an E-mote mask layer
+                // is also an ordinary drawable (REF draws it into the mask
+                // FBO and again in the node list). Eye whites (shirome) mask
+                // the iris and must stay visible; add_mask hides itself with
+                // opacity 0.
             }
             for(size_t commandIndex = 0;
                 commandIndex < _runtime->renderCommands.size();

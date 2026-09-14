@@ -517,6 +517,58 @@ a10Canvas();
 pluginAssertEqual("A10 stopAction write-back closes the mouth", 0,
     a10Diff(a10Canvas(), a10closed));
 
+// A11: 目L/目R clip the iris with ステンシル(shirome), whose mask inputs are
+// shirome and add_mask. A mask input is still an ordinary drawable: the
+// eye whites must render (add_mask hides itself with opacity 0). Measured
+// on this fixture: open-minus-closed near-white samples are about +90 with
+// the whites drawn and about -9 when mask inputs are swallowed.
+var a11Window = new Window();
+var a11Root = new Layer(a11Window, null);
+a11Root.setImageSize(1280, 720);
+a11Root.setSize(1280, 720);
+a11Root.fillRect(0, 0, 1280, 720, 0xFF40A040);
+a11Root.visible = true;
+var a11Target = new Layer(a11Window, a11Root);
+a11Target.setImageSize(1280, 720);
+a11Target.setSize(1280, 720);
+a11Target.type = ltBinder;
+a11Target.visible = true;
+var a11Player = new Motion.EmotePlayer(manager);
+a11Player.motionKey = Storages.getPlacedPath(
+    "../emote/e-mote3.0バニラパジャマa.psb");
+a11Player.chara = data.metadata.base.chara;
+a11Player.play(data.metadata.base.motion, Motion.PlayFlagForce);
+a11Player.setCoord(640, 740);
+a11Player.setScale(1.0);
+var a11Adaptor = new Motion.SeparateLayerAdaptor(a11Target);
+a11Adaptor.targetLayer = a11Target;
+function a11WhiteSamples(eyeOpen) {
+    a11Player.setVariable("face_eye_open", eyeOpen);
+    a11Player.progress(0);
+    a11Player.progress(0);
+    a11Player.draw(a11Adaptor);
+    var out = new Layer(new Window(), null);
+    out.setImageSize(1280, 720);
+    out.setSize(1280, 720);
+    out.piledCopy(0, 0, a11Root, 0, 0, 1280, 720);
+    var n = 0;
+    for (var y = 0; y < 720; y += 2) {
+        for (var x = 0; x < 1280; x += 2) {
+            var c = out.getMainPixel(x, y);
+            if (((c >> 16) & 255) >= 240 && ((c >> 8) & 255) >= 240 &&
+                (c & 255) >= 240) {
+                n++;
+            }
+        }
+    }
+    return n;
+}
+var a11Open = a11WhiteSamples(0);
+var a11Closed = a11WhiteSamples(10);
+check(a11Open - a11Closed > 40,
+    "A11 stencil mask input shirome still renders the eye whites (open=" +
+    a11Open + " closed=" + a11Closed + ")");
+
 player.setDrawAffineTranslateMatrix(1, 0, 0, 1, 4096, 0);
 player.draw(adaptor);
 check(player.contains(hitX + 4096, hitY),
