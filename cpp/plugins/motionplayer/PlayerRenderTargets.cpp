@@ -1,3 +1,5 @@
+#include <chrono>
+#include <functional>
 // PlayerRenderTargets.cpp — Layer/SLA/D3D render targets and post-draw update
 // Split from PlayerRender.cpp for maintainability.
 //
@@ -1210,6 +1212,22 @@ namespace motion {
                 "fail=resolveSeparateLayerRenderTarget");
             return false;
         }
+        if(true) { // TEMP-DUMP
+            static auto lastDump = std::chrono::steady_clock::time_point{}; // TEMP-DUMP
+            const auto now = std::chrono::steady_clock::now(); // TEMP-DUMP
+            auto *tl = resolveNativeLayer(targetLayerObject); // TEMP-DUMP
+            if(tl && now - lastDump > std::chrono::milliseconds(1500)) { // TEMP-DUMP
+                lastDump = now; // TEMP-DUMP
+                auto *top = tl; while(top->GetParent()) top = top->GetParent(); // TEMP-DUMP
+                auto *priv = resolveNativeLayer(renderTarget); // TEMP-DUMP
+                std::function<void(tTJSNI_BaseLayer *, int)> walk = [&](tTJSNI_BaseLayer *l, int depth) { // TEMP-DUMP
+                    LOGGER->info("LAYERDUMP motion={} {}{} abs={} idx={} type={} vis={} op={} rect=({},{},{}x{}) kids={}{}{}", motionPath, std::string(depth * 2, ' '), l->GetName().AsStdString(), l->GetAbsoluteOrderIndex(), l->GetOrderIndex(), (int)l->GetType(), l->GetVisible() ? 1 : 0, l->GetOpacity(), l->GetLeft(), l->GetTop(), l->GetWidth(), l->GetHeight(), l->GetCount(), l == tl ? " <TARGET>" : "", l == priv ? " <PRIVATE>" : ""); // TEMP-DUMP
+                    if(depth < 6) for(tjs_uint i = 0; i < l->GetCount(); ++i) walk(l->GetChildren(i), depth + 1); // TEMP-DUMP
+                }; // TEMP-DUMP
+                LOGGER->info("LAYERDUMP begin motion={}", motionPath); // TEMP-DUMP
+                walk(top, 0); // TEMP-DUMP
+            } // TEMP-DUMP
+        } // TEMP-DUMP
         detail::logoChainTraceLogf(
             motionPath, "draw.sla", "0x6D5658", _clampedEvalTime,
             "ownerLayer={} targetCanvas={}x{} accurate={} route={}",
