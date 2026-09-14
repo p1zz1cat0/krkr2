@@ -436,6 +436,11 @@ namespace motion::detail {
         // creates index 0 as the root node; loaded layer trees append real
         // nodes at indices [1,end) during Player_buildNodeTree (0x6B51F0).
         std::deque<MotionNode> nodes;
+        // Back-to-front draw order over `nodes`, derived from the active
+        // clip's priority[0].content by buildNodeTree. Empty means DFS
+        // (index) order. Only the prepared render-item build consumes it;
+        // evaluation still requires parents before children.
+        std::vector<int> nodeDrawOrder;
         // Values inherited from the owning Player's evaluated controller
         // table. Keep them separate from the child's local neutral values so
         // a nested face Player cannot republish its seed pose over a parent

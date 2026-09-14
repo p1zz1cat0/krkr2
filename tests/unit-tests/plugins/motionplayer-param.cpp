@@ -120,6 +120,25 @@ TEST_CASE("effectiveNodeLim uses a sized parent rect and passes through otherwis
             Catch::Approx(1280.0));
 }
 
+TEST_CASE("clip priority content yields a back-to-front node draw order") {
+    // 目L of e-mote3.0バニラパジャマa: DFS layers are le(0) mabuta(1)
+    // 白目L_le(2) shirome(3) 目影L_le(4) 目影L(5) add_mask(6) stencil(7)
+    // 瞳l_le(8) eye_pos(9) 瞳L(10) 涙L_le(11) 涙L(12). The eyelid must be
+    // drawn after the eye white, unlike plain DFS order.
+    const std::vector<int> eyeL = { 11, 12, 1, 7, 9, 8, 10, 2, 4, 6, 5, 3, 0 };
+    CHECK(motion::detail::nodeDrawOrderFromPriority(eyeL, 13) ==
+          std::vector<int>{ 0, 1, 4, 6, 7, 5, 3, 11, 9, 10, 8, 2, 13, 12 });
+
+    // Reverse-DFS content (every other clip in the fixture) keeps DFS.
+    CHECK(motion::detail::nodeDrawOrderFromPriority({ 2, 1, 0 }, 3) ==
+          std::vector<int>{ 0, 1, 2, 3 });
+
+    CHECK(motion::detail::nodeDrawOrderFromPriority({ 1, 0 }, 3).empty());
+    CHECK(motion::detail::nodeDrawOrderFromPriority({ 1, 1, 0 }, 3).empty());
+    CHECK(motion::detail::nodeDrawOrderFromPriority({ 3, 1, 0 }, 3).empty());
+    CHECK(motion::detail::nodeDrawOrderFromPriority({ -1, 1, 0 }, 3).empty());
+}
+
 TEST_CASE("plain flattened bitmaps do not inherit an outer render group") {
     CHECK_FALSE(
         motion::detail::flattenedItemKeepsOuterRenderAncestor(false));

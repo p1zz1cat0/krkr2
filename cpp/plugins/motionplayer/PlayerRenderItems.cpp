@@ -686,7 +686,14 @@ namespace motion {
                 });
         }
 
-        for(size_t i = 0; i < nodes.size(); ++i) {
+        // Emit in the clip's authored priority order; the stable sortKey
+        // sort below keeps it for equal depth.
+        const auto &drawOrder = _runtime->nodeDrawOrder;
+        const bool useDrawOrder = drawOrder.size() == nodes.size();
+        for(size_t orderIndex = 0; orderIndex < nodes.size(); ++orderIndex) {
+            const size_t i = useDrawOrder
+                ? static_cast<size_t>(drawOrder[orderIndex])
+                : orderIndex;
             const auto &node = nodes[i];
             const bool mergedBoundedChild =
                 !_preview && shouldMergeEmoteBoundedChild(node);

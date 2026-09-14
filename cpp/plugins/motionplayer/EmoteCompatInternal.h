@@ -333,6 +333,34 @@ namespace motion {
                      corners[6], corners[7], corners[4], corners[5] };
         }
 
+        // motion.priority[0].content lists every layer of a clip by
+        // depth-first index, topmost first: REF EmoteMotion rearranges its
+        // nodeList by it and draws by popping that stack from the back.
+        // Most clips author the exact reverse of DFS, but face clips such as
+        // 目L/目R reorder it so the eyelid covers the eye white. Returns
+        // runtime node indices (synthetic root 0 first, layer i at i+1) in
+        // back-to-front draw order, or empty when content is not a
+        // permutation of the built layers (callers then draw in DFS order).
+        inline std::vector<int>
+        nodeDrawOrderFromPriority(const std::vector<int> &content,
+                                  size_t layerCount) {
+            if(content.size() != layerCount) {
+                return {};
+            }
+            std::vector<bool> seen(layerCount, false);
+            std::vector<int> order{ 0 };
+            order.reserve(layerCount + 1);
+            for(auto it = content.rbegin(); it != content.rend(); ++it) {
+                if(*it < 0 || static_cast<size_t>(*it) >= layerCount ||
+                   seen[static_cast<size_t>(*it)]) {
+                    return {};
+                }
+                seen[static_cast<size_t>(*it)] = true;
+                order.push_back(*it + 1);
+            }
+            return order;
+        }
+
         // A flattened plain bitmap root is already a complete colour draw.
         // Only items that had an authored render parent in their own Player
         // may carry that relationship across the outer Player boundary;

@@ -1429,6 +1429,7 @@ namespace motion::detail {
                                 runtime.nodes.end());
         }
         runtime.nodeLabelMap.clear();
+        runtime.nodeDrawOrder.clear();
         runtime.renderItemNativeFieldLifetimeByNode.clear();
     }
 

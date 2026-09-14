@@ -4,6 +4,7 @@
 //
 
 #include "NodeTree.h"
+#include "EmoteCompatInternal.h"
 #include "MotionNode.h"
 #include "RuntimeSupport.h"
 #include "Player.h"
@@ -345,6 +346,7 @@ namespace motion::detail {
         // reading its "layer" property in Player_buildNodeTree (0x6B51F0).
         const std::vector<std::shared_ptr<const PSB::PSBDictionary>>
             *layerList = nullptr;
+        const MotionClip *layerClip = nullptr;
 
         if(!clipLabel.empty()) {
             auto it = snapshot.clipIndexByLabel.find(clipLabel);
@@ -354,8 +356,8 @@ namespace motion::detail {
                    idx < static_cast<int>(snapshot.clipList.size()) &&
                    !snapshot.clipList[static_cast<size_t>(idx)]
                         .layerList.empty()) {
-                    layerList =
-                        &snapshot.clipList[static_cast<size_t>(idx)].layerList;
+                    layerClip = &snapshot.clipList[static_cast<size_t>(idx)];
+                    layerList = &layerClip->layerList;
                 }
             }
         }
@@ -483,6 +485,33 @@ namespace motion::detail {
                     node.stencilCompositeMaskOwners.push_back(
                         {maskNodeIndex, maskRuntime});
                 }
+            }
+        }
+
+        runtime.nodeDrawOrder.clear();
+        if(layerClip) {
+            const auto priorities =
+                nodeTreePsbList(layerClip->motionObject, "priority");
+            const auto firstPriority = priorities && priorities->size() > 0
+                ? std::dynamic_pointer_cast<const PSB::PSBDictionary>(
+                      (*priorities)[0])
+                : nullptr;
+            if(const auto content =
+                   nodeTreePsbList(firstPriority, "content")) {
+                std::vector<int> layerIndices;
+                layerIndices.reserve(content->size());
+                for(const auto &value : *content) {
+                    const auto number =
+                        std::dynamic_pointer_cast<PSB::PSBNumber>(value);
+                    // Non-integer entries make the list invalid.
+                    layerIndices.push_back(
+                        number &&
+                                number->numberType == PSB::PSBNumberType::Int
+                            ? number->getValue<int>()
+                            : -1);
+                }
+                runtime.nodeDrawOrder = nodeDrawOrderFromPriority(
+                    layerIndices, runtime.nodes.size() - 1);
             }
         }
 
