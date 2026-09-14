@@ -297,6 +297,19 @@ namespace motion {
     // Player pipeline.
     void
     Player::loadFromSnapshot(std::shared_ptr<detail::MotionSnapshot> snapshot) {
+        // A rebound module starts on its own local timeline. EmotePlayer
+        // instances are intentionally reusable; retaining the previous
+        // motion's clocks/playing bits makes an identical script enter the
+        // replacement pose at a history-dependent frame.
+        _frameLastTime = 0.0;
+        _frameLoopTime = 0.0;
+        _loopTime = 0.0;
+        _clampedEvalTime = 0.0;
+        _cachedTotalFrames = 0.0;
+        _frameTickCount = 0.0;
+        _queuing = false;
+        _allplaying = false;
+        _syncActive = false;
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
         _runtime->hasLastPreparedDrawBounds = false;

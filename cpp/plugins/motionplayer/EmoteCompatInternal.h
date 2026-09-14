@@ -333,6 +333,16 @@ namespace motion {
                      corners[6], corners[7], corners[4], corners[5] };
         }
 
+        // A flattened plain bitmap root is already a complete colour draw.
+        // Only items that had an authored render parent in their own Player
+        // may carry that relationship across the outer Player boundary;
+        // otherwise a later composite group can absorb and cover unrelated
+        // sticker/eye-white variants that merely share the wrapper slot.
+        inline bool flattenedItemKeepsOuterRenderAncestor(
+            bool hadScopedRenderParent) {
+            return hadScopedRenderParent;
+        }
+
         inline bool boundsAreUsable(double minX, double minY, double maxX,
                                     double maxY) {
             return std::isfinite(minX) && std::isfinite(minY) &&

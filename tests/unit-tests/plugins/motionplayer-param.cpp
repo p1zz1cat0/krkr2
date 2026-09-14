@@ -120,6 +120,36 @@ TEST_CASE("effectiveNodeLim uses a sized parent rect and passes through otherwis
             Catch::Approx(1280.0));
 }
 
+TEST_CASE("plain flattened bitmaps do not inherit an outer render group") {
+    CHECK_FALSE(
+        motion::detail::flattenedItemKeepsOuterRenderAncestor(false));
+    CHECK(motion::detail::flattenedItemKeepsOuterRenderAncestor(true));
+}
+
+TEST_CASE("loading a snapshot resets motion-local playback state") {
+    motion::Player player;
+    player.setFrameLastTime(7.0);
+    player.setFrameLoopTime(23.0);
+    player.setLoopTime(19.0);
+    player.setFrameTickCount(31.0);
+    player.setQueuing(true);
+    player.setAllplaying(true);
+    player.setSyncActive(true);
+
+    auto snapshot = std::make_shared<motion::detail::MotionSnapshot>();
+    snapshot->path = "lifecycle-reset.psb";
+    snapshot->root = std::make_shared<PSB::PSBDictionary>();
+    player.loadFromSnapshot(std::move(snapshot));
+
+    CHECK(player.getFrameLastTime() == 0.0);
+    CHECK(player.getFrameLoopTime() == 0.0);
+    CHECK(player.getLoopTime() == 0.0);
+    CHECK(player.getFrameTickCount() == 0.0);
+    CHECK_FALSE(player.getQueuing());
+    CHECK_FALSE(player.getAllplaying());
+    CHECK_FALSE(player.getSyncActive());
+}
+
 TEST_CASE("evaluateTimelineLike resolves NaN/Inf sentinels against the node lim") {
     // F07: nested nodes resolve edge-pinning keyframes against their own
     // effective region, not the root logical screen.

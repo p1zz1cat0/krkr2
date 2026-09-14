@@ -482,10 +482,12 @@ namespace motion {
                     // stencil-composite ancestor (when any) so later
                     // passes can reach across the scope boundary — this is
                     // how a nested eye surface reaches the wrapper's
-                    // stencil group 6/16/24. Applied to all merged entries,
-                    // not just roots, because deeper merges already ran and
-                    // will never revisit their own entries.
-                    if(externalAncestorNodeIndex >= 0 &&
+                    // stencil group 6/16/24. Preserve it only for entries
+                    // that already had a render parent in their own scope;
+                    // a plain bitmap root is an independent colour draw.
+                    if(detail::flattenedItemKeepsOuterRenderAncestor(
+                           hadScopedRenderParent) &&
+                       externalAncestorNodeIndex >= 0 &&
                        (entry.outerRenderAncestorChain.empty() ||
                         entry.outerRenderAncestorChain.back()
                                 .renderScopeId != localRenderScopeId ||
@@ -495,8 +497,7 @@ namespace motion {
                         entry.outerRenderAncestorChain.push_back(
                             {localRenderScopeId, externalAncestorNodeIndex});
                     }
-                    if(hadScopedRenderParent &&
-                       entry.visibleAncestorIndex < 0 &&
+                    if(entry.visibleAncestorIndex < 0 &&
                        externalAncestorNodeIndex >= 0 &&
                        (entry.groupOnly ||
                         forceExternalAncestorForRoot)) {

@@ -238,7 +238,17 @@ namespace motion {
             runtime.emoteCommandOutputCacheGeneration = 0;
             runtime.emoteCommandOutputCacheHits = 0;
             runtime.emoteCommandLeafCacheHits = 0;
+            runtime.renderCommands.clear();
+            runtime.preparedRenderItemsTopLevel.clear();
+            runtime.preparedRenderItemsGroup.clear();
+            runtime.preparedRenderItems.clear();
+            runtime.preparedRenderItemsValid = false;
+            runtime.preparedLayerStateGeneration = 0;
+            runtime.inheritedVariableInputs.clear();
+            runtime.effectiveVariableScratch.clear();
+            runtime.effectiveVariableScratchGeneration = 0;
             runtime.timelines.clear();
+            runtime.playingTimelineLabels.clear();
             runtime.hasLastPreparedDrawBounds = false;
             // Reset persistent node tree so it gets rebuilt for new motion
             // by the subsequent eager Player_buildNodeTree call (no gate).
