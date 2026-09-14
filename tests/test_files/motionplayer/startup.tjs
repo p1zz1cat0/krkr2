@@ -243,6 +243,56 @@ twin.draw(twinAdaptor);
 check(twin.countPlayingTimelines() >= 1,
     "A06 twin keeps its own playing timelines after draw");
 
+// A09: NEKOPARA's MotionAffineSourceLayer.createPlayer copies a character
+// with unserialize(src.serialize()) on every KAG layer transfer. The copy
+// must carry the script-space base, not the live diff sway offset, or it
+// keeps that offset after the idle loop ends.
+function a09NewPlayer() {
+    var p = new Motion.EmotePlayer(manager);
+    p.motionKey = Storages.getPlacedPath(
+        "../emote/e-mote3.0バニラパジャマa.psb");
+    p.chara = data.metadata.base.chara;
+    p.play(data.metadata.base.motion, Motion.PlayFlagForce);
+    // MotionAffineSourceLayer.resetEmoteVariables writes every pose
+    // variable once after load; diff tracks then have a base to offset.
+    var names = ["move_UD", "move_LR", "head_UD", "head_LR", "head_slant",
+        "body_UD", "body_LR", "body_slant", "face_talk", "face_mouth"];
+    for (var i = 0; i < names.count; i++) {
+        p.setVariable(names[i], 0);
+    }
+    return p;
+}
+var a09src = a09NewPlayer();
+a09src.playTimeline("差分用_waiting_loop2",
+    Motion.TimelinePlayFlagParallel | Motion.TimelinePlayFlagDifference);
+a09src.setTimelineBlendRatio("差分用_waiting_loop2", 1, 0, 0);
+for (var a09frame = 0; a09frame < 60; a09frame++) {
+    a09src.progress(1000.0 / 60.0);
+}
+check(Math.abs(a09src.getVariable("body_LR")) > 1,
+    "A09 diff loop sways body_LR before the copy");
+var a09saved = a09src.serialize();
+check(Math.abs(a09saved.variables.body_LR) < 0.001,
+    "A09 serialize stores body_LR without the diff offset");
+var a09copy = a09NewPlayer();
+a09copy.unserialize(a09saved);
+a09copy.fadeOutTimeline("差分用_waiting_loop2", 0, 0);
+for (var a09stop = 0; a09stop < 30; a09stop++) {
+    a09copy.progress(1000.0 / 60.0);
+}
+check(Math.abs(a09copy.getVariable("body_LR")) < 0.001,
+    "A09 copy returns to its base once the diff loop stops");
+
+// An explicit empty timeline list means nothing was playing; restoring it
+// must not start every main timeline (sample_全自動_test drives the mouth).
+var a09idle = a09NewPlayer();
+a09idle.stopTimeline("");
+var a09idleSaved = a09idle.serialize();
+var a09idleCopy = a09NewPlayer();
+a09idleCopy.unserialize(a09idleSaved);
+pluginAssertEqual("A09 empty timeline list restores no playing timelines",
+    0, a09idleCopy.countPlayingTimelines());
+
 // R02/A07/A08: lifecycle ABI batch.
 // R02: REF scripts call ResourceManager.unloadAll(); the alias must exist.
 check(manager.unloadAll != void, "R02 unloadAll alias exists");

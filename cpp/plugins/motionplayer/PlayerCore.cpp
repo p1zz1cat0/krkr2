@@ -1435,18 +1435,30 @@ namespace motion {
     tTJSVariant Player::serialize() {
         ensureMotionLoaded();
 
+        // Store the script-space base, not the published output: the live
+        // diff-timeline offset and mirror are re-applied by the restored
+        // timelines and wrapper state. Baking them in made a KAG layer copy
+        // keep the idle sway offset after the diff loop stopped.
+        const auto baseValue = [this](const std::string &label,
+                                      double published) {
+            const auto it = _evalResultListIndex.find(label);
+            return it != _evalResultListIndex.end()
+                ? it->second->value - it->second->pendingDiff
+                : published;
+        };
         std::vector<std::pair<std::string, tTJSVariant>> variables;
         std::unordered_set<std::string> seenVariables;
         if(_runtime->activeMotion) {
             for(const auto &label : _runtime->activeMotion->variableLabels) {
                 seenVariables.insert(label);
-                variables.emplace_back(label,
-                                       getVariable(detail::widen(label)));
+                variables.emplace_back(
+                    label,
+                    baseValue(label, getVariable(detail::widen(label))));
             }
         }
         for(const auto &[label, value] : _variableValues) {
             if(seenVariables.insert(label).second) {
-                variables.emplace_back(label, value);
+                variables.emplace_back(label, baseValue(label, value));
             }
         }
 
@@ -1506,9 +1518,12 @@ namespace motion {
             }
         }
 
-        bool restoredTimelines = false;
+        // An explicit (possibly empty) timeline list is the complete playing
+        // set; only data without the key falls back to the primary clips.
+        bool hasTimelineList = false;
         if(getObjectProperty(data, TJS_W("timelines"), value) &&
            value.Type() == tvtObject && value.AsObjectNoAddRef() != nullptr) {
+            hasTimelineList = true;
             ensureMotionLoaded();
             if(_runtime->activeMotion && _runtime->timelines.empty()) {
                 detail::primeTimelineStates(_runtime->timelines,
@@ -1537,7 +1552,6 @@ namespace motion {
                     continue;
                 }
 
-                restoredTimelines = true;
                 it->second.playing = true;
                 _runtime->playingTimelineLabels.push_back(key);
                 it->second.controlInitialized = false;
@@ -1581,7 +1595,7 @@ namespace motion {
             }
         }
 
-        if(!restoredTimelines && ensureMotionLoaded()) {
+        if(!hasTimelineList && ensureMotionLoaded()) {
             if(_runtime->timelines.empty()) {
                 detail::primeTimelineStates(_runtime->timelines,
                                             *_runtime->activeMotion);
