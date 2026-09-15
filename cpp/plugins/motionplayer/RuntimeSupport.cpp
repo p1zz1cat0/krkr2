@@ -50,6 +50,22 @@ namespace motion::detail {
             return registry;
         }
 
+        // Process-global index from (placed storage path, decrypt seed) back
+        // to the parsed snapshot. The registry above already owns every
+        // snapshot until it is unregistered, so this index adds no lifetime:
+        // it only makes that lifetime reachable again. Necessary because the
+        // game constructs a fresh ResourceManager per KAG layer transfer
+        // (NEKOPARA's AffineSourceMotion), and a per-manager cache cannot see
+        // the previous manager's parse. Entries are dropped whenever their
+        // module is unregistered so `unload` keeps its release semantics.
+        std::unordered_map<std::string, std::shared_ptr<MotionSnapshot>> &
+        snapshotPathIndex() {
+            static std::unordered_map<std::string,
+                                      std::shared_ptr<MotionSnapshot>>
+                index;
+            return index;
+        }
+
         struct LogoChainTraceSession {
             std::uint64_t sequence = 0;
             std::string motionPath;
@@ -80,6 +96,19 @@ namespace motion::detail {
                                return static_cast<char>(std::tolower(ch));
                            });
             return value;
+        }
+
+        // Key for snapshotPathIndex(). Resolves the request through the
+        // storage layer first so the same PSB reaches the same key whether a
+        // caller passed a raw request or an already placed path; the seed is
+        // part of the identity because decrypted content belongs to it.
+        std::string snapshotCacheKey(const ttstr &path, tjs_int decryptSeed) {
+            std::string placed = path.AsStdString();
+            if(const ttstr resolved = TVPGetPlacedPath(path);
+               !resolved.IsEmpty()) {
+                placed = resolved.AsStdString();
+            }
+            return std::to_string(decryptSeed) + "\n" + lowercase(placed);
         }
 
         bool pathContainsToken(const std::vector<std::string> &path,
@@ -613,7 +642,9 @@ namespace motion::detail {
 
                 snapshot.timelineControlByLabel[*label] = std::move(binding);
 
-                // One-shot diagnostic: authored control-track layout.
+                // Authored control-track layout diagnostic. Debug level: a
+                // full character emits several hundred lines per parse, and at
+                // info level this alone dominated the PSB load burst.
                 if(LOGGER) {
                     const auto &stored = snapshot.timelineControlByLabel.at(*label);
                     for(size_t trackIndex = 0;
@@ -632,7 +663,7 @@ namespace motion::detail {
                                                   frame.isTypeZero ? "T" : "v",
                                                   frame.value);
                         }
-                        LOGGER->info(
+                        LOGGER->debug(
                             "emote.tl.diag label={} diff={} loop={:.2f}..{:.2f} "
                             "last={:.2f} track[{}]={} frames=[{}]{}",
                             *label, isDiff ? 1 : 0, stored.loopBegin,
@@ -1534,6 +1565,25 @@ namespace motion::detail {
 
     std::shared_ptr<MotionSnapshot>
     loadMotionSnapshot(const ttstr &path, const tjs_int decryptSeed) {
+        // Read-through: a snapshot for this (placed path, seed) may already
+        // exist from a previous ResourceManager that the game has since
+        // replaced. Re-register the module in case an unload by another
+        // manager dropped the registry entry without touching this index.
+        const auto cacheKey = snapshotCacheKey(path, decryptSeed);
+        std::shared_ptr<MotionSnapshot> indexedSnapshot;
+        {
+            std::lock_guard lock(snapshotRegistryMutex());
+            if(const auto it = snapshotPathIndex().find(cacheKey);
+               it != snapshotPathIndex().end()) {
+                indexedSnapshot = it->second;
+            }
+        }
+        if(indexedSnapshot) {
+            registerModuleSnapshot(indexedSnapshot->moduleValue,
+                                   indexedSnapshot);
+            return indexedSnapshot;
+        }
+
         const auto file = loadPSBFile(path, decryptSeed);
         if(!file) {
             return nullptr;
@@ -1700,6 +1750,10 @@ namespace motion::detail {
             }
         }
         registerModuleSnapshot(snapshot->moduleValue, snapshot);
+        {
+            std::lock_guard lock(snapshotRegistryMutex());
+            snapshotPathIndex()[cacheKey] = snapshot;
+        }
         return snapshot;
     }
 
@@ -1745,12 +1799,30 @@ namespace motion::detail {
         }
 
         std::lock_guard lock(snapshotRegistryMutex());
+        const auto registryIt =
+            snapshotRegistry().find(module.AsObjectNoAddRef());
+        const auto snapshot = registryIt != snapshotRegistry().end()
+            ? registryIt->second
+            : nullptr;
         snapshotRegistry().erase(module.AsObjectNoAddRef());
+        if(snapshot) {
+            // Keep `unload` able to release the parse: without this the path
+            // index would resurrect the snapshot on the next load.
+            for(auto it = snapshotPathIndex().begin();
+                it != snapshotPathIndex().end();) {
+                if(it->second == snapshot) {
+                    it = snapshotPathIndex().erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
     }
 
     void clearModuleSnapshots() {
         std::lock_guard lock(snapshotRegistryMutex());
         snapshotRegistry().clear();
+        snapshotPathIndex().clear();
     }
 
     tTJSVariant makeArray(const std::vector<tTJSVariant> &items) {

@@ -149,6 +149,24 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
         LOGGER->debug("ResourceManager::load emote/psb: {}", rawPath);
     }
 
+    // Read-through cache, matching sdl3-ref ResourceManager::load (which
+    // returns cacheData for the placed path) and REF's findLoaded() guard.
+    // The game constructs a fresh manager per KAG layer transfer, so without
+    // this a repeat load of an already parsed PSB re-parses and recursively
+    // scans the whole file on the render thread. Generations are intentionally
+    // not bumped: REF only bumps them when a module is actually parsed.
+    if(const auto cached = findLoaded(path); cached.Type() == tvtObject) {
+        if(const auto snapshot = detail::lookupModuleSnapshot(cached)) {
+            // Another manager's unload may have dropped the registry entry
+            // while this manager still holds the module; re-assert it so
+            // snapshot consumers keep working for the module being loaded.
+            detail::registerModuleSnapshot(cached, snapshot);
+        }
+        _state->lastLoadedPath = rawPath;
+        _state->lastLoadedModule = cached;
+        return cached;
+    }
+
     const auto loadStart = std::chrono::steady_clock::now();
     const auto loaded = detail::loadPSBVariant(path, _decryptSeed);
     const double loadMs = std::chrono::duration<double, std::milli>(

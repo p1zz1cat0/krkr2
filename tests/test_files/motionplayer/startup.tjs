@@ -53,6 +53,19 @@ var manager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
 // and load() fails with "PSBArray bad length type size".
 Motion.ResourceManager.setEmotePSBDecryptSeed(742877301);
 var data = manager.load("../emote/e-mote3.0バニラパジャマa.psb");
+
+// R03: load() is a read-through cache. The game builds a fresh
+// Motion.ResourceManager per KAG layer transfer; a repeat load of the same
+// placed path — same manager or a newly constructed one — must reuse the
+// parsed module instead of parsing the PSB again on the render thread.
+var reloadedModule = manager.load("../emote/e-mote3.0バニラパジャマa.psb");
+check(reloadedModule === data, "repeat load returns the cached module");
+var secondManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
+var crossManagerModule =
+    secondManager.load("../emote/e-mote3.0バニラパジャマa.psb");
+check(crossManagerModule === data,
+    "cross-manager load reuses the parsed module");
+
 var player = new Motion.EmotePlayer(manager);
 pluginAssertEqual("E-mote module default mask mode", Motion.MaskModeAlpha,
     player.maskMode);
@@ -575,6 +588,19 @@ check(player.contains(hitX + 4096, hitY),
     "contains follows draw affine translation once");
 check(!player.contains(hitX, hitY),
     "contains no longer reports the pre-transform position");
+
+// R03b: an unload must release the parse. A new manager reuses the indexed
+// snapshot, but unloadAll drops the index entry with the registry entry so
+// the next load parses a fresh module instead of resurrecting the released
+// snapshot.
+var evictManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
+var evictModule = evictManager.load("../emote/e-mote3.0バニラパジャマa.psb");
+check(evictModule === data, "new manager reuses the parsed module");
+evictManager.unloadAll();
+var afterUnloadModule =
+    evictManager.load("../emote/e-mote3.0バニラパジャマa.psb");
+check(afterUnloadModule !== data,
+    "unloadAll releases the snapshot for a fresh parse");
 
 player.stopWind();
 manager.clearCache();
