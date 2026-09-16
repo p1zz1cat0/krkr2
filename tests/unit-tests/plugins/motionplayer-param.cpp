@@ -169,6 +169,29 @@ TEST_CASE("loading a snapshot resets motion-local playback state") {
     CHECK_FALSE(player.getSyncActive());
 }
 
+TEST_CASE("snapshot composition stays private to each Player") {
+    auto primary = std::make_shared<motion::detail::MotionSnapshot>();
+    primary->path = "shared-primary.psb";
+    primary->root = std::make_shared<PSB::PSBDictionary>();
+    auto attached = std::make_shared<motion::detail::MotionSnapshot>();
+    attached->path = "attached.psb";
+    attached->root = std::make_shared<PSB::PSBDictionary>();
+
+    motion::Player first;
+    motion::Player second;
+    first.loadFromSnapshot(primary);
+    second.loadFromSnapshot(primary);
+    first.addEmoteFile(attached);
+
+    // The parsed snapshot is shared, but the MultiCache composition belongs to
+    // the Player that requested it.
+    CHECK(primary->attachedSnapshots.empty());
+    REQUIRE(first.runtime()->activeMotion.get() != primary.get());
+    REQUIRE(first.runtime()->activeMotion->attachedSnapshots.size() == 1);
+    CHECK(second.runtime()->activeMotion.get() == primary.get());
+    CHECK(second.runtime()->activeMotion->attachedSnapshots.empty());
+}
+
 TEST_CASE("evaluateTimelineLike resolves NaN/Inf sentinels against the node lim") {
     // F07: nested nodes resolve edge-pinning keyframes against their own
     // effective region, not the root logical screen.

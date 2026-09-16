@@ -347,6 +347,10 @@ namespace motion::detail {
         motion::SourceCache *sourceCacheNative = nullptr;
         tTJSVariant sourceCacheObject;
         std::shared_ptr<MotionSnapshot> activeMotion;
+        // Parsed snapshots are shared by the process-level loader. The
+        // attachment list and merged resource view become Player-private only
+        // when MultiCache adds an attached motion.
+        bool activeMotionHasPrivateComposition = false;
         // Active motion's logical world boundary (PSB root screenSize).
         // Zeroed when no motion is active; consumed by frame evaluation
         // (coord NaN/Inf sentinel fix) and upcoming render alignment.
@@ -833,6 +837,8 @@ namespace motion::detail {
     void
     registerModuleSnapshot(const tTJSVariant &module,
                            const std::shared_ptr<MotionSnapshot> &snapshot);
+    void retainModuleSnapshot(const tTJSVariant &module);
+    void releaseModuleSnapshot(const tTJSVariant &module);
     std::shared_ptr<MotionSnapshot>
     lookupModuleSnapshot(const tTJSVariant &module);
     void unregisterModuleSnapshot(const tTJSVariant &module);

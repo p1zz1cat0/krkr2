@@ -105,8 +105,21 @@ motion::ResourceManager::ResourceManager(iTJSDispatch2 *kag,
     }
 }
 
+motion::ResourceManager::~ResourceManager() {
+    // Copies of ResourceManager share State (Player and its TJS adaptor both
+    // keep one). Only the last value may release the State's global snapshot
+    // ownership.
+    if(_state && _state.use_count() == 1) {
+        clearCache();
+    }
+}
+
 tjs_int motion::ResourceManager::getEmotePSBDecryptSeed() {
     return _decryptSeed;
+}
+
+std::uint64_t motion::ResourceManager::getEmotePSBDecryptGeneration() {
+    return _decryptConfigGeneration;
 }
 
 tjs_error motion::ResourceManager::setEmotePSBDecryptSeed(tTJSVariant *,
@@ -119,7 +132,11 @@ tjs_error motion::ResourceManager::setEmotePSBDecryptSeed(tTJSVariant *,
     if((*p)->Type() != tvtInteger) {
         return TJS_E_INVALIDPARAM;
     }
-    _decryptSeed = static_cast<tjs_int>(*p[0]);
+    const auto nextSeed = static_cast<tjs_int>(*p[0]);
+    if(_decryptSeed != nextSeed) {
+        _decryptSeed = nextSeed;
+        ++_decryptConfigGeneration;
+    }
     LOGGER->info("setEmotePSBDecryptSeed: {}", _decryptSeed);
     return TJS_S_OK;
 }
@@ -134,7 +151,11 @@ tjs_error motion::ResourceManager::setEmotePSBDecryptFunc(tTJSVariant *,
     if(!p[0]) {
         return TJS_E_INVALIDPARAM;
     }
-    _decryptFunc = p[0]->AsObjectClosure();
+    const auto nextFunc = p[0]->AsObjectClosure();
+    if(_decryptFunc != nextFunc) {
+        _decryptFunc = nextFunc;
+        ++_decryptConfigGeneration;
+    }
     LOGGER->info("setEmotePSBDecryptFunc: {}",
                  _decryptFunc.Object ? "closure stored" : "cleared");
     return TJS_S_OK;
@@ -149,19 +170,39 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
         LOGGER->debug("ResourceManager::load emote/psb: {}", rawPath);
     }
 
+    const auto decryptGeneration = getEmotePSBDecryptGeneration();
+    if(_state && _state->decryptConfigGeneration != decryptGeneration) {
+        clearCache();
+        _state->decryptConfigGeneration = decryptGeneration;
+    }
+
+    const auto retainSnapshotForState = [this](const tTJSVariant &module) {
+        if(!_state || module.Type() != tvtObject) {
+            return;
+        }
+        auto *object = module.AsObjectNoAddRef();
+        if(!object || !detail::lookupModuleSnapshot(module)) {
+            return;
+        }
+        if(_state->ownedSnapshotModules.insert(object).second) {
+            detail::retainModuleSnapshot(module);
+        }
+    };
+
     // Read-through cache, matching sdl3-ref ResourceManager::load (which
     // returns cacheData for the placed path) and REF's findLoaded() guard.
     // The game constructs a fresh manager per KAG layer transfer, so without
     // this a repeat load of an already parsed PSB re-parses and recursively
-    // scans the whole file on the render thread. Generations are intentionally
-    // not bumped: REF only bumps them when a module is actually parsed.
+    // scans the whole file on the render thread. A local cache hit does not
+    // bump the State generation; the first insertion into a new State does,
+    // even when the process-level index supplied the parsed module.
     if(const auto cached = findLoaded(path); cached.Type() == tvtObject) {
         if(const auto snapshot = detail::lookupModuleSnapshot(cached)) {
-            // Another manager's unload may have dropped the registry entry
-            // while this manager still holds the module; re-assert it so
-            // snapshot consumers keep working for the module being loaded.
+            // Re-assert the module mapping if a caller cleared the registry
+            // while this manager still holds a valid cached module.
             detail::registerModuleSnapshot(cached, snapshot);
         }
+        retainSnapshotForState(cached);
         _state->lastLoadedPath = rawPath;
         _state->lastLoadedModule = cached;
         return cached;
@@ -190,6 +231,7 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
         _state->moduleLoadGenerations[object] =
             ++_state->nextLoadGeneration;
     }
+    retainSnapshotForState(loaded);
     _state->lastLoadedPath = rawPath;
     _state->lastLoadedModule = loaded;
     return loaded;
@@ -223,7 +265,9 @@ void motion::ResourceManager::unload(ttstr path) const {
             _state->loadedModules.erase(key);
         }
         _state->moduleLoadGenerations.erase(moduleObject);
-        detail::unregisterModuleSnapshot(module);
+        if(_state->ownedSnapshotModules.erase(moduleObject) != 0) {
+            detail::releaseModuleSnapshot(module);
+        }
     } else {
         for(const auto &key : buildPathCacheKeys(path)) {
             _state->loadedModules.erase(key);
@@ -250,9 +294,9 @@ void motion::ResourceManager::clearCache() const {
     _state->layerNamesById.clear();
     _state->usedLayerIds.clear();
     _state->nextLayerId = 1;
-    // Snapshot identity is process-global, but ownership is per manager:
-    // unregister only objects held by this cache. Clearing the whole registry
-    // invalidates modules that another ResourceManager still owns.
+    // Snapshot identity is process-global, but ownership is per shared State:
+    // release only objects held by this cache. Other ResourceManager States
+    // keep their shared module registered until their own cache is released.
     std::unordered_set<iTJSDispatch2 *> seen;
     for(const auto &[_, module] : _state->loadedModules) {
         if(module.Type() != tvtObject) {
@@ -260,10 +304,14 @@ void motion::ResourceManager::clearCache() const {
         }
         auto *object = module.AsObjectNoAddRef();
         if(object && seen.insert(object).second) {
-            detail::unregisterModuleSnapshot(module);
+            if(_state->ownedSnapshotModules.erase(object) != 0) {
+                detail::releaseModuleSnapshot(module);
+            }
         }
     }
+    _state->ownedSnapshotModules.clear();
     _state->loadedModules.clear();
+    _state->decryptConfigGeneration = getEmotePSBDecryptGeneration();
 }
 
 tTJSVariant motion::ResourceManager::getLastLoadedModule() const {

@@ -50,20 +50,41 @@ namespace motion::detail {
             return registry;
         }
 
-        // Process-global index from (placed storage path, decrypt seed) back
-        // to the parsed snapshot. The registry above already owns every
-        // snapshot until it is unregistered, so this index adds no lifetime:
-        // it only makes that lifetime reachable again. Necessary because the
+        // Process-global index from (placed storage path, decrypt
+        // configuration) back to the parsed snapshot. The registry and this
+        // index remain reachable while any ResourceManager State owns the
+        // module; the last owner release drops both. Necessary because the
         // game constructs a fresh ResourceManager per KAG layer transfer
         // (NEKOPARA's AffineSourceMotion), and a per-manager cache cannot see
-        // the previous manager's parse. Entries are dropped whenever their
-        // module is unregistered so `unload` keeps its release semantics.
+        // the previous manager's parse.
         std::unordered_map<std::string, std::shared_ptr<MotionSnapshot>> &
         snapshotPathIndex() {
             static std::unordered_map<std::string,
                                       std::shared_ptr<MotionSnapshot>>
                 index;
             return index;
+        }
+
+        std::unordered_map<const iTJSDispatch2 *, std::size_t> &
+        snapshotOwnerCounts() {
+            static std::unordered_map<const iTJSDispatch2 *, std::size_t>
+                owners;
+            return owners;
+        }
+
+        void eraseSnapshotPathEntries(
+            const std::shared_ptr<MotionSnapshot> &snapshot) {
+            if(!snapshot) {
+                return;
+            }
+            for(auto it = snapshotPathIndex().begin();
+                it != snapshotPathIndex().end();) {
+                if(it->second == snapshot) {
+                    it = snapshotPathIndex().erase(it);
+                } else {
+                    ++it;
+                }
+            }
         }
 
         struct LogoChainTraceSession {
@@ -100,15 +121,40 @@ namespace motion::detail {
 
         // Key for snapshotPathIndex(). Resolves the request through the
         // storage layer first so the same PSB reaches the same key whether a
-        // caller passed a raw request or an already placed path; the seed is
-        // part of the identity because decrypted content belongs to it.
-        std::string snapshotCacheKey(const ttstr &path, tjs_int decryptSeed) {
+        // caller passed a raw request or an already placed path. The decrypt
+        // configuration generation changes whenever the seed or callback
+        // changes, so cached bytes cannot cross decrypt configurations.
+        std::string snapshotCacheKey(const ttstr &path, tjs_int decryptSeed,
+                                     std::uint64_t decryptGeneration) {
             std::string placed = path.AsStdString();
             if(const ttstr resolved = TVPGetPlacedPath(path);
                !resolved.IsEmpty()) {
                 placed = resolved.AsStdString();
             }
-            return std::to_string(decryptSeed) + "\n" + lowercase(placed);
+            return std::to_string(decryptSeed) + "\n" +
+                std::to_string(decryptGeneration) + "\n" +
+                lowercase(placed);
+        }
+
+        std::shared_ptr<MotionSnapshot> publishSnapshot(
+            const std::string &cacheKey,
+            const std::shared_ptr<MotionSnapshot> &snapshot) {
+            if(!snapshot || snapshot->moduleValue.Type() != tvtObject ||
+               snapshot->moduleValue.AsObjectNoAddRef() == nullptr) {
+                return snapshot;
+            }
+
+            std::lock_guard lock(snapshotRegistryMutex());
+            if(const auto it = snapshotPathIndex().find(cacheKey);
+               it != snapshotPathIndex().end()) {
+                return it->second;
+            }
+
+            auto *object = snapshot->moduleValue.AsObjectNoAddRef();
+            snapshotRegistry()[object] = snapshot;
+            snapshotOwnerCounts().try_emplace(object, 0);
+            snapshotPathIndex()[cacheKey] = snapshot;
+            return snapshot;
         }
 
         bool pathContainsToken(const std::vector<std::string> &path,
@@ -1565,11 +1611,13 @@ namespace motion::detail {
 
     std::shared_ptr<MotionSnapshot>
     loadMotionSnapshot(const ttstr &path, const tjs_int decryptSeed) {
-        // Read-through: a snapshot for this (placed path, seed) may already
-        // exist from a previous ResourceManager that the game has since
-        // replaced. Re-register the module in case an unload by another
-        // manager dropped the registry entry without touching this index.
-        const auto cacheKey = snapshotCacheKey(path, decryptSeed);
+        // Read-through: a snapshot for this (placed path, decrypt config) may
+        // already exist from a previous ResourceManager that the game has since
+        // replaced. Re-register the module if an external reset dropped the
+        // registry entry while this index still owns the snapshot.
+        const auto cacheKey = snapshotCacheKey(
+            path, decryptSeed,
+            ::motion::ResourceManager::getEmotePSBDecryptGeneration());
         std::shared_ptr<MotionSnapshot> indexedSnapshot;
         {
             std::lock_guard lock(snapshotRegistryMutex());
@@ -1749,12 +1797,7 @@ namespace motion::detail {
                     resource ? resource->data.size() : 0);
             }
         }
-        registerModuleSnapshot(snapshot->moduleValue, snapshot);
-        {
-            std::lock_guard lock(snapshotRegistryMutex());
-            snapshotPathIndex()[cacheKey] = snapshot;
-        }
-        return snapshot;
+        return publishSnapshot(cacheKey, snapshot);
     }
 
     tTJSVariant loadPSBVariant(const ttstr &path, const tjs_int decryptSeed) {
@@ -1779,7 +1822,45 @@ namespace motion::detail {
         }
 
         std::lock_guard lock(snapshotRegistryMutex());
-        snapshotRegistry()[module.AsObjectNoAddRef()] = snapshot;
+        auto *object = module.AsObjectNoAddRef();
+        snapshotRegistry()[object] = snapshot;
+        snapshotOwnerCounts().try_emplace(object, 0);
+    }
+
+    void retainModuleSnapshot(const tTJSVariant &module) {
+        if(module.Type() != tvtObject || module.AsObjectNoAddRef() == nullptr) {
+            return;
+        }
+
+        std::lock_guard lock(snapshotRegistryMutex());
+        const auto it = snapshotRegistry().find(module.AsObjectNoAddRef());
+        if(it != snapshotRegistry().end()) {
+            ++snapshotOwnerCounts()[module.AsObjectNoAddRef()];
+        }
+    }
+
+    void releaseModuleSnapshot(const tTJSVariant &module) {
+        if(module.Type() != tvtObject || module.AsObjectNoAddRef() == nullptr) {
+            return;
+        }
+
+        std::lock_guard lock(snapshotRegistryMutex());
+        const auto object = module.AsObjectNoAddRef();
+        const auto registryIt = snapshotRegistry().find(object);
+        if(registryIt == snapshotRegistry().end()) {
+            return;
+        }
+
+        auto ownerIt = snapshotOwnerCounts().find(object);
+        if(ownerIt != snapshotOwnerCounts().end() && ownerIt->second > 1) {
+            --ownerIt->second;
+            return;
+        }
+
+        const auto snapshot = registryIt->second;
+        snapshotRegistry().erase(registryIt);
+        snapshotOwnerCounts().erase(object);
+        eraseSnapshotPathEntries(snapshot);
     }
 
     std::shared_ptr<MotionSnapshot>
@@ -1805,23 +1886,14 @@ namespace motion::detail {
             ? registryIt->second
             : nullptr;
         snapshotRegistry().erase(module.AsObjectNoAddRef());
-        if(snapshot) {
-            // Keep `unload` able to release the parse: without this the path
-            // index would resurrect the snapshot on the next load.
-            for(auto it = snapshotPathIndex().begin();
-                it != snapshotPathIndex().end();) {
-                if(it->second == snapshot) {
-                    it = snapshotPathIndex().erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        }
+        snapshotOwnerCounts().erase(module.AsObjectNoAddRef());
+        eraseSnapshotPathEntries(snapshot);
     }
 
     void clearModuleSnapshots() {
         std::lock_guard lock(snapshotRegistryMutex());
         snapshotRegistry().clear();
+        snapshotOwnerCounts().clear();
         snapshotPathIndex().clear();
     }
 

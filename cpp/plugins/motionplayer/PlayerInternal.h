@@ -222,12 +222,30 @@ namespace motion {
             return snapshot;
         }
 
+        inline bool sameMotionSnapshot(
+            const std::shared_ptr<detail::MotionSnapshot> &left,
+            const std::shared_ptr<detail::MotionSnapshot> &right) {
+            if(!left || !right) {
+                return false;
+            }
+            if(left.get() == right.get()) {
+                return true;
+            }
+            if(left->moduleValue.Type() != tvtObject ||
+               right->moduleValue.Type() != tvtObject) {
+                return false;
+            }
+            return left->moduleValue.AsObjectNoAddRef() ==
+                right->moduleValue.AsObjectNoAddRef();
+        }
+
         inline std::shared_ptr<detail::MotionSnapshot>
         activateMotion(detail::PlayerRuntime &runtime,
                        const std::shared_ptr<detail::MotionSnapshot> &snapshot,
                        ResourceManager *resourceManager = nullptr) {
             ++runtime.motionGeneration;
             runtime.activeMotion = snapshot;
+            runtime.activeMotionHasPrivateComposition = false;
             runtime.logicalScreen = snapshot
                 ? snapshot->screenSize
                 : detail::ScreenSize{};
@@ -307,9 +325,15 @@ namespace motion {
                     return it->second;
                 }
 
-                const auto snapshot = detail::loadMotionSnapshot(
-                    resolved, ResourceManager::getEmotePSBDecryptSeed());
-                if(snapshot) {
+                if(resourceManager != nullptr) {
+                    const auto loaded = resourceManager->load(resolved);
+                    if(const auto snapshot =
+                           detail::lookupModuleSnapshot(loaded)) {
+                        return cacheMotion(runtime, requestKey, resolvedKey,
+                                           snapshot);
+                    }
+                } else if(const auto snapshot = detail::loadMotionSnapshot(
+                              resolved, ResourceManager::getEmotePSBDecryptSeed())) {
                     return cacheMotion(runtime, requestKey, resolvedKey,
                                        snapshot);
                 }

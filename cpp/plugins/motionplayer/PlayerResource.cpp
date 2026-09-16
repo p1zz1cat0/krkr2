@@ -18,9 +18,10 @@ namespace motion {
         for(auto it = _runtime->motionsByKey.begin();
             it != _runtime->motionsByKey.end();) {
             if(it->first == key || it->second->path == key) {
-                if(_runtime->activeMotion == it->second) {
+                if(sameMotionSnapshot(_runtime->activeMotion, it->second)) {
                     ++_runtime->motionGeneration;
                     _runtime->activeMotion.reset();
+                    _runtime->activeMotionHasPrivateComposition = false;
                     _runtime->hasLastPreparedDrawBounds = false;
                     _controllerState.reset();
                     _progressTransactionOpen = false;
@@ -46,6 +47,7 @@ namespace motion {
         }
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _runtime->activeMotionHasPrivateComposition = false;
         _runtime->hasLastPreparedDrawBounds = false;
         _controllerState.reset();
         _progressTransactionOpen = false;

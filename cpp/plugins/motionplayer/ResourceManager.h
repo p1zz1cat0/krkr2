@@ -17,6 +17,8 @@ namespace motion {
 
         explicit ResourceManager(iTJSDispatch2 *kag, tjs_int cacheSize);
 
+        ~ResourceManager();
+
         tTJSVariant load(ttstr path) const;
         tTJSVariant loadSource(ttstr path) const;
         void unload(ttstr path) const;
@@ -38,6 +40,7 @@ namespace motion {
         tjs_int requireLayerIdForName(ttstr name);
         void releaseLayerId(tjs_int id);
         [[nodiscard]] static tjs_int getEmotePSBDecryptSeed();
+        [[nodiscard]] static std::uint64_t getEmotePSBDecryptGeneration();
 
         static tjs_error setEmotePSBDecryptSeed(tTJSVariant *r, tjs_int count,
                                                 tTJSVariant **p,
@@ -56,17 +59,20 @@ namespace motion {
         }
 
         // R02（REF ResourceManager::unloadAll）：REF 脚本按此名释放全部
-        // 缓存；本实现能力由 clearCache 提供，注册同名 alias 保证 REF API
-        // 调用不因成员缺失失败。注意语义差：clearCache 额外清全局
-        // snapshot registry（REF 的 per-manager emotefile 缓存无此层）。
+        // 本 State 缓存；注册同名 alias 保证 REF API 调用不因成员缺失失败。
+        // 共享 snapshot 只有在最后一个 State 释放时才从全局 registry 移除。
         void unloadAll() const { clearCache(); }
 
     private:
         struct State {
             std::unordered_map<std::string, tTJSVariant> loadedModules;
+            // One ownership token per shared State, not per ResourceManager
+            // value. Player/NCB wrappers copy this State intentionally.
+            std::unordered_set<iTJSDispatch2 *> ownedSnapshotModules;
             std::unordered_map<iTJSDispatch2 *, std::uint64_t>
                 moduleLoadGenerations;
             std::uint64_t nextLoadGeneration = 0;
+            std::uint64_t decryptConfigGeneration = 0;
             std::string lastLoadedPath;
             tTJSVariant lastLoadedModule;
             std::unordered_map<std::string, tjs_int> layerIdsByName;
@@ -78,6 +84,7 @@ namespace motion {
 
         std::shared_ptr<State> _state;
         inline static int _decryptSeed = 0;
+        inline static std::uint64_t _decryptConfigGeneration = 0;
         inline static tTJSVariantClosure _decryptFunc{};
     };
 } // namespace motion

@@ -312,6 +312,7 @@ namespace motion {
         _syncActive = false;
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _runtime->activeMotionHasPrivateComposition = false;
         _runtime->hasLastPreparedDrawBounds = false;
         // The null-snapshot reset does not pass through activateMotion; drop
         // retained command outputs here as well.
@@ -345,7 +346,6 @@ namespace motion {
         _mirrorNegativeCache.clear();
 
         if(snapshot) {
-            snapshot->attachedSnapshots.clear();
             _project = snapshot->moduleValue;
             activateMotion(*_runtime, snapshot, &_resourceManagerNative);
             syncVariableKeysFromActiveMotion();
@@ -357,13 +357,22 @@ namespace motion {
         if(!_runtime || !_runtime->activeMotion || !snapshot) {
             return;
         }
-        if(snapshot.get() == _runtime->activeMotion.get()) {
+        if(sameMotionSnapshot(snapshot, _runtime->activeMotion)) {
             return;
+        }
+
+        if(!_runtime->activeMotionHasPrivateComposition) {
+            auto privateSnapshot =
+                std::make_shared<detail::MotionSnapshot>(
+                    *_runtime->activeMotion);
+            privateSnapshot->attachedSnapshots.clear();
+            _runtime->activeMotion = std::move(privateSnapshot);
+            _runtime->activeMotionHasPrivateComposition = true;
         }
 
         auto &attached = _runtime->activeMotion->attachedSnapshots;
         for(const auto &existing : attached) {
-            if(existing.get() == snapshot.get()) {
+            if(sameMotionSnapshot(existing, snapshot)) {
                 return;
             }
         }
@@ -432,6 +441,7 @@ namespace motion {
         _motionKey = v;
         ++_runtime->motionGeneration;
         _runtime->activeMotion.reset();
+        _runtime->activeMotionHasPrivateComposition = false;
         _runtime->hasLastPreparedDrawBounds = false;
         _runtime->timelines.clear();
         _runtime->playingTimelineLabels.clear();
@@ -505,6 +515,7 @@ namespace motion {
         self->_motionKey = motionValue;
         ++self->_runtime->motionGeneration;
         self->_runtime->activeMotion.reset();
+        self->_runtime->activeMotionHasPrivateComposition = false;
         self->_runtime->hasLastPreparedDrawBounds = false;
         self->_runtime->timelines.clear();
         self->_runtime->playingTimelineLabels.clear();
