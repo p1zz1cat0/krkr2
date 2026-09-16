@@ -58,6 +58,22 @@ namespace {
         return (c0 & c1 & c2 & c3) == 0xFFFFFFFFu;
     }
 
+    bool sameSourceMotion(
+        const std::shared_ptr<motion::detail::MotionSnapshot> &left,
+        const std::shared_ptr<motion::detail::MotionSnapshot> &right) {
+        if(left.get() == right.get()) {
+            return true;
+        }
+        if(!left || !right) {
+            return false;
+        }
+        // MultiCache gives a Player a private composition wrapper, but the
+        // wrapper keeps the parsed TJS module identity. Replacing that
+        // wrapper must not invalidate already decoded pixels; a different
+        // parsed module still needs the normal cache reset.
+        return motion::internal::sameMotionSnapshot(left, right);
+    }
+
     std::array<int, 4> unpackPackedRgba(std::uint32_t packedColor) {
         return {
             static_cast<int>(packedColor & 0xFFu),
@@ -901,13 +917,21 @@ namespace motion {
         Entry &entry, const std::string &key, int blendMode,
         const std::array<std::uint32_t, 4> &packedColors,
         const std::shared_ptr<detail::MotionSnapshot> &sourceMotion) {
-        const auto *activeMotion = sourceMotion.get();
-        if(entry.sourceMotion.get() != activeMotion) {
+        const bool samePointer = entry.sourceMotion.get() == sourceMotion.get();
+        if(!sameSourceMotion(entry.sourceMotion, sourceMotion)) {
             releaseEntryTexture(entry);
             entry.baseBitmap.reset();
             entry.backingBitmap.reset();
             entry.sourceMotion = sourceMotion;
             entry.backingLoadAttempted = false;
+        } else {
+            // A private composition can add a previously missing source while
+            // retaining the same parsed module. Retry only failed entries when
+            // the wrapper changes; a stable missing entry remains cheap.
+            if(!samePointer && !entry.baseBitmap) {
+                entry.backingLoadAttempted = false;
+            }
+            entry.sourceMotion = sourceMotion;
         }
 
         // entry.packedColors 由 findRenderEntry/ensureEntry 保证等于入参——
@@ -918,17 +942,17 @@ namespace motion {
                 entry.backingBitmap->GetHeight() > 0;
         }
 
-        if(!entry.baseBitmap && activeMotion) {
+        if(!entry.baseBitmap && sourceMotion) {
             if(entry.backingLoadAttempted) {
                 return false;
             }
             entry.backingLoadAttempted = true;
             const auto loadStart = std::chrono::steady_clock::now();
             const auto path = resolveMotionSourcePathLike_0x6948E8(
-                *activeMotion, key);
+                *sourceMotion, key);
             entry.baseBitmap = loadGraphicBitmap(path);
             if(!entry.baseBitmap) {
-                entry.baseBitmap = loadPsbBitmap(*activeMotion, key);
+                entry.baseBitmap = loadPsbBitmap(*sourceMotion, key);
             }
             const double loadMs =
                 std::chrono::duration<double, std::milli>(

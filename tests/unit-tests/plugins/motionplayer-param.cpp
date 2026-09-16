@@ -173,6 +173,7 @@ TEST_CASE("snapshot composition stays private to each Player") {
     auto primary = std::make_shared<motion::detail::MotionSnapshot>();
     primary->path = "shared-primary.psb";
     primary->root = std::make_shared<PSB::PSBDictionary>();
+    primary->moduleValue = primary->root->toTJSVal();
     auto attached = std::make_shared<motion::detail::MotionSnapshot>();
     attached->path = "attached.psb";
     attached->root = std::make_shared<PSB::PSBDictionary>();
@@ -187,6 +188,8 @@ TEST_CASE("snapshot composition stays private to each Player") {
     // the Player that requested it.
     CHECK(primary->attachedSnapshots.empty());
     REQUIRE(first.runtime()->activeMotion.get() != primary.get());
+    CHECK(motion::internal::sameMotionSnapshot(
+        primary, first.runtime()->activeMotion));
     REQUIRE(first.runtime()->activeMotion->attachedSnapshots.size() == 1);
     CHECK(second.runtime()->activeMotion.get() == primary.get());
     CHECK(second.runtime()->activeMotion->attachedSnapshots.empty());
