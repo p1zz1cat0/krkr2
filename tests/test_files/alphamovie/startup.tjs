@@ -126,5 +126,20 @@ check(am2.numOfFrame == 2, "second instance opens");
 am2.showNextImage(lay);
 invalidate am2;
 
+// 上屏通道顺序：带色度帧 (R=150,G=117,B=128,A=254) blit 后，
+// 必须与 fillRect(0xAARRGGBB) 画出的参照像素一致
+var colorMovie = new AlphaMovie();
+colorMovie.open("sample_color.amv");
+var colorLayer = new Layer(win, lay);
+colorLayer.setImageSize(16, 16);
+colorMovie.showNextImage(colorLayer);
+var colorRef = new Layer(win, lay);
+colorRef.setImageSize(1, 1);
+colorRef.fillRect(0, 0, 1, 1, 0xFE967580);
+pluginAssertEqual("amv chroma rgb on layer", colorRef.getMainPixel(0, 0),
+                  colorLayer.getMainPixel(5, 5));
+pluginAssertEqual("amv chroma alpha on layer", 254, colorLayer.getMaskPixel(5, 5));
+invalidate colorMovie;
+
 pluginSmokePass("AlphaMovie.dll");
 System.exit(0);

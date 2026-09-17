@@ -22,11 +22,6 @@ struct Tlg5Probe : CompressTLG5 {
 
 } // namespace
 
-TEST_CASE("layerExSave RevRGB swaps red and blue only") {
-    CHECK(RevRGB(0x80102030u) == 0x80302010u);
-    CHECK(RevRGB(RevRGB(0x12345678u)) == 0x12345678u);
-}
-
 TEST_CASE("layerExSave TLG5 writes B,G,R,A channels from RGBA memory") {
     // 1x1 像素，RGBA 内存：R=0x10 G=0x20 B=0x30 A=0x40
     const unsigned char pixel[4] = {0x10, 0x20, 0x30, 0x40};

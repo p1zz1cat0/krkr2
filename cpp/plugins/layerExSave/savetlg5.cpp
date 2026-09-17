@@ -88,7 +88,7 @@ bool CompressTLG5::main(long width, long height, BufRefT buffer, long pitch) {
 				for(int c = 0; c < colors; c++) prevcl[c] = 0;
 				
 				// [krkr2] TLG5 通道顺序为 B,G,R,A；上游直接按 BGRA 内存逐字节读
-				static const int order[4] = { PIX_B, PIX_G, PIX_R, PIX_A };
+				static const int order[4] = { layerPixel::B, layerPixel::G, layerPixel::R, layerPixel::A };
 				for(int x = 0; x < width; x++, current += 4) {
 					for(int c = 0; c < colors; c++) {
 						int cl;

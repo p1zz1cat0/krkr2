@@ -62,7 +62,7 @@ public:
 		pluginSafety::OperationBudget &budget)
 		: StartTick(0), Time(time), CurElapsed(0), Width(width), Height(height),
 		  Phase(0), CurSlip(0), Slip(slip), Alpha(alpha & 0xff),
-		  BackColor(back | 0xff000000), BackAlpha((back >> 24) & 0xff),
+		  BackColor(extNagano::FlutterBackColor(back)), BackAlpha((back >> 24) & 0xff),
 		  First(true), Second(true), BackBuilt(false), FrameCount(0)
 	{
 		RefCount = 1;

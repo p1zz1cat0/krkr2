@@ -8,8 +8,8 @@
 //     TVPWindow::RegisterWindowMessageReceiver 是空实现，无主线程投递通道；
 //   - 不移植 LicensesGen.cpp（本 fork 无 TVPRegisterLicense）；
 //   - 缓冲获取经 PluginSafety 的 LayerReadView/LayerWriteView；
-//   - mainImageBuffer 为 RGBA 内存序（字节 0=R，1=G，2=B，3=A），上游按
-//     Windows 的 BGRA 读写。凡读写 R/B 通道处标注 [krkr2]，对外结果
+//   - mainImageBuffer 通道布局见 common/LayerPixel.h，上游按 Windows 的
+//     BGRA 读写。凡读写 R/B 通道处标注 [krkr2]，对外结果
 //     （文件字节、TJS 颜色值、哈希、octet）与上游 Windows 版一致。
 
 #ifndef NCB_MODULE_NAME
@@ -19,13 +19,8 @@
 #define TJS_INTF_METHOD
 #endif
 
-// [krkr2] RGBA 内存序的通道偏移
-enum { PIX_R = 0, PIX_G = 1, PIX_B = 2, PIX_A = 3 };
-
-// [krkr2] 0xAARRGGBB 颜色值与 RGBA 内存序 uint32 互转（交换 R/B）
-inline tjs_uint32 RevRGB(tjs_uint32 v) {
-	return (v & 0xFF00FF00) | ((v >> 16) & 0xFF) | ((v & 0xFF) << 16);
-}
+// [krkr2] 通道偏移与颜色值互转见 common/LayerPixel.h
+#include "common/LayerPixel.h"
 
 // バッファ参照用の型
 typedef unsigned char const *BufRefT;

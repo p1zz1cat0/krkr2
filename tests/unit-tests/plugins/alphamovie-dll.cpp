@@ -215,6 +215,19 @@ TEST_CASE("AlphaMovie zlib-alpha fixture decodes pixel-exact") {
         }
 }
 
+TEST_CASE("AlphaMovie chroma fixture decodes to distinct R and B") {
+    auto amv = parseAmv(TEST_FILES_PATH "/alphamovie/sample_color.amv");
+    REQUIRE(amv.numFrames == 1);
+    auto f0 = decodeFixtureFrame(amv, 0);
+    REQUIRE(f0.size() == (size_t)16 * 16 * 4);
+    uint8_t b, g, r, a;
+    px(f0, 16, 5, 5, b, g, r, a);
+    CHECK(r == 150);
+    CHECK(g == 117);
+    CHECK(b == 128);
+    CHECK(a == 254);
+}
+
 TEST_CASE("AlphaMovie rejects invalid frame dimensions") {
     amvdec::HuffTable dcL, dcC, acL, acC;
     makeTables(dcL, dcC, acL, acC);

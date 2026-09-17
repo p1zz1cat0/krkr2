@@ -8,6 +8,7 @@
 生成三个文件：
   sample_jpeg.amv    JPEG-alpha 路径 (flags=1, 3 张量化表, 2 帧)
   sample_zlib.amv    zlib-alpha 路径 (flags=2, 2 张量化表, 2 帧)
+  sample_color.amv   带色度的 JPEG-alpha 单帧（R≠B，检测上屏通道顺序）
   sample_garbage.amv 非法文件（负向用例）
   sample_oversized.amv 声明超大帧长度但文件很小（资源预算负向用例）
 """
@@ -127,6 +128,14 @@ f1 = encode_frame_jpeg(1, 4, -2, 16, 16,
                        [0, 0, 0, 0], [2, 2, 2, 2])
 (OUT / "sample_jpeg.amv").write_bytes(
     build_amv(1, [QUANT, QUANT, QUANT], [f0, f1]))
+
+# ---- 带色度: 1 帧 16x16 (JPEG-alpha) ----
+# Y 全 0 → 128, Cb=128, Cr diff +8 → 144, A 全 63 → 254
+# YCbCr→RGB: R=128+22=150, G=128-11=117, B=128 (R≠B，用于检测通道顺序)
+c0 = encode_frame_jpeg(0, 0, 0, 16, 16, [0, 0, 0, 0], [63, 63, 63, 63],
+                       cr_diff=8)
+(OUT / "sample_color.amv").write_bytes(
+    build_amv(1, [QUANT, QUANT, QUANT], [c0]))
 
 # ---- zlib-alpha: 2 帧 16x16 ----
 # 帧0: Y [0,-2,2,0] → 128/124/132/124；alpha = 50+8x+2y

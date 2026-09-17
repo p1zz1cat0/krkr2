@@ -1985,56 +1985,5 @@ namespace motion {
             return nullptr;
         }
 
-        // Write raw BGRA pixel data from a PSB resource to a Layer
-        // Load PSB resource pixel data into a layer.
-        // Based on libkrkr2.so sub_6948E8: PSB texture data is raw RGBA8
-        // pixels (not RL-compressed). The data size may be smaller than
-        // width*height*4 — only data.size()/4 pixels are valid, the rest
-        // should be zero (transparent). RGB order is swapped to BGRA for
-        // TJS layers (TVPReverseRGB in libkrkr2.so).
-        inline bool loadPSBResourceToLayer(tTJSNI_BaseLayer *layer,
-                                           const PSB::PSBResource &resource,
-                                           int width, int height) {
-            if(!layer || width <= 0 || height <= 0 || resource.data.empty()) {
-                return false;
-            }
-
-            if(!layer->GetHasImage()) {
-                layer->SetHasImage(true);
-            }
-            layer->SetImageSize(static_cast<tjs_uint>(width),
-                                static_cast<tjs_uint>(height));
-
-            auto *dstPixels = reinterpret_cast<std::uint8_t *>(
-                layer->GetMainImagePixelBufferForWrite());
-            const auto pitch = layer->GetMainImagePixelBufferPitch();
-            if(!dstPixels || pitch <= 0) {
-                return false;
-            }
-
-            // Zero-fill the entire layer buffer first
-            const auto totalRows = static_cast<size_t>(height);
-            for(size_t row = 0; row < totalRows; ++row) {
-                std::memset(dstPixels + pitch * row, 0,
-                            static_cast<size_t>(width) * 4u);
-            }
-
-            // Copy raw RGBA8 data, swapping R↔B → BGRA (TJS format)
-            const size_t pixelCount = resource.data.size() / 4u;
-            const auto *src = resource.data.data();
-            for(size_t i = 0; i < pixelCount; ++i) {
-                const size_t px = i % static_cast<size_t>(width);
-                const size_t py = i / static_cast<size_t>(width);
-                if(py >= totalRows)
-                    break;
-                auto *dst = dstPixels + pitch * py + px * 4;
-                dst[0] = src[i * 4 + 2]; // B ← src R
-                dst[1] = src[i * 4 + 1]; // G ← src G
-                dst[2] = src[i * 4 + 0]; // R ← src B
-                dst[3] = src[i * 4 + 3]; // A ← src A
-            }
-            return true;
-        }
-
     } // namespace internal
 } // namespace motion

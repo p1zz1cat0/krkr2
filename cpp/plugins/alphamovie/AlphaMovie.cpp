@@ -40,11 +40,14 @@
 //        - 帧长度与 stream 边界在扫描阶段校验，避免声明长度导致错误分配。
 //        - 熵流 EOF、marker、非法 Huffman code 和越界 ZRL 明确报告损坏。
 //        - blit 使用 64 位坐标计算，避免极端 Left/Top 绕回。
+//     4. 解码缓冲保持上游的 BGRA；blit 时经 common/LayerPixel.h 的
+//        copyBgraRow 转为 fork 的 Layer 通道布局 (上游直接 memcpy)。
 //   其余算法 (Huffman 表、共享 DC 预测子、IDCT、YCbCr→BGRA、blit 裁剪)
 //   与上游语义一致。
 //---------------------------------------------------------------------------
 
 #include "ncbind.hpp"
+#include "common/LayerPixel.h"
 #include "common/PluginSafety.h"
 
 #include <zlib.h>
@@ -837,6 +840,7 @@ private:
 
 	//----------------------------------------------------------- レイヤ描画
 	// 内部 BGRA バッファ (fw*fh) を Layer のメイン画像へ上書きコピー。
+	// Layer 画素は BGRA ではないので copyBgraRow で並べ替える (common/LayerPixel.h)。
 	// 書き込み左上 = (this.Left + fleft, this.Top + ftop)。範囲外はクリップ。
 	void blitToLayer(iTJSDispatch2 *layer, std::vector<tjs_uint8> &bgra,
 					 tjs_int fleft, tjs_int ftop, tjs_int fw, tjs_int fh)
@@ -864,7 +868,7 @@ private:
 			const tjs_uint8 *src = &bgra[(srcY + y) * static_cast<size_t>(fw) * 4 + srcX * 4];
 			tjs_uint8 *dst = lbuf + (static_cast<size_t>(dstTop) + y) * static_cast<size_t>(pitch) +
 				static_cast<size_t>(dstLeft) * 4;
-			memcpy(dst, src, copyWidth * 4);
+			layerPixel::copyBgraRow(dst, src, copyWidth);
 		}
 	}
 };

@@ -50,10 +50,10 @@ public:
 	}
 	inline void writePixel(BufRefT p) {
 		resize(cur + 4);
-		data[cur++] = p[PIX_R]; // [krkr2] RGBA 内存序
-		data[cur++] = p[PIX_G];
-		data[cur++] = p[PIX_B];
-		data[cur++] = p[PIX_A];
+		data[cur++] = p[layerPixel::R]; // [krkr2] RGBA 内存序
+		data[cur++] = p[layerPixel::G];
+		data[cur++] = p[layerPixel::B];
+		data[cur++] = p[layerPixel::A];
 	}
 	static long Deflate(DATA &out,
 						unsigned char const * in,
@@ -309,10 +309,10 @@ static bool MakeVectorImage(iTJSDispatch2 *layer, std::vector<unsigned char> &im
 		BufRefT p = buffer;
 		WrtRefT w = &image[ofs];
 		for(long x = 0; x < width; x++, p+=4) {
-			*w++ = p[PIX_R]; // [krkr2] RGBA 内存序
-			*w++ = p[PIX_G];
-			*w++ = p[PIX_B];
-			if ((*w++ = p[PIX_A]) != 255) alpha = true;
+			*w++ = p[layerPixel::R]; // [krkr2] RGBA 内存序
+			*w++ = p[layerPixel::G];
+			*w++ = p[layerPixel::B];
+			if ((*w++ = p[layerPixel::A]) != 255) alpha = true;
 		}
 	}
 	return true;

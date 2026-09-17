@@ -274,12 +274,12 @@ GetDiffPixel(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDi
 	if (numparams < 1) return TJS_E_BADPARAMCOUNT;
 
 	if (numparams >= 2 && param[1]->Type() != tvtVoid) {
-		scol = RevRGB((DWORD)(param[1]->AsInteger())); // [krkr2] RGBA 内存序
+		scol = layerPixel::fromArgb((DWORD)(param[1]->AsInteger())); // [krkr2] RGBA 内存序
 		sfill = true;
 	}
 
 	if (numparams >= 3 && param[2]->Type() != tvtVoid) {
-		dcol = RevRGB((DWORD)(param[2]->AsInteger())); // [krkr2] RGBA 内存序
+		dcol = layerPixel::fromArgb((DWORD)(param[2]->AsInteger())); // [krkr2] RGBA 内存序
 		dfill = true;
 	}
 
@@ -315,7 +315,7 @@ NCB_ATTACH_FUNCTION(getDiffPixel, Layer, GetDiffPixel);
 
 // 色を加算
 static inline void AddColor(DWORD &r, DWORD &g, DWORD &b, BufRefT p) {
-	r += p[PIX_R], g += p[PIX_G], b += p[PIX_B]; // [krkr2]
+	r += p[layerPixel::R], g += p[layerPixel::G], b += p[layerPixel::B]; // [krkr2]
 }
 
 /**
@@ -362,9 +362,9 @@ OozeColor(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDispa
 			for (x = 0; x < w; x++, o++, p+=nc) {
 				if (p[3] >= threshold) *o = -1;
 				else {
-					p[PIX_R] = fillR; // [krkr2]
-					p[PIX_G] = fillG;
-					p[PIX_B] = fillB; // 閾値以下の不透明部分の色を指定色でクリア
+					p[layerPixel::R] = fillR; // [krkr2]
+					p[layerPixel::G] = fillG;
+					p[layerPixel::B] = fillB; // 閾値以下の不透明部分の色を指定色でクリア
 				}
 			}
 		}
@@ -387,9 +387,9 @@ OozeColor(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDispa
 							if (D) AddColor(cr, cg, cb, p+nl), cnt++;
 							if (L) AddColor(cr, cg, cb, p-nc), cnt++;
 							if (R) AddColor(cr, cg, cb, p+nc), cnt++;
-							p[PIX_R] = (unsigned char)(cr / cnt); // [krkr2]
-							p[PIX_G] = (unsigned char)(cg / cnt);
-							p[PIX_B] = (unsigned char)(cb / cnt);
+							p[layerPixel::R] = (unsigned char)(cr / cnt); // [krkr2]
+							p[layerPixel::G] = (unsigned char)(cg / cnt);
+							p[layerPixel::B] = (unsigned char)(cb / cnt);
 							*o = 1;
 						}
 					}
@@ -441,7 +441,7 @@ CopyBlueToAlpha(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJ
 	int h = sh < dh ? sh : dh;
 	// コピー
 	for (int i=0;i<h;i++) {
-		BufRefT p = sbuf + PIX_B; // B領域 [krkr2]
+		BufRefT p = sbuf + layerPixel::B; // B領域 [krkr2]
 		WrtRefT q = dbuf+3;   // A領域
 		for (int j=0;j<w;j++) {
 			*q = *p;
@@ -501,7 +501,7 @@ isBlank(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDispatc
 			BufRefT buffer = sbuf + left * 4 + spitch * y;
 			for (tjs_int x = left; x < left + width; x++, buffer += 4) {
 				// [krkr2] 上游只看首字节（Windows 上为 B 通道），保持该语义
-				if (buffer[PIX_B]) {
+				if (buffer[layerPixel::B]) {
 					if (result) {
 						*result = 0;
 					}
@@ -528,7 +528,7 @@ clearAlpha(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDisp
 {
 	int threthold = numparams <= 0 ? 0 : (int)(tTVInteger)(*param[0]);
 	// [krkr2] 上游 unsigned long 在 LP64 上为 8 字节，写入会越过像素；改为 32 位并换成 RGBA 内存序
-	DWORD fillColor = RevRGB((DWORD)((numparams > 1 ? param[1]->AsInteger() : 0) & 0xffffff));
+	DWORD fillColor = layerPixel::fromArgb((DWORD)((numparams > 1 ? param[1]->AsInteger() : 0) & 0xffffff));
 	
 	// 書き込み先
 	WrtRefT dbuf = 0;
@@ -590,10 +590,10 @@ getAverageColor(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJ
 		for (tjs_int x = left; x < left + width; x++, buffer += 4) {
 			// [krkr2] 上游按字节 0..3 累加到 a/r/g/b（Windows 上实为 B/G/R/A），
 			// 按 BGRA 字节顺序读取以保持与上游一致的返回值
-			a += buffer[PIX_B];
-			r += buffer[PIX_G];
-			g += buffer[PIX_R];
-			b += buffer[PIX_A];
+			a += buffer[layerPixel::B];
+			r += buffer[layerPixel::G];
+			g += buffer[layerPixel::R];
+			b += buffer[layerPixel::A];
 		}
 	}
 	a /= size;
@@ -637,10 +637,10 @@ GetFingerPrintValue(tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
 		if (lazy) {
 			for (long x = 0; x < w; ++x,p+=nc) {
 				if (p[3]) {
-					hash = fnv_1a_hash(p[PIX_B], hash); // [krkr2] 按上游 BGRA 顺序
-					hash = fnv_1a_hash(p[PIX_G], hash);
-					hash = fnv_1a_hash(p[PIX_R], hash);
-					hash = fnv_1a_hash(p[PIX_A], hash);
+					hash = fnv_1a_hash(p[layerPixel::B], hash); // [krkr2] 按上游 BGRA 顺序
+					hash = fnv_1a_hash(p[layerPixel::G], hash);
+					hash = fnv_1a_hash(p[layerPixel::R], hash);
+					hash = fnv_1a_hash(p[layerPixel::A], hash);
 				} else {
 					hash = fnv_1a_hash(0, hash);
 					hash = fnv_1a_hash(0, hash);
@@ -650,10 +650,10 @@ GetFingerPrintValue(tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
 			}
 		} else {
 			for (long x = 0; x < w; ++x,p+=nc) {
-				hash = fnv_1a_hash(p[PIX_B], hash); // [krkr2] 按上游 BGRA 顺序
-				hash = fnv_1a_hash(p[PIX_G], hash);
-				hash = fnv_1a_hash(p[PIX_R], hash);
-				hash = fnv_1a_hash(p[PIX_A], hash);
+				hash = fnv_1a_hash(p[layerPixel::B], hash); // [krkr2] 按上游 BGRA 顺序
+				hash = fnv_1a_hash(p[layerPixel::G], hash);
+				hash = fnv_1a_hash(p[layerPixel::R], hash);
+				hash = fnv_1a_hash(p[layerPixel::A], hash);
 			}
 		}
 	}
@@ -679,7 +679,7 @@ static inline DWORD calcBlockSum(BufRefT src, long const w, long const h, long c
 		BufRefT p = src;
 		for (long x = 0; x < w; ++x,p+=nc,++total) {
 			// [krkr2] 按上游 BGRA 顺序累加，输出 octet 字节序与上游一致
-			if (p[PIX_A]) s[0]+=p[PIX_B], s[1]+=p[PIX_G], s[2]+=p[PIX_R], s[3]+=p[PIX_A];
+			if (p[layerPixel::A]) s[0]+=p[layerPixel::B], s[1]+=p[layerPixel::G], s[2]+=p[layerPixel::R], s[3]+=p[layerPixel::A];
 		}
 	}
 	DWORD const bias = total>>1;

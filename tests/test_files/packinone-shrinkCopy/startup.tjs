@@ -13,14 +13,18 @@ var src = new Layer(testWindow, null);
 src.setImageSize(8, 8);
 src.fillRect(0, 0, 8, 8, 0xFF7F3F1F);
 src.fillAlpha();
-var sourceColor = src.getMainPixel(0, 0) & 0xFFFFFF;
-var provinceRect = src.fillToProvince(sourceColor, 7, 64);
+// fillToProvince / fillByProvince 的颜色参数是 TJS 的 0xRRGGBB / 0xAARRGGBB，
+// 不是 getMainPixel 返回的内部位序
+var provinceRect = src.fillToProvince(0x7F3F1F, 7, 64);
 check(provinceRect != void && provinceRect[2] == 8 && provinceRect[3] == 8,
       "fillToProvince returns affected rectangle");
 check(src.getProvincePixel(0, 0) == 7,
       "fillToProvince writes province image");
 src.fillByProvince(7, 0xFF010203);
-check((src.getMainPixel(0, 0) & 0xFFFFFF) == 0x010203,
+var fillRef = new Layer(testWindow, src);
+fillRef.setImageSize(1, 1);
+fillRef.fillRect(0, 0, 1, 1, 0xFF010203);
+check(src.getMainPixel(0, 0) == fillRef.getMainPixel(0, 0),
       "fillByProvince writes matching pixels");
 src.copyAlphaToProvince(128, 9, 3);
 check(src.getProvincePixel(0, 0) == 9,

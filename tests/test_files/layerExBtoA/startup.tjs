@@ -1,0 +1,66 @@
+// layerExBtoA.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+// 在首次创建 Window/Layer 前加载，覆盖原生类惰性初始化场景。
+Plugins.link("layerExBtoA.dll");
+
+var testWindow = new Window();
+var base = new Layer(testWindow, null);
+
+function newLayer(w, h) {
+    var l = new Layer(testWindow, base);
+    l.setImageSize(w, h);
+    return l;
+}
+
+// 颜色参数与结果均按 TJS 的 0xAARRGGBB 语义；参照像素由 core fillRect 画出，
+// 不依赖 getMainPixel 的返回约定。所有颜色 R≠B，通道顺序写反即失败。
+function refPixel(argb) {
+    var l = newLayer(1, 1);
+    l.fillRect(0, 0, 1, 1, argb);
+    return l.getMainPixel(0, 0);
+}
+
+// fillToProvince：按 0xRRGGBB 匹配，R/B 互换的像素不能命中
+var src = newLayer(4, 1);
+src.fillRect(0, 0, 3, 1, 0xFF102030);
+src.fillRect(3, 0, 1, 1, 0xFF302010);
+var rect = src.fillToProvince(0x102030, 7, 64);
+check(rect !== void, "fillToProvince matches TJS color");
+pluginAssertEqual("fillToProvince left", 0, rect[0]);
+pluginAssertEqual("fillToProvince width", 3, rect[2]);
+pluginAssertEqual("fillToProvince writes index", 7, src.getProvincePixel(0, 0));
+pluginAssertEqual("fillToProvince skips swapped color", 0, src.getProvincePixel(3, 0));
+
+// fillByProvince：写入的颜色按 0xAARRGGBB 解释
+src.fillByProvince(7, 0xFFA0B0C0);
+pluginAssertEqual("fillByProvince color", refPixel(0xFFA0B0C0), src.getMainPixel(0, 0));
+pluginAssertEqual("fillByProvince leaves other index", refPixel(0xFF302010),
+                  src.getMainPixel(3, 0));
+
+// copyAlphaToProvince / fillAlpha 与通道顺序无关，仅确认可调用
+src.fillAlpha();
+pluginAssertEqual("fillAlpha opaque", 255, src.getMaskPixel(0, 0));
+src.copyAlphaToProvince(128, 9, 3);
+pluginAssertEqual("copyAlphaToProvince", 9, src.getProvincePixel(0, 0));
+
+// copyRightBlueToLeftAlpha：右半 B 通道 (0x80，R=0x11) 进入左半 alpha
+var lr = newLayer(2, 1);
+lr.fillRect(0, 0, 1, 1, 0xFF000000);
+lr.fillRect(1, 0, 1, 1, 0xFF112280);
+lr.copyRightBlueToLeftAlpha();
+pluginAssertEqual("copyRightBlueToLeftAlpha", 0x80, lr.getMaskPixel(0, 0));
+
+// copyBottomBlueToTopAlpha：下半 B 通道进入上半 alpha
+var tb = newLayer(1, 2);
+tb.fillRect(0, 0, 1, 1, 0xFF000000);
+tb.fillRect(0, 1, 1, 1, 0xFF3322C4);
+tb.copyBottomBlueToTopAlpha();
+pluginAssertEqual("copyBottomBlueToTopAlpha", 0xC4, tb.getMaskPixel(0, 0));
+
+pluginSmokePass("layerExBtoA.dll");
+System.exit(0);

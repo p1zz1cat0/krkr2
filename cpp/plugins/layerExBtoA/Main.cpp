@@ -3,6 +3,7 @@
 extern "C" void TVPLayerExBtoAPluginAnchor() {}
 
 #include "ncbind.hpp"
+#include "common/LayerPixel.h"
 #include <vector>
 using namespace std;
 
@@ -143,8 +144,8 @@ copyRightBlueToLeftAlpha(tTJSVariant *result, tjs_int numparams, tTJSVariant **p
 	dw /= 2;
 	// コピー
 
-	WrtRefT sbuf = dbuf + dw*4;
-	dbuf += 3;
+	WrtRefT sbuf = dbuf + dw*4 + layerPixel::B;
+	dbuf += layerPixel::A;
 	for (int i=0;i<dh;i++) {
 		WrtRefT p = sbuf;   // B領域
 		WrtRefT q = dbuf;   // A領域
@@ -179,8 +180,8 @@ copyBottomBlueToTopAlpha(tTJSVariant *result, tjs_int numparams, tTJSVariant **p
 	dh /= 2;
 
 	// コピー
-	WrtRefT sbuf = dbuf + dh * dpitch;
-	dbuf += 3;
+	WrtRefT sbuf = dbuf + dh * dpitch + layerPixel::B;
+	dbuf += layerPixel::A;
 	for (int i=0;i<dh;i++) {
 		WrtRefT p = sbuf;   // B領域
 		WrtRefT q = dbuf;   // A領域
@@ -432,7 +433,7 @@ fillByProvince(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJS
 	
 	if (numparams < 2) return TJS_E_BADPARAMCOUNT;
 	unsigned char index = (int)*param[0];
-	tjs_uint32 color = (int)*param[1];
+	tjs_uint32 color = layerPixel::fromArgb((tjs_uint32)(int)*param[1]); // 0xAARRGGBB
 
 	// 書き込み先
 	WrtRefT dbuf = 0;
@@ -491,7 +492,7 @@ fillToProvince(tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
 
 	if (numparams < 2) return TJS_E_BADPARAMCOUNT;
 	tjs_uint32 requestedColor = (tjs_uint32)param[0]->AsInteger();
-	tjs_uint32 color = requestedColor & 0x00ffffff;
+	tjs_uint32 color = layerPixel::fromArgb(requestedColor) & 0x00ffffff; // 0xRRGGBB
 	bool allmatch = requestedColor == 0xffffffffu;
 	unsigned char index = (unsigned char)param[1]->AsInteger();
 	long threshold = 64;

@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "common/LayerPixel.h"
 #include "common/PluginSafety.h"
 
 using namespace pluginSafety;
@@ -94,4 +95,27 @@ TEST_CASE("PluginSafety pins the current positive-pitch Layer layout") {
     const auto negative = validateLayerLayout(4, 3, -16);
     CHECK_FALSE(negative);
     CHECK(negative.error == SafetyError::invalidPitch);
+}
+
+TEST_CASE("LayerPixel maps TJS colors and BGRA buffers to layer layout") {
+    // TJS 0xAARRGGBB -> buffer uint32 A<<24|B<<16|G<<8|R, round-trips
+    CHECK(layerPixel::fromArgb(0x80102030u) == 0x80302010u);
+    CHECK(layerPixel::toArgb(layerPixel::fromArgb(0x12345678u)) == 0x12345678u);
+
+    // uint32 layout matches the byte offsets on this (little-endian) target
+    const tjs_uint32 pixel = layerPixel::fromArgb(0xFF102030u);
+    const auto *bytes = reinterpret_cast<const tjs_uint8 *>(&pixel);
+    CHECK(bytes[layerPixel::R] == 0x10);
+    CHECK(bytes[layerPixel::G] == 0x20);
+    CHECK(bytes[layerPixel::B] == 0x30);
+    CHECK(bytes[layerPixel::A] == 0xFF);
+
+    const tjs_uint8 bgra[8] = {0x30, 0x20, 0x10, 0xFF, 0x03, 0x02, 0x01, 0x80};
+    tjs_uint8 out[8] = {};
+    layerPixel::copyBgraRow(out, bgra, 2);
+    CHECK(out[layerPixel::R] == 0x10);
+    CHECK(out[layerPixel::B] == 0x30);
+    CHECK(out[4 + layerPixel::R] == 0x01);
+    CHECK(out[4 + layerPixel::B] == 0x03);
+    CHECK(out[4 + layerPixel::A] == 0x80);
 }
