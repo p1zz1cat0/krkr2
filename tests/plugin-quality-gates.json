@@ -5,6 +5,7 @@
     {"path": "cpp/plugins/layerExBtoA/**", "classification": "third-party", "reason": "Upstream wtnbgo plugin port"},
     {"path": "cpp/plugins/layerExDraw/**", "classification": "third-party", "reason": "Blend2D and Windows upstream implementation"},
     {"path": "cpp/plugins/layerExRaster/**", "classification": "third-party", "reason": "Upstream layerExRaster compatibility source"},
+    {"path": "cpp/plugins/layerExSave/LodePNG/**", "classification": "third-party", "reason": "Vendored LodePNG 20161127 (zlib license) from upstream layerExSave"},
     {"path": "cpp/plugins/psbfile/**", "classification": "third-party", "reason": "Upstream FreeMote PSB implementation"},
     {"path": "cpp/plugins/varfile/**", "classification": "third-party", "reason": "Upstream compatibility plugin"},
     {"path": "cpp/plugins/wutcwf/**", "classification": "third-party", "reason": "Upstream compatibility plugin"}

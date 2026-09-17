@@ -8,226 +8,160 @@ function check(cond, msg) {
 // 在首次创建 Window/Layer 前加载，覆盖原生类惰性初始化场景。
 Plugins.link("layerExSave.dll");
 
-// 输出文件经 storage 系统解析。本 fork 的 System.exePath/appDataPath 均返回
-// "./" 前缀路径，storage 层将其解析回 data（fixture）目录；产物文件名由
-// .gitignore 排除。
-var outDir = System.exePath;
-if(outDir.charAt(outDir.length - 1) != "/")
-    outDir += "/";
+// 保存产物写到本目录（.gitignore 已忽略 *.tlg / *.png）
+var outDir = Storages.extractStoragePath(Storages.getPlacedPath("startup.tjs"));
 
-// 颜色约定（core 实测行为，lldb 矩阵采样确认）：
-//   fillRect/setMainPixel 的 TJS 参数 = 标准 0xAARRGGBB/0x00RRGGBB，
-//   core 换序后按 fork 的 mainImageBuffer 位序 A<<24|B<<16|G<<8|R 存储；
-//   getMainPixel 直读内部 24 位（返回 0x00BBGGRR，与 setMainPixel 不对称），
-//   断言值 = 写入 24 位值的 R/B 交换。
-// 保存回读（loadImages）经 fork 的 TLG5/PNG 解码器闭环，通道序错位会
-// 直接表现为 R/B 反转断言失败。
+var testWindow = new Window();
+var base = new Layer(testWindow, null);
 
-// ---------- 同步：TLG5 保存 → loadImages 回读 ----------
-var win = new Window();
-var src = new Layer(win, null);
-src.setImageSize(8, 8);
-src.fillRect(0, 0, 8, 8, 0xFF3F1F80); // A=FF R=3F G=1F B=80
-src.fillRect(2, 2, 4, 4, 0xFF80FF40); // A=FF R=80 G=FF B=40
-
-var tlgPath = outDir + "layerexsave_smoke.tlg";
-src.saveLayerImageTlg5(tlgPath);
-
-var back = new Layer(win, src);
-back.setImageSize(8, 8);
-back.loadImages(tlgPath);
-pluginAssertEqual("tlg5 round-trip base pixel", 0x801F3F,
-                  back.getMainPixel(0, 0));
-pluginAssertEqual("tlg5 round-trip inner pixel", 0x40FF80,
-                  back.getMainPixel(3, 3));
-
-// ---------- 同步：TLG5 tags chunk ----------
-var tlgTagsPath = outDir + "layerexsave_smoke_tags.tlg";
-src.saveLayerImageTlg5(tlgTagsPath, %[note: "smoke", version: 1]);
-back.loadImages(tlgTagsPath); // tags 存在时仍可回读
-pluginAssertEqual("tlg5 with tags round-trip", 0x801F3F,
-                  back.getMainPixel(0, 0));
-
-// ---------- 同步：PNG 保存（LodePNG 路径）→ loadImages 回读 ----------
-src.setMainPixel(0, 0, 0x00123456); // 透明角落 → RGBA 输出路径
-var pngPath = outDir + "layerexsave_smoke.png";
-src.saveLayerImagePng(pngPath);
-back.loadImages(pngPath);
-pluginAssertEqual("png round-trip base pixel", 0x801F3F,
-                  back.getMainPixel(1, 1));
-pluginAssertEqual("png round-trip transparent pixel", 0x563412,
-                  back.getMainPixel(0, 0));
-
-// ---------- 同步：PNG octet ----------
-var oct = src.saveLayerImagePngOctet(1);
-check(oct !== void && oct.length > 0, "png octet produced");
-check(oct[0] == 0x89 && oct[1] == 0x50 && oct[2] == 0x4E && oct[3] == 0x47,
-      "png octet carries PNG signature");
-var octTags = src.saveLayerImagePngOctet(%[comp_lv: 1]);
-check(octTags.length > 0, "png octet with tags dict produced");
-
-// ---------- utils：裁剪 / 平均色 / 空白 / 指纹 / 缩略向量 ----------
-var cropLayer = new Layer(win, src);
-cropLayer.setImageSize(4, 4);
-cropLayer.fillRect(0, 0, 4, 4, 0x000000); // alpha=0 全透明底
-cropLayer.fillRect(1, 1, 1, 1, 0xFF00FF00); // 不透明绿点
-// 上游 getAverageColor 以 (tjs_int) 返回，alpha 高位为 1 时 TJS 侧为负值
-check((cropLayer.getAverageColor(1, 1, 1, 1) & 0xFFFFFFFF) == 0xFF00FF00,
-      "crop layer alpha written");
-var crop = cropLayer.getCropRect();
-check(crop !== void, "getCropRect returns dict on partial content");
-pluginAssertEqual("crop x", 1, crop.x);
-pluginAssertEqual("crop y", 1, crop.y);
-pluginAssertEqual("crop w", 1, crop.w);
-pluginAssertEqual("crop h", 1, crop.h);
-// getCropRectZero 的区分度：alpha=0 但 RGB 非零的像素按内容算
-var zeroLayer = new Layer(win, src);
-zeroLayer.setImageSize(2, 2);
-zeroLayer.fillRect(0, 0, 2, 2, 0x00123456); // alpha=0、RGB 非零
-check(zeroLayer.getCropRect() === void,
-      "getCropRect ignores RGB under alpha 0");
-var cropZero = zeroLayer.getCropRectZero();
-check(cropZero !== void,
-      "getCropRectZero keeps alpha-0 non-zero RGB as content");
-pluginAssertEqual("cropZero x", 0, cropZero.x);
-pluginAssertEqual("cropZero w", 2, cropZero.w);
-
-var avgLayer = new Layer(win, src);
-avgLayer.setImageSize(2, 1);
-avgLayer.fillRect(0, 0, 2, 1, 0xFF102030);
-avgLayer.fillRect(0, 0, 1, 1, 0xFF204060);
-// 平均 (A,R,G,B) = (FF, 18, 30, 48) → 0xAARRGGBB = 0xFF183048
-check((avgLayer.getAverageColor(0, 0, 2, 1) & 0xFFFFFFFF) == 0xFF183048,
-      "average color");
-
-var blankLayer = new Layer(win, src);
-blankLayer.setImageSize(2, 2);
-blankLayer.fillRect(0, 0, 2, 2, 0x000000);
-check(blankLayer.isBlank(0, 0, 2, 2), "fully transparent region is blank");
-blankLayer.fillRect(1, 1, 1, 1, 0xFF000001);
-check(blankLayer.isBlank(0, 0, 1, 1), "corner region still blank");
-check(blankLayer.isBlank(0, 0, 2, 2) == false, "region with pixel not blank");
-
-var fp1 = src.getFingerPrintValue();
-var fp2 = src.getFingerPrintValue();
-pluginAssertEqual("fingerprint stable", fp1, fp2);
-src.setMainPixel(7, 7, 0xFFEEDDCC);
-check(src.getFingerPrintValue() != fp1, "fingerprint changes with content");
-
-var vec = avgLayer.getShrinkVectorOctet(1, 1);
-pluginAssertEqual("shrink vector octet size", 4, vec.length);
-// fork 内存序读取打包 (b,g,r,a)：均值 r=0x18,g=0x30,b=0x48,a=0xFF
-pluginAssertEqual("shrink vector b", 0x48, vec[0]);
-pluginAssertEqual("shrink vector g", 0x30, vec[1]);
-pluginAssertEqual("shrink vector r", 0x18, vec[2]);
-pluginAssertEqual("shrink vector a", 0xFF, vec[3]);
-
-var r1 = Math.octetVectorSum(<%1, 2%>, <%1, 2%>);
-pluginAssertEqual("octetVectorSum dot", 5, r1[0]);
-pluginAssertEqual("octetVectorSum dist", 0, r1[1]);
-pluginAssertEqual("octetVectorSum a2", 5, r1[2]);
-pluginAssertEqual("octetVectorSum b2", 5, r1[3]);
-pluginAssertEqual("octetVectorSum sa", 3, r1[4]);
-pluginAssertEqual("octetVectorSum sb", 3, r1[5]);
-pluginAssertEqual("octetVectorSum diff", 0, r1[6]);
-var r2 = Math.octetVectorSum(<%1, 2%>, void); // b=void 走单向量路径
-pluginAssertEqual("single octetVectorSum a2", 5, r2[1]);
-pluginAssertEqual("single octetVectorSum diff", 2, r2[6]);
-
-// diffPixel：计数 + 填色
-var diffBase = new Layer(win, src);
-diffBase.setImageSize(2, 1);
-diffBase.fillRect(0, 0, 2, 1, 0xFF000011);
-var diffMod = new Layer(win, src);
-diffMod.setImageSize(2, 1);
-diffMod.fillRect(0, 0, 2, 1, 0xFF000011);
-diffMod.setMainPixel(1, 0, 0xFF000022);
-pluginAssertEqual("diffPixel count", 1,
-                  diffMod.getDiffPixel(diffBase));
-diffMod.getDiffPixel(diffBase, 0x00000000, 0xFFFFFFFF);
-pluginAssertEqual("diffPixel fill overwrites diff pixel", 0xFFFFFF,
-                  diffMod.getMainPixel(1, 0));
-
-// sameFill 用独立副本（上面的 sameFill=0 会把相同像素清零，是正确行为）
-var diffMod2 = new Layer(win, src);
-diffMod2.setImageSize(2, 1);
-diffMod2.fillRect(0, 0, 2, 1, 0xFF000011);
-diffMod2.setMainPixel(1, 0, 0xFF000022);
-diffMod2.getDiffPixel(diffBase, 0xFFAAAAAA);
-pluginAssertEqual("diffPixel same fill", 0xAAAAAA,
-                  diffMod2.getMainPixel(0, 0));
-
-// copyBlueToAlpha：源 B 通道 → 目标 alpha（直接断言平均色的 alpha 字节）
-var baSrc = new Layer(win, src);
-baSrc.setImageSize(1, 1);
-baSrc.setMainPixel(0, 0, 0x00000042); // 24 位参数 alpha=0，B=0x42
-var baDst = new Layer(win, src);
-baDst.setImageSize(1, 1);
-baDst.fillRect(0, 0, 1, 1, 0x00000000);
-baDst.copyBlueToAlpha(baSrc);
-check((baDst.getAverageColor(0, 0, 1, 1) & 0xFFFFFFFF) == 0x42000000,
-      "copyBlueToAlpha sets alpha from blue");
-
-// saveProvinceImage 需要真实 province 缓冲（dfProvince 绘制），fixture
-// 不构造；编码器与调色板路径由 C++ 单测覆盖。
-
-// ---------- 异步：Window.startSaveLayerImage ----------
-// done/progress 回调在 continuous tick 中驱动，脚本返回主循环后推进。
-var asyncPngPath = outDir + "layerexsave_smoke_async.png";
-var cancelTlgPath = outDir + "layerexsave_smoke_cancel.tlg";
-
-class TW extends Window {
-    var progressCount = 0;
-    var phase = 0; // 1=等待取消完成 2=等待正常保存完成
-    var asyncLayer = null;
-    function TW { super(); }
-    function onSaveLayerImageProgress(handler, percent, layer, filename) {
-        progressCount++;
-    }
-    function onSaveLayerImageDone(handler, canceled, layer, filename) {
-        if(phase == 1) {
-            pluginAssertEqual("cancel reports canceled=1", 1, canceled);
-            phase = 2;
-            startNormalSave();
-        } else {
-            pluginAssertEqual("normal save not canceled", 0, canceled);
-            check(progressCount > 0, "progress events delivered");
-            // 不读 primaryLayer getter（fork 在 DrawDevice 未建立时
-            // 空指针崩溃），回读层挂在已存在的 asyncLayer 下
-            var back2 = new Layer(this, asyncLayer);
-            back2.setImageSize(8, 8);
-            back2.loadImages(asyncPngPath);
-            pluginAssertEqual("async png round-trip", 0x801F3F,
-                              back2.getMainPixel(1, 1));
-            pluginSmokePass("layerExSave.dll");
-            System.exit(0);
-        }
-    }
-    function startNormalSave() {
-        progressCount = 0;
-        var h = startSaveLayerImage(asyncLayer, asyncPngPath,
-                                    %[comp_lv: 1]);
-        check(h !== void && h > 0, "startSaveLayerImage returns handler");
-    }
+function newLayer(w, h) {
+    var l = new Layer(testWindow, base);
+    l.setImageSize(w, h);
+    return l;
 }
 
-var tw = new TW();
-// fork 的 primaryLayer getter 在未创建时空指针解引用，先显式创建 primary
-tw.asyncLayer = new Layer(tw, null); // 第一个 Layer 成为 primary
-tw.asyncLayer.setImageSize(8, 8);
-tw.asyncLayer.fillRect(0, 0, 8, 8, 0xFF3F1F80);
-tw.asyncLayer.fillRect(2, 2, 4, 4, 0xFF80FF40);
+// R/B 互不相同、alpha 各异的 4x2 图样；fillRect 取标准 0xAARRGGBB。
+// 通道顺序写反时 R/B 互换，读回比较必然失败。
+function makePattern() {
+    var l = newLayer(4, 2);
+    l.fillRect(0, 0, 1, 1, 0xFF102030);
+    l.fillRect(1, 0, 1, 1, 0x80A0B0C0);
+    l.fillRect(2, 0, 1, 1, 0xFF0000FF);
+    l.fillRect(3, 0, 1, 1, 0xFFFF0000);
+    l.fillRect(0, 1, 4, 1, 0xC0336699);
+    return l;
+}
 
-// 异步调用面验证：handler 返回、cancel/stop 不抛。
-// 注意：done/progress 事件的推进依赖主循环帧驱动（continuous handler
-// 由每帧的 SystemWatchTimerTimer 派发），后台/无头 smoke 进程没有前台
-// 帧循环时事件不会到达，因此这里不等待 done——异步全链路（cancel 的
-// canceled=1、进度事件、完成回读）在本地前台环境已验证通过。
-var cancelHandler = tw.startSaveLayerImage(tw.asyncLayer, cancelTlgPath);
-check(cancelHandler !== void && cancelHandler > 0,
-      "startSaveLayerImage returns handler");
-tw.cancelSaveLayerImage(cancelHandler);
-tw.stopSaveLayerImage(cancelHandler);
+function assertSamePixels(name, a, b) {
+    pluginAssertEqual(name + " width", a.imageWidth, b.imageWidth);
+    pluginAssertEqual(name + " height", a.imageHeight, b.imageHeight);
+    for (var y = 0; y < a.imageHeight; y++)
+        for (var x = 0; x < a.imageWidth; x++) {
+            pluginAssertEqual(name + " rgb " + x + "," + y,
+                              a.getMainPixel(x, y), b.getMainPixel(x, y));
+            pluginAssertEqual(name + " alpha " + x + "," + y,
+                              a.getMaskPixel(x, y), b.getMaskPixel(x, y));
+        }
+}
+
+// 通道约定锚点：与上游 Windows 版一致，getAverageColor 返回
+// B<<24|G<<16|R<<8|A（上游把字节 0..3 累加到 a/r/g/b）。
+var anchor = newLayer(1, 1);
+anchor.fillRect(0, 0, 1, 1, 0xFF102030);
+pluginAssertEqual("getAverageColor upstream byte order", 0x302010FF,
+                  anchor.getAverageColor(0, 0, 1, 1));
+
+var src = makePattern();
+
+// TLG5：插件编码，core 读取器解码
+src.saveLayerImageTlg5(outDir + "layerexsave_smoke.tlg");
+var tlg = newLayer(1, 1);
+tlg.loadImages(outDir + "layerexsave_smoke.tlg");
+assertSamePixels("tlg5 round trip", src, tlg);
+
+// TLG5 + tags：写出 TLG0.0 sds 包装，core 仍能解码并取回标签
+src.saveLayerImageTlg5(outDir + "layerexsave_smoke_tags.tlg", %[ yoghourt: "smoke" ]);
+var tlgTags = newLayer(1, 1);
+var meta = tlgTags.loadImages(outDir + "layerexsave_smoke_tags.tlg");
+assertSamePixels("tlg5 tags round trip", src, tlgTags);
+pluginAssertEqual("tlg5 tag value", "smoke", meta.yoghourt);
+
+// PNG（LodePNG）：带 comp_lv 与 oFFs 标签
+src.saveLayerImagePng(outDir + "layerexsave_smoke.png", %[ comp_lv: 9, offs_x: 3, offs_y: 4 ]);
+var png = newLayer(1, 1);
+png.loadImages(outDir + "layerexsave_smoke.png");
+assertSamePixels("png round trip", src, png);
+
+// PNG octet：两种参数形式都返回非空 octet
+var oct = src.saveLayerImagePngOctet();
+pluginAssertEqual("png octet type", "Octet", typeof oct);
+check(oct.length > 8, "png octet has payload");
+var octTags = src.saveLayerImagePngOctet(%[ comp_lv: 1 ]);
+pluginAssertEqual("png octet (tags) type", "Octet", typeof octTags);
+
+// Province：256 色调色板 PNG
+var prov = newLayer(2, 2);
+prov.setProvincePixel(1, 1, 3);
+prov.saveProvinceImage(outDir + "layerexsave_smoke_province.png");
+check(Storages.isExistentStorage(outDir + "layerexsave_smoke_province.png"),
+      "province image written");
+
+// getCropRect / getCropRectZero
+var crop = newLayer(4, 4);
+crop.fillRect(0, 0, 4, 4, 0x00000000);
+check(crop.getCropRect() === void, "all transparent crop is void");
+crop.fillRect(0, 3, 1, 1, 0x00FFFFFF); // 透明但非零
+crop.fillRect(1, 2, 2, 1, 0xFF102030);
+var r = crop.getCropRect();
+pluginAssertEqual("crop x", 1, r.x);
+pluginAssertEqual("crop y", 2, r.y);
+pluginAssertEqual("crop w", 2, r.w);
+pluginAssertEqual("crop h", 1, r.h);
+var rz = crop.getCropRectZero();
+pluginAssertEqual("crop zero x", 0, rz.x);
+pluginAssertEqual("crop zero h", 2, rz.h);
+
+// getDiffRect / getDiffPixel
+var other = makePattern();
+check(other.getDiffRect(src) === void, "identical images have no diff rect");
+other.fillRect(2, 1, 1, 1, 0xFF123456);
+var d = other.getDiffRect(src);
+pluginAssertEqual("diff x", 2, d.x);
+pluginAssertEqual("diff y", 1, d.y);
+pluginAssertEqual("diff w", 1, d.w);
+var ref = newLayer(1, 1);
+ref.fillRect(0, 0, 1, 1, 0xFFAB0012);
+pluginAssertEqual("diff pixel count", 1, other.getDiffPixel(src, void, 0xFFAB0012));
+pluginAssertEqual("diffcol written as 0xAARRGGBB", ref.getMainPixel(0, 0),
+                  other.getMainPixel(2, 1));
+
+// fingerprint：同图同值，改一像素后变化
+var fpA = makePattern(), fpB = makePattern();
+pluginAssertEqual("fingerprint equal", fpA.getFingerPrintValue(), fpB.getFingerPrintValue());
+fpB.fillRect(0, 0, 1, 1, 0xFF102031);
+check(fpA.getFingerPrintValue() != fpB.getFingerPrintValue(), "fingerprint changes");
+
+// shrink vector + Math.octetVectorSum
+var va = fpA.getShrinkVectorOctet(2, 1);
+pluginAssertEqual("shrink vector length", 2 * 1 * 4, va.length);
+var sum = Math.octetVectorSum(va, fpA.getShrinkVectorOctet(2, 1));
+pluginAssertEqual("vector self distance", 0, sum[1]);
+pluginAssertEqual("vector self diff count", 0, sum[6]);
+
+// copyBlueToAlpha：B 通道进入 alpha
+var blueSrc = newLayer(1, 1);
+blueSrc.fillRect(0, 0, 1, 1, 0xFF112280);
+var alphaDst = newLayer(1, 1);
+alphaDst.fillRect(0, 0, 1, 1, 0xFF000000);
+alphaDst.copyBlueToAlpha(blueSrc);
+pluginAssertEqual("copyBlueToAlpha", 0x80, alphaDst.getMaskPixel(0, 0));
+
+// isBlank
+var blank = newLayer(3, 3);
+blank.fillRect(0, 0, 3, 3, 0x00000000);
+blank.fillRect(2, 2, 1, 1, 0xFF0000FF);
+check(blank.isBlank(0, 0, 2, 2), "isBlank empty region");
+check(!blank.isBlank(1, 1, 5, 5), "isBlank clipped region sees blue pixel");
+
+// clearAlpha：alpha <= 阈值的像素写成 0x00RRGGBB
+var clr = newLayer(2, 1);
+clr.fillRect(0, 0, 1, 1, 0x10A0B0C0);
+clr.fillRect(1, 0, 1, 1, 0xFFA0B0C0);
+clr.clearAlpha(0x20, 0x123456);
+var clrRef = newLayer(1, 1);
+clrRef.fillRect(0, 0, 1, 1, 0x00123456);
+pluginAssertEqual("clearAlpha fill rgb", clrRef.getMainPixel(0, 0), clr.getMainPixel(0, 0));
+pluginAssertEqual("clearAlpha fill alpha", 0, clr.getMaskPixel(0, 0));
+pluginAssertEqual("clearAlpha keeps opaque", 255, clr.getMaskPixel(1, 0));
+
+// oozeColor：不透明像素颜色扩散到相邻透明像素，alpha 不变
+var ooze = newLayer(3, 1);
+ooze.fillRect(0, 0, 3, 1, 0x00000000);
+ooze.fillRect(0, 0, 1, 1, 0xFF102030);
+ooze.oozeColor(1);
+pluginAssertEqual("ooze spreads rgb", ooze.getMainPixel(0, 0), ooze.getMainPixel(1, 0));
+pluginAssertEqual("ooze keeps alpha", 0, ooze.getMaskPixel(1, 0));
+pluginAssertEqual("ooze one step only", 0, ooze.getMainPixel(2, 0));
 
 pluginSmokePass("layerExSave.dll");
 System.exit(0);
