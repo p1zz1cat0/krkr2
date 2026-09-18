@@ -4853,6 +4853,112 @@ void tTJSNI_BaseLayer::BezierPatchCopy(const tTVPPointD *points, tjs_int divx,
 }
 
 //---------------------------------------------------------------------------
+// mesh 三角形流的提交策略。
+//
+// 每次 OperateTriangles 都要为「混合公式需要采样目标」付一次目标区域快照：
+// ltAlpha 上的 AlphaBlend_d 含「除以结果 alpha」，固定管线的 blend factor 表达
+// 不了，而 ANGLE-Metal 既不暴露 framebuffer fetch，也没有比 render pass + draw
+// 更便宜的拷贝原语。所以批数就是快照次数。
+//
+// 整次调用合并成一次 draw 能把快照降到一次，但整体 bbox 在细长或对角分布的 mesh
+// 上可能比逐批 bbox 之和还大，那样只是把调用次数换成更多带宽。逐批 bbox 本来就
+// 要算，于是先算完再比面积：并集不比逐批之和大就合并，否则维持分批。
+//
+// 合并把「读改写」的窗口从 64 个三角形放大到整次调用；自重叠 mesh 的重叠区因此
+// 换一种近似——分批时同批内同样不保证逐三角形顺序，所以是近似换近似，不是从精确
+// 变近似。规则网格（顶点共享、不自重叠）逐像素一致。
+static bool TVPSubmitMeshTriangles(
+    iTVPRenderManager *manager, iTVPRenderMethod *renderMethod,
+    tTVPBaseTexture *image, const tTVPRect &clipRect,
+    const std::vector<tTVPPointD> &destinationPoints,
+    const std::vector<tTVPPointD> &sourcePoints, iTVPTexture2D *sourceTexture,
+    tTVPRect &updateRect) {
+    constexpr size_t kTrianglesPerBatch = 64;
+    const size_t triangleCount = destinationPoints.size() / 3u;
+
+    struct MeshBatch {
+        size_t firstTriangle;
+        size_t triangleCount;
+        tTVPRect clip;
+    };
+    std::vector<MeshBatch> batches;
+    batches.reserve((triangleCount + kTrianglesPerBatch - 1) /
+                    kTrianglesPerBatch);
+    tTVPRect unionClip;
+    tjs_int64 batchArea = 0;
+    for(size_t firstTriangle = 0; firstTriangle < triangleCount;
+        firstTriangle += kTrianglesPerBatch) {
+        const size_t batchTriangles =
+            std::min(kTrianglesPerBatch, triangleCount - firstTriangle);
+        const size_t firstPoint = firstTriangle * 3u;
+        const size_t batchPoints = batchTriangles * 3u;
+        double minX = destinationPoints[firstPoint].x;
+        double minY = destinationPoints[firstPoint].y;
+        double maxX = minX;
+        double maxY = minY;
+        for(size_t point = 1; point < batchPoints; ++point) {
+            const auto &value = destinationPoints[firstPoint + point];
+            minX = std::min(minX, value.x);
+            minY = std::min(minY, value.y);
+            maxX = std::max(maxX, value.x);
+            maxY = std::max(maxY, value.y);
+        }
+        tTVPRect batchClip(
+            std::max(clipRect.left, static_cast<tjs_int>(std::floor(minX)) - 1),
+            std::max(clipRect.top, static_cast<tjs_int>(std::floor(minY)) - 1),
+            std::min(clipRect.right, static_cast<tjs_int>(std::ceil(maxX)) + 1),
+            std::min(clipRect.bottom,
+                     static_cast<tjs_int>(std::ceil(maxY)) + 1));
+        if(batchClip.right <= batchClip.left ||
+           batchClip.bottom <= batchClip.top) {
+            continue;
+        }
+        if(batches.empty()) {
+            unionClip = batchClip;
+        } else {
+            unionClip.do_union(batchClip);
+        }
+        batchArea += static_cast<tjs_int64>(batchClip.get_width()) *
+            batchClip.get_height();
+        batches.push_back({ firstTriangle, batchTriangles, batchClip });
+    }
+    if(batches.empty()) {
+        return false;
+    }
+
+    const tjs_int64 unionArea =
+        static_cast<tjs_int64>(unionClip.get_width()) * unionClip.get_height();
+    if(unionArea <= batchArea) {
+        batches.assign(1, { 0u, triangleCount, unionClip });
+    }
+
+    bool anyUpdated = false;
+    for(const auto &batch : batches) {
+        const size_t firstPoint = batch.firstTriangle * 3u;
+        auto *referenceTexture = image->GetTexture();
+        auto *targetTexture =
+            image->GetTextureForRender(renderMethod->IsBlendTarget(),
+                                       &batch.clip);
+        if(!targetTexture) {
+            continue;
+        }
+        tRenderTexQuadArray::Element sourceElement(
+            sourceTexture, sourcePoints.data() + firstPoint);
+        manager->OperateTriangles(
+            renderMethod, static_cast<int>(batch.triangleCount), targetTexture,
+            referenceTexture, batch.clip, destinationPoints.data() + firstPoint,
+            tRenderTexQuadArray(&sourceElement, 1));
+        if(!anyUpdated) {
+            updateRect = batch.clip;
+            anyUpdated = true;
+        } else {
+            updateRect.do_union(batch.clip);
+        }
+    }
+    return anyUpdated;
+}
+
+//---------------------------------------------------------------------------
 void tTJSNI_BaseLayer::MeshCopy(const tTVPPointD *points, tjs_int divx,
                                 tjs_int divy, iTVPBaseBitmap *src,
                                 const tTVPRect &srcrect,
@@ -4961,60 +5067,10 @@ void tTJSNI_BaseLayer::MeshCopy(const tTVPPointD *points, tjs_int divx,
         return;
     }
 
-    constexpr size_t kTrianglesPerBatch = 64;
-    const size_t triangleCount = destinationPoints.size() / 3u;
-    bool anyUpdated = false;
     tTVPRect totalUpdateRect;
-    for(size_t firstTriangle = 0; firstTriangle < triangleCount;
-        firstTriangle += kTrianglesPerBatch) {
-        const size_t batchTriangles = std::min(
-            kTrianglesPerBatch, triangleCount - firstTriangle);
-        const size_t firstPoint = firstTriangle * 3u;
-        const size_t batchPoints = batchTriangles * 3u;
-        double minX = destinationPoints[firstPoint].x;
-        double minY = destinationPoints[firstPoint].y;
-        double maxX = minX;
-        double maxY = minY;
-        for(size_t point = 1; point < batchPoints; ++point) {
-            const auto &value = destinationPoints[firstPoint + point];
-            minX = std::min(minX, value.x);
-            minY = std::min(minY, value.y);
-            maxX = std::max(maxX, value.x);
-            maxY = std::max(maxY, value.y);
-        }
-        tTVPRect batchClip(
-            std::max(ClipRect.left,
-                     static_cast<tjs_int>(std::floor(minX)) - 1),
-            std::max(ClipRect.top,
-                     static_cast<tjs_int>(std::floor(minY)) - 1),
-            std::min(ClipRect.right,
-                     static_cast<tjs_int>(std::ceil(maxX)) + 1),
-            std::min(ClipRect.bottom,
-                     static_cast<tjs_int>(std::ceil(maxY)) + 1));
-        if(batchClip.right <= batchClip.left ||
-           batchClip.bottom <= batchClip.top) {
-            continue;
-        }
-        auto *referenceTexture = MainImage->GetTexture();
-        auto *targetTexture = MainImage->GetTextureForRender(
-            renderMethod->IsBlendTarget(), &batchClip);
-        if(!targetTexture) {
-            continue;
-        }
-        tRenderTexQuadArray::Element sourceElement(
-            sourceTexture, sourcePoints.data() + firstPoint);
-        manager->OperateTriangles(
-            renderMethod, static_cast<int>(batchTriangles), targetTexture,
-            referenceTexture, batchClip,
-            destinationPoints.data() + firstPoint,
-            tRenderTexQuadArray(&sourceElement, 1));
-        if(!anyUpdated) {
-            totalUpdateRect = batchClip;
-            anyUpdated = true;
-        } else {
-            totalUpdateRect.do_union(batchClip);
-        }
-    }
+    const bool anyUpdated = TVPSubmitMeshTriangles(
+        manager, renderMethod, MainImage, ClipRect, destinationPoints,
+        sourcePoints, sourceTexture, totalUpdateRect);
 
     if(convertedSource) {
         convertedSource->Release();
@@ -5187,60 +5243,10 @@ void tTJSNI_BaseLayer::OperateMesh(const tTVPPointD *points, tjs_int divx,
         return;
     }
 
-    constexpr size_t kTrianglesPerBatch = 64;
-    const size_t triangleCount = destinationPoints.size() / 3u;
-    bool anyUpdated = false;
     tTVPRect totalUpdateRect;
-    for(size_t firstTriangle = 0; firstTriangle < triangleCount;
-        firstTriangle += kTrianglesPerBatch) {
-        const size_t batchTriangles = std::min(
-            kTrianglesPerBatch, triangleCount - firstTriangle);
-        const size_t firstPoint = firstTriangle * 3u;
-        const size_t batchPoints = batchTriangles * 3u;
-        double minX = destinationPoints[firstPoint].x;
-        double minY = destinationPoints[firstPoint].y;
-        double maxX = minX;
-        double maxY = minY;
-        for(size_t point = 1; point < batchPoints; ++point) {
-            const auto &value = destinationPoints[firstPoint + point];
-            minX = std::min(minX, value.x);
-            minY = std::min(minY, value.y);
-            maxX = std::max(maxX, value.x);
-            maxY = std::max(maxY, value.y);
-        }
-        tTVPRect batchClip(
-            std::max(ClipRect.left,
-                     static_cast<tjs_int>(std::floor(minX)) - 1),
-            std::max(ClipRect.top,
-                     static_cast<tjs_int>(std::floor(minY)) - 1),
-            std::min(ClipRect.right,
-                     static_cast<tjs_int>(std::ceil(maxX)) + 1),
-            std::min(ClipRect.bottom,
-                     static_cast<tjs_int>(std::ceil(maxY)) + 1));
-        if(batchClip.right <= batchClip.left ||
-           batchClip.bottom <= batchClip.top) {
-            continue;
-        }
-        auto *referenceTexture = MainImage->GetTexture();
-        auto *targetTexture = MainImage->GetTextureForRender(
-            renderMethod->IsBlendTarget(), &batchClip);
-        if(!targetTexture) {
-            continue;
-        }
-        tRenderTexQuadArray::Element sourceElement(
-            sourceTexture, sourcePoints.data() + firstPoint);
-        manager->OperateTriangles(
-            renderMethod, static_cast<int>(batchTriangles), targetTexture,
-            referenceTexture, batchClip,
-            destinationPoints.data() + firstPoint,
-            tRenderTexQuadArray(&sourceElement, 1));
-        if(!anyUpdated) {
-            totalUpdateRect = batchClip;
-            anyUpdated = true;
-        } else {
-            totalUpdateRect.do_union(batchClip);
-        }
-    }
+    const bool anyUpdated = TVPSubmitMeshTriangles(
+        manager, renderMethod, MainImage, ClipRect, destinationPoints,
+        sourcePoints, sourceTexture, totalUpdateRect);
     if(convertedSource) {
         convertedSource->Release();
     }
