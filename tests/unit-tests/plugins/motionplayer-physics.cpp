@@ -626,3 +626,24 @@ TEST_CASE("Hit coordinates undo the draw affine transform") {
     CHECK_FALSE(motion::detail::inverseAffinePoint(singular, 1.0, 1.0, localX,
                                                    localY));
 }
+
+TEST_CASE("Slow-phase threshold parsing falls back instead of going silent") {
+    using motion::detail::kSlowPhaseDefaultMs;
+    using motion::detail::slowPhaseThresholdMs;
+
+    // Unset or empty must give the default frame budget, not 0 — a typo in the
+    // environment should never silently disable the probe we are relying on.
+    CHECK(slowPhaseThresholdMs(nullptr) == Catch::Approx(kSlowPhaseDefaultMs));
+    CHECK(slowPhaseThresholdMs("") == Catch::Approx(kSlowPhaseDefaultMs));
+    CHECK(slowPhaseThresholdMs("nonsense") ==
+          Catch::Approx(kSlowPhaseDefaultMs));
+
+    CHECK(slowPhaseThresholdMs("50") == Catch::Approx(50.0));
+    CHECK(slowPhaseThresholdMs("2.5") == Catch::Approx(2.5));
+    CHECK(slowPhaseThresholdMs("  8 ") == Catch::Approx(8.0));
+
+    // Only an explicit non-positive value disables it; a negative must not be
+    // read as "no ceiling" and turn the probe into a per-frame log flood.
+    CHECK(slowPhaseThresholdMs("0") == Catch::Approx(0.0));
+    CHECK(slowPhaseThresholdMs("-1") == Catch::Approx(0.0));
+}

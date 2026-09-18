@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -384,6 +385,26 @@ namespace motion {
                                 double maxX, double maxY) {
             return boundsAreUsable(minX, minY, maxX, maxY) && x >= minX &&
                 x <= maxX && y >= minY && y <= maxY;
+        }
+
+        // 慢帧归因阈值（毫秒）。稳态下 draw/progress 各 1~3ms，而尖峰帧的
+        // tickMs 有 100~440ms；既有的 sla.*.stats 是 3 秒窗平均，按构造会把
+        // 离群帧抹平，所以慢帧要单独逐次打点。默认一个 vsync 帧预算：超过它
+        // 的单次调用本身就等于一帧掉帧，不需要再挑经验值。
+        constexpr double kSlowPhaseDefaultMs = 16.0;
+
+        // env 为空/不可解析 → 默认值；<= 0 → 关闭（返回 0）。故意不接受负数
+        // 当“无限大”，关闭要显式写 0 或负数，避免手滑写成 -1 反而全量打点。
+        inline double slowPhaseThresholdMs(const char *env) {
+            if(env == nullptr || env[0] == '\0') {
+                return kSlowPhaseDefaultMs;
+            }
+            char *end = nullptr;
+            const double parsed = std::strtod(env, &end);
+            if(end == env || !std::isfinite(parsed)) {
+                return kSlowPhaseDefaultMs;
+            }
+            return parsed > 0.0 ? parsed : 0.0;
         }
 
     } // namespace detail

@@ -7,10 +7,13 @@
 //
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <stdexcept>
 
 #include "D3DEmoteModule.h"
+#include "EmoteCompatInternal.h"
 #include "EmotePlayer.h"
 #include "LayerIntf.h"
 #include "common/PluginSafety.h"
@@ -21,10 +24,59 @@
 #include "ncbind.hpp"
 #include "psbfile/PSBFile.h"
 #include "tjsDictionary.h"
+#include "telemetry/YoghourtTelemetryClock.h"
 
 #define LOGGER spdlog::get("plugin")
 
 namespace {
+
+    // 慢帧归因探针。
+    //
+    // tickMs（cocos2d drawScene 里的 _scheduler->update）涵盖整个引擎合成，
+    // E-mote 的 progress 与 draw 都通过 BeforeCompletion 的 onPaint 同步派发
+    // 落在里面；尖峰帧 100~440ms 全部记在 tickMs 上，renderMs 恒为 0.05ms。
+    // 累计画像按构造看不见离群帧，3 秒窗平均也会抹平，所以这里按“单次调用
+    // 超过一帧预算”逐次打点，回答“尖峰是 progress 还是 draw”。
+    //
+    // monotonicNs 用 telemetry 的会话级 join key，可以直接和 performance.csv
+    // 的 frame 行对齐（同一个 mach_continuous_time 基准）。
+    // 阈值用 KRKR_EMOTE_SLOW_PHASE_MS 覆盖，<= 0 关闭。
+    class SlowPhaseProbe {
+    public:
+        explicit SlowPhaseProbe(const char *phase) :
+            _phase(phase), _start(std::chrono::steady_clock::now()) {}
+
+        ~SlowPhaseProbe() {
+            const double thresholdMs = threshold();
+            if(thresholdMs <= 0.0) {
+                return;
+            }
+            const double elapsedMs = std::chrono::duration<double, std::milli>(
+                                         std::chrono::steady_clock::now() - _start)
+                                         .count();
+            if(elapsedMs < thresholdMs) {
+                return;
+            }
+            if(auto logger = spdlog::get("plugin")) {
+                logger->info("sla.slow phase={} ms={:.2f} monotonicNs={}",
+                             _phase, elapsedMs,
+                             yoghourt_telemetry::MonotonicNs());
+            }
+        }
+
+        SlowPhaseProbe(const SlowPhaseProbe &) = delete;
+        SlowPhaseProbe &operator=(const SlowPhaseProbe &) = delete;
+
+    private:
+        static double threshold() {
+            static const double value = motion::detail::slowPhaseThresholdMs(
+                std::getenv("KRKR_EMOTE_SLOW_PHASE_MS"));
+            return value;
+        }
+
+        const char *_phase;
+        std::chrono::steady_clock::time_point _start;
+    };
 
     enum class EmotePlayMode {
         None,
@@ -1050,6 +1102,7 @@ namespace motion {
     }
 
     void EmotePlayer::draw(tTJSVariant target) {
+        SlowPhaseProbe probe("draw");
         _player.draw(target);
         _modified = true;
     }
@@ -1239,7 +1292,10 @@ namespace motion {
             dt = 0.0;
         }
         _progress += dt;
-        _player.progressMsLike_0x6D2A54(dt);
+        {
+            SlowPhaseProbe probe("progress");
+            _player.progressMsLike_0x6D2A54(dt);
+        }
         _modified = true;
     }
 
