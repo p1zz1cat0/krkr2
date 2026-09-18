@@ -23,23 +23,34 @@ enum tTVPWMRRegMode { wrmRegister = 0, wrmUnregister = 1 };
 //---------------------------------------------------------------------------
 // window message receivers
 //---------------------------------------------------------------------------
-// struct tTVPWindowMessage
-//{
-//	unsigned int Msg; // window message
-//	WPARAM WParam;  // WPARAM
-//	LPARAM LParam;  // LPARAM
-//	LRESULT Result;  // result
-//};
-// typedef bool * tTVPWindowMessageReceiver
-//	(void *userdata, tTVPWindowMessage *Message);
-//
-// #define TVP_WM_DETACH (WM_USER+106)  // before re-generating the
-// window #define TVP_WM_ATTACH (WM_USER+107)  // after re-generating
-// the window #define TVP_WM_FULLSCREEN_CHANGING (WM_USER+108)  //
-// before full-screen or
-// window changing #define TVP_WM_FULLSCREEN_CHANGED  (WM_USER+109) //
-// after full-screen or window changing
+// Cross-platform replacement for the Win32 message path.  Plugins post with
+// TVPPostWindowMessage() and receive on the application thread through the
+// chain built by Window.registerMessageReceiver(); the corresponding upstream
+// design is wamsoft's krkrz Window Message / AppEvent pair, so the Win32
+// message numbers and the receiver signature are kept source compatible.
+struct tTVPWindowMessage {
+    tjs_uint32 Msg;   // window message
+    tjs_uint64 WParam; // WPARAM
+    tjs_uint64 LParam; // LPARAM
+    tjs_uint64 Result; // always 0 on this platform; see below
+};
+typedef bool (*tTVPWindowMessageReceiver)(void *userdata,
+                                          tTVPWindowMessage *message);
 
+// Base of the plugin-defined message range.  The Win32 build used WM_APP
+// (0x8000); 0x10000 is already reserved for TVP_EV_* in base/UserEvent.h, so
+// plugin messages must stay below it.
+#define TVP_WM_USER 0x8000
+
+#define TVP_WM_DETACH (TVP_WM_USER + 106) // before re-generating the window
+#define TVP_WM_ATTACH (TVP_WM_USER + 107) // after re-generating the window
+#define TVP_WM_FULLSCREEN_CHANGING (TVP_WM_USER + 108)
+#define TVP_WM_FULLSCREEN_CHANGED (TVP_WM_USER + 109)
+
+// Delivery is asynchronous on every platform: TVPPostWindowMessage() returns
+// before the receiver runs, and tTVPWindowMessage::Result is always 0.  A
+// receiver returning true consumes the message and stops the chain; a message
+// addressed to a window that no longer exists is dropped.
 /*]*/
 //---------------------------------------------------------------------------
 
@@ -301,6 +312,13 @@ public:
 #endif
     void RegisterWindowMessageReceiver(tTVPWMRRegMode mode, void *proc,
                                        const void *userdata);
+    // Runs the receiver chain on the application thread; a receiver returning
+    // true stops the walk.
+    void DispatchWindowMessage(tTVPWindowMessage *message);
+    // Ends the receiver chain and drops every registration.  The window calls
+    // this from Invalidate(), so a receiver never runs after its window is
+    // gone; plugins still own the lifetime of their own userdata.
+    void ClearWindowMessageReceivers();
 
     //-- methods
     void Close();
@@ -466,6 +484,15 @@ public: // for iTVPLayerTreeOwner
     void ResetImeMode(iTVPLayerManager *manager) override;
 
 protected:
+    // Registered by Window.registerMessageReceiver(), drained by
+    // TVPPostWindowMessage() in registration order.  Lives here rather than on
+    // the cocos2d form because Invalidate() is the one teardown point every
+    // window reaches, and dispatch must stop before the window object dies.
+    struct tWindowMessageReceiver {
+        tTVPWindowMessageReceiver Proc;
+        const void *UserData;
+    };
+    std::vector<tWindowMessageReceiver> WindowMessageReceivers;
 };
 //---------------------------------------------------------------------------
 

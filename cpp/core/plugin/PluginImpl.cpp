@@ -62,6 +62,10 @@ extern "C" void TVPWindowExPluginAnchor();
 extern "C" void TVPLayerExPerspectivePluginAnchor();
 extern "C" void TVPFftGraphPluginAnchor();
 extern "C" void TVPKAGParserExPluginAnchor();
+// 诊断插件（smoke 用）只链进 app 目标；core 单元测试不链 krkr2plugin，
+// 兜底实现放在 InternalPluginAnchors.cpp（不能放本文件，否则弱定义会被本地
+// 解析、链接器不再去 krkr2plugin 取真实现）。
+extern "C" void TVPWindowMessageChannelPluginAnchor();
 #include "ncbind.hpp"
 
 #ifdef TVP_SUPPORT_KPI
@@ -153,6 +157,7 @@ void TVPLoadInternalPlugins() {
     TVPLayerExPerspectivePluginAnchor();
     TVPFftGraphPluginAnchor();
     TVPKAGParserExPluginAnchor();
+    TVPWindowMessageChannelPluginAnchor();
 
     ncbAutoRegister::AllRegist();
     ncbAutoRegister::LoadModule(TJS_W("xp3filter.dll"));

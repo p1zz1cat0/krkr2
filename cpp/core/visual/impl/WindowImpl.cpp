@@ -15,6 +15,7 @@
 // #include <d3d9.h>
 
 #include <algorithm>
+#include <vector>
 #include "MsgIntf.h"
 #include "WindowIntf.h"
 #include "LayerIntf.h"
@@ -1146,12 +1147,52 @@ void tTJSNI_Window::Invalidate() {
         _form = nullptr;
     }
 
+    // The window is going away: stop the receiver chain before the object can
+    // be collected, so a posted message can never reach plugin code with a
+    // dangling window.
+    ClearWindowMessageReceivers();
+
     // remove all events
     TVPCancelSourceEvents(Owner);
     TVPCancelInputEvents(this);
 
     // Set Owner nullptr
     Owner = nullptr;
+}
+//---------------------------------------------------------------------------
+void tTJSNI_Window::ClearWindowMessageReceivers() {
+    WindowMessageReceivers.clear();
+}
+//---------------------------------------------------------------------------
+void tTJSNI_Window::DispatchWindowMessage(tTVPWindowMessage *message) {
+    // Runs on the application thread.  A receiver may unregister itself or
+    // another entry, so the walk restarts from a snapshot of the chain and
+    // stops as soon as a receiver consumes the message.
+    std::vector<tWindowMessageReceiver> receivers = WindowMessageReceivers;
+    for(const tWindowMessageReceiver &entry : receivers) {
+        if(entry.Proc && entry.Proc(const_cast<void *>(entry.UserData), message))
+            break;
+    }
+}
+//---------------------------------------------------------------------------
+void TVPPostWindowMessage(void *window, tjs_uint32 msg, tjs_uint64 wparam,
+                          tjs_uint64 lparam) {
+    // The caller is usually a plugin worker thread, so nothing that touches the
+    // window object may run here.  The pointer is resolved on the application
+    // thread; a message whose window no longer exists is dropped.
+    tTVPApplication *app = Application;
+    if(!app)
+        return;
+
+    app->PostUserMessage(
+        [window, msg, wparam, lparam]() {
+            auto *target = static_cast<tTJSNI_Window *>(window);
+            if(!target)
+                return;
+            tTVPWindowMessage message{msg, wparam, lparam, 0};
+            target->DispatchWindowMessage(&message);
+        },
+        window);
 }
 //---------------------------------------------------------------------------
 bool tTJSNI_Window::CanDeliverEvents() const {
@@ -1464,9 +1505,20 @@ HWND tTJSNI_Window::GetWindowHandleForPlugin()
 void tTJSNI_Window::RegisterWindowMessageReceiver(tTVPWMRRegMode mode,
                                                   void *proc,
                                                   const void *userdata) {
-    if(!_form)
-        return;
-    _form->RegisterWindowMessageReceiver(mode, proc, userdata);
+    const auto found =
+        std::find_if(WindowMessageReceivers.begin(), WindowMessageReceivers.end(),
+                     [proc, userdata](const tWindowMessageReceiver &entry) {
+                         return entry.Proc == proc && entry.UserData == userdata;
+                     });
+
+    if(mode == wrmRegister) {
+        if(found != WindowMessageReceivers.end())
+            return;
+        WindowMessageReceivers.push_back(
+            {(tTVPWindowMessageReceiver)proc, userdata});
+    } else if(found != WindowMessageReceivers.end()) {
+        WindowMessageReceivers.erase(found);
+    }
 }
 //---------------------------------------------------------------------------
 void tTJSNI_Window::Close() {

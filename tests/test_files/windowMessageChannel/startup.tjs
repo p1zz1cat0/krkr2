@@ -1,0 +1,135 @@
+// windowMessageChannel.dll 插件 smoke test
+//
+// TVPPostWindowMessage + Window.registerMessageReceiver 的端到端测试：真的
+// 开一个 worker 线程 post，断言消息在主线程被 receiver 收到、两个 64bit 参数
+// 逐位相同、注册顺序就是调用顺序、返回 true 的 receiver 吃掉消息、注销后
+// 不再投递。
+//
+// 断言放在 AsyncTrigger 里：startup.tjs 在帧循环启动前执行，而投递队列由
+// tTVPApplication::Run() 每帧的 ProcessMessages() 排空，同步断言只会看到
+// 「还没送到」。
+//
+// 注意：TJS 的标识符解析是「当前コンテキスト」的属性查找，闭包捕获不可靠，
+// 所以处理函数写成具名全局函数并显式带上 object 参数，不用匿名闭包。
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("windowMessageChannel.dll");
+
+var testWindow = new Window();
+
+// receiver 回调签名：userdata 原样回传，消息字段单独给（TJS 侧拿不到
+// tTVPWindowMessage*）。
+//   function receiver(userdata, msg, wparam, lparam) -> true 表示吃掉消息
+
+// 先注册的消费者，返回 true 结束链。
+var sinkRecord = %[
+    // TVP_WM_USER + 1 = 0x8001；两个 64bit 参数都做了可验证的取值：截断成
+    // 32bit 或带符号处理都会改变观测值。
+    message: 0x8001,
+    wparam: 0x7FFFFFFFFFFF0001,
+    lparam: 0x00000000DEADBEEF,
+    deliveries: 0,
+    lastMsg: 0,
+    lastWParam: 0,
+    lastLParam: 0
+];
+
+function consumingReceiver(userdata, msg, wparam, lparam) {
+    userdata.deliveries += 1;
+    userdata.lastMsg = msg;
+    userdata.lastWParam = wparam;
+    userdata.lastLParam = lparam;
+    return true;
+}
+
+// 后注册、返回 false 的观察者：证明链会继续走到下一个 receiver。
+var observerRecord = %[
+    hits: 0,
+    lastWParam: 0
+];
+
+function observerReceiver(userdata, msg, wparam, lparam) {
+    userdata.hits += 1;
+    userdata.lastWParam = wparam;
+    return false;
+}
+
+var consumingHandle = testWindow.registerTestReceiver(consumingReceiver, sinkRecord);
+check(consumingHandle > 0, "consuming receiver registered");
+var observerHandle = testWindow.registerTestReceiver(observerReceiver, observerRecord);
+check(observerHandle > 0, "observer receiver registered");
+check(observerHandle != consumingHandle, "handles are distinct");
+
+pluginAssertEqual("poster thread idle before start", 0,
+                  testWindow.testPosterThreadCount());
+check(testWindow.stopTestPosterThread() === true, "stop before start is a no-op");
+
+// 真正的投递：worker 线程 → TVPPostWindowMessage → 主线程 receiver
+check(testWindow.startTestPosterThread(testWindow), "start poster thread");
+pluginAssertEqual("poster thread alive", 1, testWindow.testPosterThreadCount());
+
+var probeFrames = 0;
+var probePhase = 1;
+var probeTrigger = null;
+
+function probeStep() {
+    probeFrames += 1;
+
+    if (probePhase == 1 && sinkRecord.deliveries == 0) {
+        // 队列最多一帧内排空；留 120 帧余量后判失败，避免提交即挂死。
+        if (probeFrames > 120) {
+            pluginAssertTrue("message delivered before timeout", false);
+            System.exit(0);
+        }
+        probeTrigger.trigger();
+        return;
+    }
+
+    if (probePhase == 1) {
+        pluginAssertEqual("message id", sinkRecord.message, sinkRecord.lastMsg);
+        pluginAssertEqual("wparam full width", sinkRecord.wparam, sinkRecord.lastWParam);
+        pluginAssertEqual("lparam full width", sinkRecord.lparam, sinkRecord.lastLParam);
+        pluginAssertEqual("consuming receiver ran once", 1, sinkRecord.deliveries);
+        // consuming 在链首返回 true，observer 不该被调用。
+        pluginAssertEqual("chain stops at consuming receiver", 0, observerRecord.hits);
+
+        check(testWindow.stopTestPosterThread(), "poster thread joined");
+        pluginAssertEqual("poster thread stopped", 0,
+                          testWindow.testPosterThreadCount());
+
+        // 注销 observer 后重新投递：observer 的调用计数必须停在 0。
+        check(testWindow.unregisterTestReceiver(observerHandle),
+              "observer receiver unregistered");
+        check(testWindow.startTestPosterThread(testWindow), "restart poster thread");
+        probeFrames = 0;
+        probePhase = 2;
+        probeTrigger.trigger();
+        return;
+    }
+
+    // phase 2：等待第二次投递（worker 线程已重新启动）
+    if (sinkRecord.deliveries < 2) {
+        if (probeFrames > 120) {
+            pluginAssertTrue("second message delivered before timeout", false);
+            System.exit(0);
+        }
+        probeTrigger.trigger();
+        return;
+    }
+
+    pluginAssertEqual("consuming receiver ran again", 2, sinkRecord.deliveries);
+    pluginAssertEqual("unregistered receiver is not called", 0, observerRecord.hits);
+    check(testWindow.stopTestPosterThread(), "stop poster thread");
+    check(testWindow.unregisterTestReceiver(consumingHandle),
+          "consuming receiver unregistered");
+
+    pluginSmokePass("windowMessageChannel.dll");
+    System.exit(0);
+}
+
+probeTrigger = new AsyncTrigger(testWindow);
+probeTrigger.onFire = probeStep;
+probeTrigger.trigger();

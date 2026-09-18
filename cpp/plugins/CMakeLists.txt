@@ -42,6 +42,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     layerExAreaAverage/layerExAreaAverage.cpp
     alphamovie/AlphaMovie.cpp
     wuvorbis/WuVorbisShim.cpp
+    windowMessageChannel/windowMessageChannel.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

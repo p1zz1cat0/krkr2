@@ -29,6 +29,19 @@ extern void TVPClearAllWindowInputEvents();
 // extern bool TVPIsWaitVSync();
 //---------------------------------------------------------------------------
 
+//---------------------------------------------------------------------------
+// Window message posting (see the receiver declarations in impl/WindowImpl.h)
+//---------------------------------------------------------------------------
+// Queues a message for delivery to the receiver chain of the window `window`
+// on the application thread.  Callable from any thread, typically a plugin
+// worker; there is no synchronous result, so a plugin that needs the receiver
+// to have run must wait for a completion message.  The typical `window` is
+// Window.HWND (the native window handle); a message addressed to a window that
+// no longer exists is dropped.
+extern void TVPPostWindowMessage(void *window, tjs_uint32 msg,
+                                 tjs_uint64 wparam, tjs_uint64 lparam);
+//---------------------------------------------------------------------------
+
 /*[*/
 //---------------------------------------------------------------------------
 // Window related constants
