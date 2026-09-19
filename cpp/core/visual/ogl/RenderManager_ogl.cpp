@@ -489,6 +489,38 @@ static void _glBindTexture2D(GLuint t) {
     cocos2d::GL::bindTexture2D(t);
 }
 
+// 单缓冲 streaming VBO：OGL 侧所有 draw op 共用一个 buffer，每次 draw 把
+// position 与全部 UV 顺序写进 _streamStaging，再整体 glBufferData 上传，
+// attribute 一律用 buffer offset 寻址。动机：client vertex array 会让
+// ANGLE-Metal 按 draw 建 staging buffer 并可能等待 GPU
+// （VertexArrayMtl::updateClientAttribs → BufferPool::allocateNewBuffer →
+// ensureResourceReadyForCPU → waitUntilCompleted），这条同步栈在 accurate 会话里
+// 属于 draw 热点。文件级而非 manager 成员：纹理侧（RestoreNormalSize）同样要画
+// 一个 quad。buffer 不做偏移管理，orphan（先给新 storage 再写）避免与上一帧的
+// draw 争用同一 storage；它随进程结束回收——manager 与纹理对象按接口约定都不
+// 析构（RenderManager.h 的 undeletable），没有可挂的释放点。
+static GLuint _streamVBO = 0;
+static std::vector<GLfloat> _streamStaging;
+
+static void StreamUpload() {
+    if(_streamVBO == 0) {
+        glGenBuffers(1, &_streamVBO);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, _streamVBO);
+    glBufferData(GL_ARRAY_BUFFER,
+                 static_cast<GLsizeiptr>(_streamStaging.size() *
+                                         sizeof(GLfloat)),
+                 _streamStaging.empty() ? nullptr : _streamStaging.data(),
+                 GL_STREAM_DRAW);
+}
+// attribute 指针在 buffer 绑定期设置，复位 GL_ARRAY_BUFFER 不会改变已捕获的
+// buffer 绑定；复位本身是必须的——仍传 CPU 指针的绘制（cocos2d sprite、
+// YUVSprite）会把非零绑定解释成 buffer 偏移。
+static void StreamUnbind() { glBindBuffer(GL_ARRAY_BUFFER, 0); }
+static const void *StreamAttrOffset(size_t byteOffset) {
+    return reinterpret_cast<const void *>(byteOffset);
+}
+
 static GLint _prevRenderBuffer;
 static GLint _screenFrameBuffer = 0;
 static unsigned int _stencilBufferW = 0, _stencilBufferH = 0;
@@ -1903,10 +1935,12 @@ public:
         return this;
     }
     bool IsBlendTarget() override { return !!BlendFunc; }
-    virtual void ApplyTexture(unsigned int i, const GLVertexInfo &info) {
+    // byteOffset：本纹理 UV 块在 streaming VBO 内的字节偏移。
+    virtual void ApplyTexture(unsigned int i, const GLVertexInfo &info,
+                              size_t byteOffset) {
         info.tex->Bind(i);
         glVertexAttribPointer(GetTexCoordAttr(i), 2, GL_FLOAT, GL_FALSE, 0,
-                              &info.vtx.front());
+                              reinterpret_cast<const void *>(byteOffset));
     }
 
     bool (*CustomProc)(tTVPOGLRenderMethod *_method, tTVPOGLTexture2D *_tar,
@@ -2326,7 +2360,8 @@ class tTVPOGLRenderMethod_BoxBlur : public tTVPOGLRenderMethod_Script {
         }
     }
 
-    void ApplyTexture(unsigned int i, const GLVertexInfo &info) override {
+    void ApplyTexture(unsigned int i, const GLVertexInfo &info,
+                      size_t byteOffset) override {
         if(i == 0) {
             static GLint u_pos = glGetUniformLocation(program, "u_sample");
             float w, h;
@@ -2354,7 +2389,7 @@ class tTVPOGLRenderMethod_BoxBlur : public tTVPOGLRenderMethod_Script {
             pos[15] = b;
             glUniform2fv(u_pos, 8, pos);
         }
-        inherit::ApplyTexture(i, info);
+        inherit::ApplyTexture(i, info, byteOffset);
     }
 };
 
@@ -2388,14 +2423,18 @@ bool tTVPOGLTexture2D::RestoreNormalSize() {
             VA_flag |= 1 << method->GetTexCoordAttr(i);
         }
         cocos2d::GL::enableVertexAttribs(VA_flag);
-        glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
-                              vertices);
-
         GLVertexInfo vtx;
         ApplyVertex(vtx, tTVPRect(0, 0, w, h));
         cocos2d::GL::bindTexture2D(texture);
+        _streamStaging.assign(vertices, vertices + 12);
+        _streamStaging.insert(_streamStaging.end(), vtx.vtx.begin(),
+                              vtx.vtx.end());
+        StreamUpload();
+        glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
+                              StreamAttrOffset(0));
         glVertexAttribPointer(method->GetTexCoordAttr(0), 2, GL_FLOAT, GL_FALSE,
-                              0, &vtx.vtx.front());
+                              0, StreamAttrOffset(12 * sizeof(GLfloat)));
+        StreamUnbind();
         glDrawArrays(GL_TRIANGLES, 0, 6);
         CHECK_GL_ERROR_DEBUG();
 
@@ -4568,15 +4607,19 @@ public:
             VA_flag |= 1 << method->GetTexCoordAttr(i);
         }
         cocos2d::GL::enableVertexAttribs(VA_flag);
-        glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
-                              vertices);
-
         GLVertexInfo vtx;
         src->ApplyVertex(vtx, rcsrc);
         cocos2d::GL::bindTexture2D(src->texture);
 
+        _streamStaging.assign(vertices, vertices + 12);
+        _streamStaging.insert(_streamStaging.end(), vtx.vtx.begin(),
+                              vtx.vtx.end());
+        StreamUpload();
+        glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
+                              StreamAttrOffset(0));
         glVertexAttribPointer(method->GetTexCoordAttr(0), 2, GL_FLOAT, GL_FALSE,
-                              0, &vtx.vtx.front());
+                              0, StreamAttrOffset(12 * sizeof(GLfloat)));
+        StreamUnbind();
         glDrawArrays(GL_TRIANGLES, 0, 6);
         method->onFinish();
         CHECK_GL_ERROR_DEBUG();
@@ -4729,11 +4772,20 @@ public:
             VA_flag |= 1 << method->GetTexCoordAttr(i);
         }
         cocos2d::GL::enableVertexAttribs(VA_flag);
-        glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
-                              vertices);
+        _streamStaging.assign(vertices, vertices + 12);
         for(unsigned int i = 0; i < texlist.size(); ++i) {
-            method->ApplyTexture(i, texlist[i]);
+            _streamStaging.insert(_streamStaging.end(), texlist[i].vtx.begin(),
+                                  texlist[i].vtx.end());
         }
+        StreamUpload();
+        glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
+                              StreamAttrOffset(0));
+        size_t uvOffset = 12 * sizeof(GLfloat);
+        for(unsigned int i = 0; i < texlist.size(); ++i) {
+            method->ApplyTexture(i, texlist[i], uvOffset);
+            uvOffset += texlist[i].vtx.size() * sizeof(GLfloat);
+        }
+        StreamUnbind();
         glDrawArrays(GL_TRIANGLES, 0, 6);
         //}
         method->onFinish();
@@ -4916,14 +4968,13 @@ public:
                 }
             }
         }
-        std::vector<GLfloat> pttar;
         float rcw = rcclip.get_width(), rch = rcclip.get_height();
         float rcl = rcclip.left, rct = rcclip.top;
-        pttar.resize(ptcount * 2);
+        _streamStaging.resize(static_cast<size_t>(ptcount) * 2);
         for(int i = 0; i < ptcount; ++i) {
-            pttar[i * 2 + 0] =
+            _streamStaging[i * 2 + 0] =
                 (((GLfloat)_pttar[i].x - rcl) / rcw - 0.5f) * 2.f;
-            pttar[i * 2 + 1] =
+            _streamStaging[i * 2 + 1] =
                 (((GLfloat)_pttar[i].y - rct) / rch - 0.5f) * 2.f;
         }
         rcw *= tar->_scaleW;
@@ -4965,14 +5016,23 @@ public:
             VA_flag |= 1 << method->GetTexCoordAttr(i);
         }
         cocos2d::GL::enableVertexAttribs(VA_flag);
+        const size_t uvBase = _streamStaging.size() * sizeof(GLfloat);
+        for(unsigned int i = 0; i < texlist.size(); ++i) {
+            _streamStaging.insert(_streamStaging.end(), texlist[i].vtx.begin(),
+                                  texlist[i].vtx.end());
+        }
+        StreamUpload();
         glVertexAttribPointer(method->GetPosAttr(), 2, GL_FLOAT, GL_FALSE, 0,
-                              &pttar.front());
+                              StreamAttrOffset(0));
         CHECK_GL_ERROR_DEBUG();
 
+        size_t uvOffset = uvBase;
         for(unsigned int i = 0; i < texlist.size(); ++i) {
             // tex->SyncPixel();
-            method->ApplyTexture(i, texlist[i]);
+            method->ApplyTexture(i, texlist[i], uvOffset);
+            uvOffset += texlist[i].vtx.size() * sizeof(GLfloat);
         }
+        StreamUnbind();
         glDrawArrays(GL_TRIANGLES, 0, ptcount);
         method->onFinish();
         CHECK_GL_ERROR_DEBUG();
@@ -5035,7 +5095,11 @@ public:
             id_Matrix = EnumParameterID("M");
         }
 
-        void ApplyTexture(unsigned int i, const GLVertexInfo &info) override {
+        void ApplyTexture(unsigned int i, const GLVertexInfo &info,
+                          size_t byteOffset) override {
+            // Perspective 路径自己不设 UV attribute（REF 对齐的既有行为），
+            // 保持原样，只接受新增的 offset 参数。
+            (void)byteOffset;
             info.tex->Bind(i);
             // glVertexAttribPointer(GetTexCoordAttr(i), 2, GL_FLOAT,
             // GL_FALSE, 0, &info.vtx.front());
