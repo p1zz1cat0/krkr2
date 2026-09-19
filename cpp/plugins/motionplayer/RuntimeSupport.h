@@ -730,6 +730,9 @@ namespace motion::detail {
             std::vector<std::array<int, 4>> dirty;
             std::vector<double> areaRatios;
             std::vector<double> replayRatios;
+            // 仅 KRKR_SLA_DIRTY_SELFCHECK=1 时使用的满分辨率校验网格与计数。
+            std::vector<std::uint8_t> selfCheckGrid;
+            std::uint64_t selfCheckPassed = 0;
             double windowStartSeconds = 0.0;
             std::uint64_t windowOutputHitsStart = 0;
             std::uint64_t windowLeafHitsStart = 0;

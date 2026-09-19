@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <utility>
 
 namespace motion {
@@ -142,6 +144,64 @@ namespace motion {
                         static_cast<double>(frames)
                               : 0.0;
             }
+
+            // 自校验（KRKR_SLA_DIRTY_SELFCHECK=1，默认关闭）：用满分辨率整数
+            // 网格重新盖章算一遍并集面积，与解析式切片结果逐帧比对。判定门槛
+            // 建立在这个面积上，所以算法本身要有独立证据，而不是只靠复查代码。
+            bool selfCheckEnabled() {
+                static const bool enabled = [] {
+                    const char *env =
+                        std::getenv("KRKR_SLA_DIRTY_SELFCHECK");
+                    return env && env[0] != '\0' && env[0] != '0';
+                }();
+                return enabled;
+            }
+
+            void runSelfCheck(PlayerRuntime::SlaDirtyCoverageState &state,
+                              const std::vector<std::array<int, 4>> &rects,
+                              tjs_int canvasWidth, tjs_int canvasHeight,
+                              double analyticArea) {
+                const std::size_t width =
+                    static_cast<std::size_t>(std::max<tjs_int>(canvasWidth, 0));
+                const std::size_t height =
+                    static_cast<std::size_t>(std::max<tjs_int>(canvasHeight, 0));
+                if(width == 0 || height == 0) {
+                    return;
+                }
+                state.selfCheckGrid.assign(width * height, 0);
+                for(const auto &rect : rects) {
+                    const int left = std::clamp(rect[0], 0,
+                                                static_cast<int>(width));
+                    const int right = std::clamp(rect[2], 0,
+                                                 static_cast<int>(width));
+                    const int top = std::clamp(rect[1], 0,
+                                               static_cast<int>(height));
+                    const int bottom = std::clamp(rect[3], 0,
+                                                  static_cast<int>(height));
+                    for(int y = top; y < bottom; ++y) {
+                        auto *row = state.selfCheckGrid.data() +
+                            static_cast<std::size_t>(y) * width;
+                        for(int x = left; x < right; ++x) {
+                            row[x] = 1;
+                        }
+                    }
+                }
+                std::size_t stamped = 0;
+                for(std::uint8_t cell : state.selfCheckGrid) {
+                    stamped += cell ? 1u : 0u;
+                }
+                if(std::fabs(static_cast<double>(stamped) - analyticArea) >
+                   0.5) {
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->warn(
+                            "sla.dirty.selfcheck MISMATCH grid={} analytic={} "
+                            "rects={} canvas={}x{}",
+                            stamped, analyticArea, rects.size(), width, height);
+                    }
+                    return;
+                }
+                ++state.selfCheckPassed;
+            }
         } // namespace
 
         void recordSlaDirtyCoverage(PlayerRuntime &runtime,
@@ -212,11 +272,16 @@ namespace motion {
             if(hadPreviousFrame && canvasWidth > 0 && canvasHeight > 0) {
                 const double canvasArea = static_cast<double>(canvasWidth) *
                     static_cast<double>(canvasHeight);
-                state.areaRatios.push_back(unionArea(state.dirty) / canvasArea);
+                const double dirtyArea = unionArea(state.dirty);
+                state.areaRatios.push_back(dirtyArea / canvasArea);
                 state.replayRatios.push_back(
                     commands ? static_cast<double>(replay) /
                             static_cast<double>(commands)
                              : 0.0);
+                if(selfCheckEnabled()) {
+                    runSelfCheck(state, state.dirty, canvasWidth, canvasHeight,
+                                 dirtyArea);
+                }
             }
 
             if(nowSeconds - state.windowStartSeconds < 3.0) {
@@ -233,7 +298,7 @@ namespace motion {
                     "commandsPerFrame={:.1f} changedPerFrame={:.1f} "
                     "areaP50={:.1f}% areaP90={:.1f}% replayP50={:.1f}% "
                     "replayP90={:.1f}% outputHitsPerFrame={:.1f} "
-                    "leafHitsPerFrame={:.1f}",
+                    "leafHitsPerFrame={:.1f} selfCheckPassed={}",
                     motionPath, (nowSeconds - state.windowStartSeconds) * 1000.0,
                     state.frames, perFrame(state.commands, state.frames),
                     perFrame(state.changedItems, state.frames),
@@ -242,10 +307,12 @@ namespace motion {
                     percentile(state.replayRatios, 0.5) * 100.0,
                     percentile(state.replayRatios, 0.9) * 100.0,
                     perFrame(outputHits, state.frames),
-                    perFrame(leafHits, state.frames));
+                    perFrame(leafHits, state.frames),
+                    state.selfCheckPassed);
             }
             state.areaRatios.clear();
             state.replayRatios.clear();
+            state.selfCheckPassed = 0;
             state.frames = 0;
             state.commands = 0;
             state.changedItems = 0;
