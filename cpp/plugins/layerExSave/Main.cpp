@@ -1,5 +1,7 @@
-// layerExSave.dll 模块入口。上游 Main.cpp 的 Window 异步保存扩展未移植，
-// 原因见 utils.hpp 顶部说明；Layer/Math 扩展注册在各自源文件中。
+// layerExSave.dll 模块入口。Layer/Math 扩展注册在各自源文件中；Window 的
+// 异步保存扩展（WindowSaveImage.cpp）在主线程完成 TJS 交互，worker 只编码，
+// 事件经窗口消息通道回到主线程。
+#include "WindowSaveImage.h"
 #include "ncbind.hpp"
 #include "utils.hpp"
 
@@ -26,4 +28,5 @@ extern "C" void TVPLayerExSavePluginAnchor() {
     LayerExSaveUtilsAnchor();
     LayerExSavePngAnchor();
     LayerExSaveTlg5Anchor();
+    LayerExSaveWindowSaveImageAnchor();
 }

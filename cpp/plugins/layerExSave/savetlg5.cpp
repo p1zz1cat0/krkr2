@@ -186,48 +186,12 @@ bool CompressTLG5::main(long width, long height, BufRefT buffer, long pitch) {
  * @param tagsDict タグ情報
  * @return キャンセルされたら true
  */
-bool CompressTLG5::compress(long width, long height, BufRefT buffer, long pitch, iTJSDispatch2 *tagsDict) {
+bool CompressTLG5::compress(long width, long height, BufRefT buffer, long pitch, const SaveTags &tagsDict) {
 	
 	bool canceled = false;
 	
-	// 取得
-	ttstr tags;
-	if (tagsDict) {
-		/**
-		 * タグ展開用
-		 */
-		class TagsCaller : public tTJSDispatch /** EnumMembers 用 */ {
-		protected:
-			ttstr *store;
-		public:
-			TagsCaller(ttstr *store) : store(store) {};
-			virtual tjs_error TJS_INTF_METHOD FuncCall( // function invocation
-														tjs_uint32 flag,			// calling flag
-														const tjs_char * membername,// member name ( NULL for a default member )
-														tjs_uint32 *hint,			// hint for the member name (in/out)
-														tTJSVariant *result,		// result
-														tjs_int numparams,			// number of parameters
-														tTJSVariant **param,		// parameters
-														iTJSDispatch2 *objthis		// object as "this"
-														) {
-				if (numparams > 1) {
-					tTVInteger flag = param[1]->AsInteger();
-					if (!(flag & TJS_HIDDENMEMBER)) {
-						ttstr name  = *param[0];
-						ttstr value = *param[2];
-						*store += ttstr(name.GetNarrowStrLen()) + ":" + name + "=" +	ttstr(value.GetNarrowStrLen()) + ":" + value + ",";
-					}
-				}
-				if (result) {
-					*result = true;
-				}
-				return TJS_S_OK;
-			}
-		} *caller = new TagsCaller(&tags);
-		tTJSVariantClosure closure(caller);
-		tagsDict->EnumMembers(TJS_IGNOREPROP, &closure, tagsDict);
-		caller->Release();
-	}
+	// 取得（[krkr2] タグはメインスレッドで読み出し済みのスナップショットから復元）
+	ttstr tags = tagsDict.EncodeTlg5StructuredData();
 
 	ULONG tagslen = tags.GetNarrowStrLen(); 
 	if (tagslen > 0) {

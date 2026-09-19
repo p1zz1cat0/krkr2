@@ -9,7 +9,7 @@ public:
 	CompressTLG5(ProgressFunc *prog, void *data) : CompressBase(prog, data) {}
 	virtual ~CompressTLG5() {}
 
-	virtual bool compress(long width, long height, BufRefT buffer, long pitch, iTJSDispatch2 *tagsDict);
+	virtual bool compress(long width, long height, BufRefT buffer, long pitch, const SaveTags &tags);
 	bool             main(long width, long height, BufRefT buffer, long pitch);
 };
 

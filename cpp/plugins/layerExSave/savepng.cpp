@@ -45,8 +45,8 @@ public:
 		target->writeBigInt32(crc);
 		init();
 	}
-	void writeUnitType(ncbPropAccessor &dic, const tjs_char *tag, const tjs_char *oneval) {
-		writeInt8(dic.getStrValue(tag) == ttstr(oneval) ? 1 : 0);
+	void writeUnitType(const SaveTags &dic, const tjs_char *tag, const tjs_char *oneval) {
+		writeInt8(dic.StringValue(tag) == ttstr(oneval) ? 1 : 0);
 	}
 	inline void writePixel(BufRefT p) {
 		resize(cur + 4);
@@ -109,7 +109,7 @@ public:
 		}
 		return cnt < 0;
 	}
-	virtual bool compress(long width, long height, BufRefT buffer, long pitch, iTJSDispatch2 *tagsDict) {
+	virtual bool compress(long width, long height, BufRefT buffer, long pitch, const SaveTags &tags) {
 		return false;
 	}
 
@@ -128,11 +128,11 @@ public:
  * @param tagsDict タグ情報
  * @return キャンセルされたら true
  */
-bool CompressPNG::compress(long width, long height, BufRefT buffer, long pitch, iTJSDispatch2 *tagsDict)
+bool CompressPNG::compress(long width, long height, BufRefT buffer, long pitch, const SaveTags &tags)
 {
 	PngChunk chunk(this);
 	/**/   compress_first (chunk, width, height, PNGTYPE_RGBA8888);
-	/**/   compress_second(chunk, tagsDict);
+	/**/   compress_second(chunk, tags);
 	return compress_third (chunk, width, height, buffer, pitch);
 }
 
@@ -148,11 +148,11 @@ void CompressPNG::compress_first (PngChunk &chunk, long width, long height, long
 	chunk.writeInt8(0); // non interlace
 	chunk.writeChunk(this, "IHDR");
 }
-static const char* ChunkSetResoXY(ncbPropAccessor &dic, PngChunk &chunk, CompressPNG *self=NULL) {
+static const char* ChunkSetResoXY(const SaveTags &dic, PngChunk &chunk, CompressPNG *self=NULL) {
 	// pHYs chunk
 	if (dic.HasValue(TJS_W("reso_x")) || dic.HasValue(TJS_W("reso_y"))) {
-		tjs_int x = dic.getIntValue(TJS_W("reso_x"));
-		tjs_int y = dic.getIntValue(TJS_W("reso_y"));
+		tjs_int x = dic.IntValue(TJS_W("reso_x"));
+		tjs_int y = dic.IntValue(TJS_W("reso_y"));
 		chunk.writeBigInt32((long)x);
 		chunk.writeBigInt32((long)y);
 		chunk.writeUnitType(dic, TJS_W("reso_unit"), TJS_W("meter"));
@@ -162,11 +162,11 @@ static const char* ChunkSetResoXY(ncbPropAccessor &dic, PngChunk &chunk, Compres
 	}
 	return 0;
 }
-static const char* ChunkSetOffsXY(ncbPropAccessor &dic, PngChunk &chunk, CompressPNG *self=NULL) {
+static const char* ChunkSetOffsXY(const SaveTags &dic, PngChunk &chunk, CompressPNG *self=NULL) {
 	// oFFs chunk
 	if (dic.HasValue(TJS_W("offs_x")) || dic.HasValue(TJS_W("offs_y"))) {
-		tjs_int x = dic.getIntValue(TJS_W("offs_x"));
-		tjs_int y = dic.getIntValue(TJS_W("offs_y"));
+		tjs_int x = dic.IntValue(TJS_W("offs_x"));
+		tjs_int y = dic.IntValue(TJS_W("offs_y"));
 		chunk.writeBigInt32((long)x);
 		chunk.writeBigInt32((long)y);
 		chunk.writeUnitType(dic, TJS_W("offs_unit"), TJS_W("micrometer"));
@@ -176,11 +176,11 @@ static const char* ChunkSetOffsXY(ncbPropAccessor &dic, PngChunk &chunk, Compres
 	}
 	return 0;
 }
-static const char* ChunkSetVpagWH(ncbPropAccessor &dic, PngChunk &chunk, CompressPNG *self=NULL) {
+static const char* ChunkSetVpagWH(const SaveTags &dic, PngChunk &chunk, CompressPNG *self=NULL) {
 	// vpAg chunk
 	if (dic.HasValue(TJS_W("vpag_w")) || dic.HasValue(TJS_W("vpag_h"))) {
-		tjs_int w = dic.getIntValue(TJS_W("vpag_w"));
-		tjs_int h = dic.getIntValue(TJS_W("vpag_h"));
+		tjs_int w = dic.IntValue(TJS_W("vpag_w"));
+		tjs_int h = dic.IntValue(TJS_W("vpag_h"));
 		chunk.writeBigInt32((long)w);
 		chunk.writeBigInt32((long)h);
 		chunk.writeUnitType(dic, TJS_W("vpag_unit"), TJS_W("micrometer"));
@@ -190,18 +190,18 @@ static const char* ChunkSetVpagWH(ncbPropAccessor &dic, PngChunk &chunk, Compres
 	}
 	return 0;
 }
-void CompressPNG::compress_second(PngChunk &chunk, iTJSDispatch2 *tagsDict)
+void CompressPNG::compress_second(PngChunk &chunk, const SaveTags &tags)
 {
 	// additional chunks
-	if (tagsDict == NULL) return;
-	ncbPropAccessor dic(tagsDict);
+	if (tags.Empty()) return;
+	const SaveTags &dic = tags; // [krkr2] 読み出し済みスナップショットを参照
 
 	ChunkSetResoXY(dic, chunk, this);
 	ChunkSetOffsXY(dic, chunk, this);
 	ChunkSetVpagWH(dic, chunk, this);
 
 	// compression level
-	chunk.setCompressionLevel((int)dic.getIntValue(TJS_W("comp_lv"), Z_DEFAULT_COMPRESSION));
+	chunk.setCompressionLevel((int)dic.IntValue(TJS_W("comp_lv"), Z_DEFAULT_COMPRESSION));
 }
 bool CompressPNG::compress_third (PngChunk &chunk, long width, long height, BufRefT buffer, long pitch)
 {
@@ -401,7 +401,9 @@ static bool EncodeLodePNGCommon(std::vector<unsigned char> &image,
 		int comp_lv = -1;
 		if (info->Type() == tvtObject) {
 			PngChunk chunk;
-			ncbPropAccessor dic(info->AsObjectNoAddRef());
+			// [krkr2] 编码器统一读 SaveTags 快照（同步路径在此读取，异步路径
+			// 由主线程提前读取）
+			const SaveTags dic(info->AsObjectNoAddRef());
 
 			SetCustomChunk(state, chunk, ChunkSetResoXY(dic, chunk));
 			SetCustomChunk(state, chunk, ChunkSetOffsXY(dic, chunk));
@@ -409,7 +411,7 @@ static bool EncodeLodePNGCommon(std::vector<unsigned char> &image,
 
 			// compression level
 			if (dic.HasValue(TJS_W("comp_lv"))) {
-				comp_lv = (int)dic.getIntValue(TJS_W("comp_lv"), Z_DEFAULT_COMPRESSION);
+				comp_lv = (int)dic.IntValue(TJS_W("comp_lv"), Z_DEFAULT_COMPRESSION);
 			}
 		} else {
 			comp_lv = (int)info->AsInteger();

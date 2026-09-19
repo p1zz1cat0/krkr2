@@ -1,6 +1,8 @@
 #include "ncbind.hpp"
 #include "utils.hpp"
+#include "SaveSnapshot.h"
 #include "common/PluginSafety.h"
+#include "StorageIntf.h"
 
 #include <algorithm>
 #include <vector>
@@ -797,6 +799,126 @@ MathOctetVectorSum(tTJSVariant *result, tjs_int numparams, tTJSVariant **param, 
 	return TJS_S_OK;
 }
 NCB_ATTACH_FUNCTION(octetVectorSum, Math, MathOctetVectorSum);
+
+//---------------------------------------------------------------------------
+// [krkr2] 异步保存的线程边界：见 SaveSnapshot.h
+//---------------------------------------------------------------------------
+
+// タグ辞書読み出し用
+class SaveTagsEnumCaller : public tTJSDispatch {
+	SaveTags *store;
+public:
+	explicit SaveTagsEnumCaller(SaveTags *store) : store(store) {}
+
+	virtual tjs_error TJS_INTF_METHOD FuncCall(tjs_uint32 flag,
+											   const tjs_char *membername,
+											   tjs_uint32 *hint,
+											   tTJSVariant *result,
+											   tjs_int numparams,
+											   tTJSVariant **param,
+											   iTJSDispatch2 *objthis) {
+		// EnumMembers のコールバックは (name, flags, value...) の形
+		if (numparams > 2 && store) {
+			tTVInteger f = param[1]->AsInteger();
+			if (!(f & TJS_HIDDENMEMBER)) {
+				store->Add(*param[0], *param[2]);
+			}
+		}
+		if (result) *result = true;
+		return TJS_S_OK;
+	}
+};
+
+void
+SaveTags::Add(const tTJSVariant &name, const tTJSVariant &value)
+{
+	Entry e;
+	e.name  = ttstr(name);
+	e.value = value;
+	entries.push_back(e);
+}
+
+SaveTags::SaveTags(iTJSDispatch2 *tagsDict) {
+	if (!tagsDict) return;
+	SaveTagsEnumCaller *caller = new SaveTagsEnumCaller(this);
+	tTJSVariantClosure closure(caller);
+	tagsDict->EnumMembers(TJS_IGNOREPROP, &closure, tagsDict);
+	caller->Release();
+}
+
+bool
+SaveTags::HasValue(const tjs_char *name) const
+{
+	for (const Entry &e : entries) {
+		if (e.name == name) return e.value.Type() != tvtVoid;
+	}
+	return false;
+}
+
+int
+SaveTags::IntValue(const tjs_char *name, int defaultValue) const
+{
+	for (const Entry &e : entries) {
+		if (e.name == name) {
+		if (e.value.Type() == tvtVoid) return defaultValue;
+		return (int)e.value.AsInteger();
+	}
+	}
+	return defaultValue;
+}
+
+ttstr
+SaveTags::StringValue(const tjs_char *name) const
+{
+	for (const Entry &e : entries) {
+		if (e.name == name) return ttstr(e.value);
+	}
+	return ttstr();
+}
+
+ttstr
+SaveTags::EncodeTlg5StructuredData() const
+{
+	// 上游 TagsCaller と同じ "len:name=len:value," 形式（hidden は除く）
+	ttstr out;
+	for (const Entry &e : entries) {
+		const ttstr name(e.name);
+		const ttstr value(e.value);
+		out += ttstr(name.GetNarrowStrLen()) + ":" + name + "=" +
+			   ttstr(value.GetNarrowStrLen()) + ":" + value + ",";
+	}
+	return out;
+}
+
+bool
+CaptureSaveSnapshot(iTJSDispatch2 *layer, iTJSDispatch2 *tagsDict,
+					SaveSnapshot &snapshot)
+{
+	const auto view = pluginSafety::LayerReadView::create(layer);
+	if (!view) return false;
+
+	const long w = view.value.width();
+	const long h = view.value.height();
+	const long pitch = view.value.pitchBytes();
+	if (w <= 0 || h <= 0 || pitch < w * 4) return false;
+
+	snapshot.width      = w;
+	snapshot.height     = h;
+	snapshot.pitchBytes = w * 4;
+	snapshot.buffer.resize(static_cast<std::size_t>(snapshot.pitchBytes) *
+						   static_cast<std::size_t>(h));
+	snapshot.tags       = SaveTags(tagsDict);
+
+	// 行ごとにコピーして詰める（元ピッチは w*4 より大きいことがある）
+	const tjs_uint8 *src = view.value.pixels();
+	for (long y = 0; y < h; y++) {
+		memcpy(snapshot.buffer.data() + static_cast<std::size_t>(y) *
+										   static_cast<std::size_t>(snapshot.pitchBytes),
+			   src + static_cast<std::size_t>(y) * static_cast<std::size_t>(pitch),
+			   static_cast<std::size_t>(snapshot.pitchBytes));
+	}
+	return true;
+}
 
 // [krkr2] 静态链接保活锚点，由 Main.cpp 的 TVPLayerExSavePluginAnchor 引用
 void LayerExSaveUtilsAnchor() {}

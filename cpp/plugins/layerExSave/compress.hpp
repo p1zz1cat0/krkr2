@@ -2,6 +2,9 @@
 #define _layerexsave_compress_hpp_
 
 #include "utils.hpp"
+#include "SaveSnapshot.h"
+#include "StorageIntf.h" // [krkr2] TVPCreateStream
+#include "MsgIntf.h"     // [krkr2] TVPThrowExceptionMessage
 
 #include <vector>
 #include <cstring>
@@ -145,15 +148,34 @@ public:
 	}
 
 	/**
+	 * [krkr2] ストリームを開いて書き出す（同期保存・非同期保存の完了処理で共用）
+	 */
+	void writeTo(const tjs_char *filename) {
+		tTJSBinaryStream *out = TVPCreateStream(filename, TJS_BS_WRITE);
+		if (!out) {
+			ttstr msg = filename;
+			msg += TJS_W(":can't open");
+			TVPThrowExceptionMessage(msg.c_str());
+		}
+		try {
+			store(out);
+		} catch (...) {
+			delete out; // [krkr2] fork 流以 delete 释放（上游 Destruct）
+			throw;
+		}
+		delete out; // [krkr2] fork 流以 delete 释放（上游 Destruct）
+	}
+
+	/**
 	 * 圧縮処理
 	 * @param width 画像横幅
 	 * @param height 画像縦幅
 	 * @param buffer 画像バッファ
 	 * @param pitch 画像データのピッチ
-	 * @param tagsDict タグ情報
+	 * @param tags タグ情報（[krkr2] 読み出し済みのスナップショット）
 	 * @return キャンセルされたら true
 	 */
-	virtual bool compress(long width, long height, BufRefT buffer, long pitch, iTJSDispatch2 *tagsDict) = 0;
+	virtual bool compress(long width, long height, BufRefT buffer, long pitch, const SaveTags &tags) = 0;
 
 	/**
 	 * ファイルに保存する
@@ -167,24 +189,13 @@ public:
 			msg += TJS_W(":invalid layer");
 			TVPThrowExceptionMessage(msg.c_str());
 		}
-		bool canceled = compress(width, height, buffer, pitch, info);
+		// [krkr2] タグはここで読み出す（非同期経路もメインスレッドで同じ変換を通す）
+		SaveTags tags(info);
+		bool canceled = compress(width, height, buffer, pitch, tags);
 
 		// 圧縮がキャンセルされていなければファイル保存
 		if (!canceled) {
-			tTJSBinaryStream *out = TVPCreateStream(filename, TJS_BS_WRITE);
-			if (!out) {
-				ttstr msg = filename;
-				msg += TJS_W(":can't open");
-				TVPThrowExceptionMessage(msg.c_str());
-			}
-			try {
-				// 格納
-				store(out);
-			} catch (...) {
-				delete out; // [krkr2] fork 流以 delete 释放（上游 Destruct）
-				throw;
-			}
-			delete out; // [krkr2] fork 流以 delete 释放（上游 Destruct）
+			writeTo(filename);
 		}
 
 		return canceled;

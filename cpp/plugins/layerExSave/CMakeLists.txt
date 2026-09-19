@@ -6,6 +6,9 @@ add_library(${PROJECT_NAME} STATIC)
 target_sources(${PROJECT_NAME}
     PRIVATE
         Main.cpp
+        SaveSnapshot.h
+        WindowSaveImage.h
+        WindowSaveImage.cpp
         utils.cpp
         savepng.cpp
         savetlg5.cpp

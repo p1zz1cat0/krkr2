@@ -10,7 +10,7 @@ public:
 	CompressPNG(ProgressFunc *prog, void *data) : CompressBase(prog, data) {}
 	virtual ~CompressPNG() {}
 
-	virtual bool compress(long width, long height, BufRefT buffer, long pitch, iTJSDispatch2 *tagsDict);
+	virtual bool compress(long width, long height, BufRefT buffer, long pitch, const SaveTags &tags);
 
 	// for Layer.saveLayerImage{Png,PngOctet}
 	void encodeToFile (iTJSDispatch2 *layer, const tjs_char *filename, tTJSVariant *info);
@@ -21,7 +21,7 @@ public:
 
 protected:
 	void compress_first (PngChunk&, long width, long height, long flag);
-	void compress_second(PngChunk&, iTJSDispatch2 *tagsDict);
+	void compress_second(PngChunk&, const SaveTags &tags);
 	bool compress_third (PngChunk&, long width, long height, BufRefT buffer, long pitch);
 };
 

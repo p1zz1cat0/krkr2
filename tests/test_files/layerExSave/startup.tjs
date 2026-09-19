@@ -163,5 +163,155 @@ pluginAssertEqual("ooze spreads rgb", ooze.getMainPixel(0, 0), ooze.getMainPixel
 pluginAssertEqual("ooze keeps alpha", 0, ooze.getMaskPixel(1, 0));
 pluginAssertEqual("ooze one step only", 0, ooze.getMainPixel(2, 0));
 
-pluginSmokePass("layerExSave.dll");
-System.exit(0);
+// ---------------------------------------------------------------------------
+// Window 异步保存（上游 Window.startSaveLayerImage 系列）
+// ---------------------------------------------------------------------------
+// worker 线程编码 → 窗口消息回传 → 主线程写文件这条链路要等帧循环排空投递
+// 队列才会推进，所以这部分断言放在 AsyncTrigger 里；同步断言在 startup 阶段
+// 已经全部跑完（失败会在到达这里之前抛异常结束）。
+//
+// TJS 的标识符解析是「当前コンテキストのプロパティ参照」で、クロージャ捕获は
+// 効かない。ハンドラは具名グローバル関数、状態はグローバル変数に置く。
+
+// 非同期テスト用の大きめの図柄：キャンセルが worker の完了に負けないよう、
+// 数フレーム分のエンコード時間がかかるサイズにする（4x2 では一瞬で完了する）。
+var asyncSrc = newLayer(1024, 1024);
+asyncSrc.fillRect(0, 0, 1024, 1024, 0xFF204060);
+asyncSrc.fillRect(0, 0, 1024, 8, 0xFF8080FF);
+asyncSrc.fillRect(512, 0, 8, 1024, 0x40FF4040);
+
+var asyncState = %[
+    phase: 1,
+    cancelOnProgress: false,
+    cancelSent: false,
+    started: 0,
+    progressCount: 0,
+    lastProgress: -1,
+    progressMonotonic: true,
+    doneCount: 0,
+    doneCanceled: -1,
+    frames: 0
+];
+
+// 共通ハンドラ
+function asyncProgressEvent(handler, progress, layer, filename) {
+    asyncState.progressCount += 1;
+    if (progress < asyncState.lastProgress)
+        asyncState.progressMonotonic = false;
+    asyncState.lastProgress = progress;
+    // 最初の進捗が届いた時点で worker は必ずまだ走っている（進捗を投げて
+    // から次のブロックへ進む）ので、ここでキャンセルすればレースにならない。
+    if (asyncState.cancelOnProgress && !asyncState.cancelSent) {
+        asyncState.cancelSent = true;
+        testWindow.cancelSaveLayerImage(handler);
+    }
+}
+
+function asyncDoneEvent(handler, canceled, layer, filename) {
+    asyncState.doneCount += 1;
+    asyncState.doneCanceled = canceled;
+}
+
+// ウィンドウのイベントハンドラ（上游 manual.tjs の
+// onSaveLayerImageProgress / onSaveLayerImageDone）
+testWindow.onSaveLayerImageProgress = asyncProgressEvent;
+testWindow.onSaveLayerImageDone = asyncDoneEvent;
+
+var asyncTrigger = new AsyncTrigger(testWindow);
+
+function asyncCheck(cond, msg) {
+    if (!cond) {
+        Debug.message("PLUGIN_ASSERT_FAIL name=" + msg +
+            " expected=true actual=false");
+        throw new Exception("plugin assertion failed: " + msg);
+    }
+}
+
+function asyncResetProgress() {
+    asyncState.progressCount = 0;
+    asyncState.lastProgress = -1;
+    asyncState.progressMonotonic = true;
+    asyncState.frames = 0;
+}
+
+function asyncStep() {
+    asyncState.frames += 1;
+    if (asyncState.frames > 600) {
+        asyncCheck(false, "asynchronous save advanced before timeout (phase " +
+            asyncState.phase + ")");
+    }
+
+    if (asyncState.phase == 1) {
+        if (asyncState.doneCount == 0) {
+            asyncTrigger.trigger();
+            return;
+        }
+        // 正常系：進捗は複数回・単調で 100 に達し、完了は canceled=0
+        asyncCheck(asyncState.started >= 0, "start returns a handler");
+        asyncCheck(asyncState.progressCount > 0, "progress event fired");
+        asyncCheck(asyncState.progressMonotonic, "progress is monotonic");
+        asyncCheck(asyncState.lastProgress == 100, "progress reaches 100");
+        asyncCheck(asyncState.doneCanceled == 0, "done reports not canceled");
+        // 非同期産物は同期産物と画素一致（同一エンコーダ経路の検証）。
+        // asyncSrc を同期 API で書いたものと読み比べる。
+        var syncRef = newLayer(1, 1);
+        var syncFile = outDir + "layerexsave_async_sync_ref.tlg";
+        asyncSrc.saveLayerImageTlg5(syncFile);
+        syncRef.loadImages(syncFile);
+        var asyncLayer = newLayer(1, 1);
+        asyncLayer.loadImages(outDir + "layerexsave_async.tlg");
+        assertSamePixels("async tlg5 matches sync output", syncRef, asyncLayer);
+
+        // phase 2：進捗でキャンセル
+        asyncState.started = testWindow.startSaveLayerImage(
+            asyncSrc, outDir + "layerexsave_async_cancel.tlg");
+        asyncState.doneCount = 0;
+        asyncState.doneCanceled = -1;
+        asyncState.cancelOnProgress = true;
+        asyncState.cancelSent = false;
+        asyncResetProgress();
+        asyncState.phase = 2;
+        asyncTrigger.trigger();
+        return;
+    }
+
+    if (asyncState.phase == 2) {
+        if (asyncState.doneCount == 0) {
+            asyncTrigger.trigger();
+            return;
+        }
+        asyncCheck(asyncState.cancelSent, "cancel was delivered mid-encode");
+        asyncCheck(asyncState.doneCanceled == 1, "cancel reports canceled=1");
+        asyncCheck(!Storages.isExistentStorage(
+                        outDir + "layerexsave_async_cancel.tlg"),
+                    "canceled save writes no file");
+
+        // phase 3：stop は完了イベントを出さない
+        asyncState.started = testWindow.startSaveLayerImage(
+            asyncSrc, outDir + "layerexsave_async_stop.tlg");
+        testWindow.stopSaveLayerImage(asyncState.started);
+        asyncState.doneCount = 0;
+        asyncResetProgress();
+        asyncState.phase = 3;
+        asyncTrigger.trigger();
+        return;
+    }
+
+    // phase 3：数フレーム待っても完了イベントが来ないことを確認する
+    if (asyncState.frames < 60) {
+        asyncTrigger.trigger();
+        return;
+    }
+    // 上游の stop は「スロットを外して完了イベントを出さない」だけで、既に
+    // 走っている worker を止めはしない（ファイルの書き込み可否は実装依存）。
+    // ここで主張するのは通知契約だけ。
+    asyncCheck(asyncState.doneCount == 0, "stopped save fires no done");
+
+    pluginSmokePass("layerExSave.dll");
+    System.exit(0);
+}
+
+asyncTrigger.onFire = asyncStep;
+asyncState.started = testWindow.startSaveLayerImage(
+    asyncSrc, outDir + "layerexsave_async.tlg");
+asyncTrigger.trigger();
