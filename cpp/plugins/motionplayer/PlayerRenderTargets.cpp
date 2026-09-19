@@ -1353,6 +1353,9 @@ namespace motion {
             } else {
                 buildRenderCommands(canvasWidth, canvasHeight);
             }
+            // Phase 2 计数插桩（判定后删除）：只统计脏区覆盖，不改变重放。
+            detail::recordSlaDirtyCoverage(*_runtime, motionPath, canvasWidth,
+                                           canvasHeight);
             if(!executeLayerRenderCommands(slaRenderTarget, true)) {
                 detail::logoChainTraceSummary(
                     motionPath, "renderToSeparateLayerAdaptor",

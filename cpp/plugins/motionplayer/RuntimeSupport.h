@@ -715,6 +715,31 @@ namespace motion::detail {
         std::uint64_t emoteCommandOutputCacheHits = 0;
         std::uint64_t emoteCommandLeafCacheHits = 0;
 
+        // Phase 2 计数插桩（dirty coverage 判定后连同 SlaDirtyCoverage.cpp 一起
+        // 删除；只计数，不参与合成）。目的：判断「保留上一帧 private canvas，
+        // 只清 old/new dirty union，并在 clip 内按 z-order 重放相交命令」是否
+        // 值得实现。每帧统计最终命令数、变化 item 数、dirty union 面积与需要
+        // 重放的相交命令数；按 3 秒窗口只输出聚合，不逐 item 写日志。
+        struct SlaDirtyCoverageState {
+            struct Entry {
+                std::array<int, 4> rect{ 0, 0, 0, 0 };
+                std::uint64_t signature = 0;
+            };
+            std::unordered_map<std::uint64_t, Entry> previous;
+            std::unordered_map<std::uint64_t, Entry> current;
+            std::vector<std::array<int, 4>> dirty;
+            std::vector<double> areaRatios;
+            std::vector<double> replayRatios;
+            double windowStartSeconds = 0.0;
+            std::uint64_t windowOutputHitsStart = 0;
+            std::uint64_t windowLeafHitsStart = 0;
+            std::uint64_t frames = 0;
+            std::uint64_t commands = 0;
+            std::uint64_t changedItems = 0;
+            std::uint64_t replayCommands = 0;
+        };
+        SlaDirtyCoverageState slaDirtyCoverage;
+
         // Legacy local scratch for old diagnostics. libkrkr2.so player+384 is
         // the parameter table initialized by Player_initNonEmoteMotion
         // (0x6B365C), not per-node storage; node+8 resolves into
@@ -862,6 +887,12 @@ namespace motion::detail {
     bool logoSnapshotMarkEnabled();
     bool logoSnapshotMarkEnabledForPath(const std::string &motionPath);
     void resetLogoChainTraceSession(const std::string &motionPath);
+
+    // Phase 2 计数插桩（判定后删除，实现在 SlaDirtyCoverage.cpp）：按 3 秒窗口
+    // 报告 accurate SLA private canvas 的脏区覆盖率与需要重放的相交命令数。
+    void recordSlaDirtyCoverage(PlayerRuntime &runtime,
+                                const std::string &motionPath, tjs_int canvasWidth,
+                                tjs_int canvasHeight);
     void logoChainTraceLog(const std::string &motionPath, const char *stage,
                            const char *func, double frameTime,
                            const std::string &message);
