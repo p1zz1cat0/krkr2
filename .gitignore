@@ -20,7 +20,10 @@ java_pid*.hprof
 __pycache__/
 
 # Local closed-source research input. Never commit game archives or vendor DLLs.
-cpp/plugins/motionplayer/origin/
+# Any `origin/` directory anywhere in the tree holds such material (upstream
+# source dumps, reference implementations, extracted binaries); the pattern is
+# deliberately unanchored so a new plugin's origin/ is covered on creation.
+origin/
 
 # Local runtime console output from manual plugin smokes
 tests/test_files/savedata/
