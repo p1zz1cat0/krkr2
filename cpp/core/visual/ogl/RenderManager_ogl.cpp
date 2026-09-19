@@ -4779,30 +4779,18 @@ public:
                           const tTVPRect &rcclip, const tTVPPointD *_pttar,
                           const tRenderTexQuadArray &textures) override {
         ++_drawCount;
-        // 生命周期诊断探针（阶段 0，随收编移除）：OGL 模式下曾出现 vptr 指向
-        // type_info vtable 的崩溃，打印前若干次 op 的纹理对象头以定位来源。
-        static std::atomic<int> ogl_tex_diag_count{0};
-        if(ogl_tex_diag_count.fetch_add(1, std::memory_order_relaxed) < 4096) {
-            void *tarObj = _tar;
-            void *tarVptr = tarObj ? *(void **)tarObj : nullptr;
-            void *srcObj = textures.size() ? textures[0].first : nullptr;
-            void *srcVptr = srcObj ? *(void **)srcObj : nullptr;
-            void *methodObj = _method;
-            void *methodVptr = methodObj ? *(void **)methodObj : nullptr;
-            std::fprintf(stderr,
-                         "[Yoghourt][OGL-diag] op#%d nTri=%d tar=%p tarVptr=%p "
-                         "src=%p srcVptr=%p method=%p methodVptr=%p\n",
-                         ogl_tex_diag_count.load(std::memory_order_relaxed),
-                         nTriangles, tarObj, tarVptr, srcObj, srcVptr,
-                         methodObj, methodVptr);
-        }
-        // 一次性上下文诊断：opengl 后端在 macOS 上表现为画布全透明，存在两种
-        // 互斥的失败模式，两者症状相同——(a) 当前线程没有可用的 GL 上下文，
-        // 所有 GL 调用落空；(b) 上下文正常，但传入的是软件管理器创建的纹理，
-        // 下面的 dynamic_cast 失败导致每次绘制提前返回。这一行同时打印两者的
-        // 判据，避免在错误的假设上开工。
+        // 一次性上下文诊断（KRKR_OGL_CTX_DIAG=1，默认关闭）：opengl 后端在 macOS
+        // 上曾表现为画布全透明，存在两种互斥的失败模式，两者症状相同——(a) 当前
+        // 线程没有可用的 GL 上下文，所有 GL 调用落空；(b) 上下文正常，但传入的是
+        // 软件管理器创建的纹理，下面的 dynamic_cast 失败导致每次绘制提前返回。
+        // 打开后第一次 op 同时打印两者的判据，避免在错误的假设上开工。
+        static const bool ogl_ctx_diag = [] {
+            const char *e = std::getenv("KRKR_OGL_CTX_DIAG");
+            return e && e[0] != '\0' && e[0] != '0';
+        }();
         static std::atomic<bool> ogl_ctx_diag_done{ false };
-        if(!ogl_ctx_diag_done.exchange(true, std::memory_order_relaxed)) {
+        if(ogl_ctx_diag &&
+           !ogl_ctx_diag_done.exchange(true, std::memory_order_relaxed)) {
             const char *glVersion = (const char *)glGetString(GL_VERSION);
 #if(TARGET_OS_MAC && !TARGET_OS_IPHONE) || defined(__ANDROID__)
             std::fprintf(stderr,

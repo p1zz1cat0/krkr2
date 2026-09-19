@@ -808,13 +808,6 @@ namespace motion {
                             state, trackIndex, nextFrame.value, transition,
                             nextFrame.easingWeight);
                     } else {
-                        LOGGER->info(
-                            "emote.tl.frame label={} tl={} value={:.2f} "
-                            "transition={:.2f} time={:.2f} target={:.2f} "
-                            "cursor={} flags={}",
-                            track.label, state.label, nextFrame.value,
-                            transition, state.currentTime, targetTime,
-                            cursor, state.flags);
                         setVariableResolvedWeightLike_0x671228(
                             track.label, static_cast<double>(nextFrame.value),
                             transition, nextFrame.easingWeight);
@@ -945,8 +938,6 @@ namespace motion {
         const auto stepControllerBucket = [this](auto &bucket,
                                                  double controllerDt) {
             for(auto &[label, state] : bucket) {
-                const bool wasAnimating =
-                    state.active || !state.queue.empty();
                 double steppedValue = state.currentValue;
                 const bool stillAnimating = stepQueuedAnimatorLike_0x67D01C(
                     state, controllerDt, steppedValue);
@@ -960,10 +951,6 @@ namespace motion {
                     continue;
                 }
                 writeEvalResultValueLike_0x6C4668(label, steppedValue);
-                if(wasAnimating && !stillAnimating && controllerDt > 0.0) {
-                    LOGGER->info("emote.anim.done key={} value={:.2f}", label,
-                                 steppedValue);
-                }
                 if(stillAnimating) {
                     _emoteDirty = true;
                 }

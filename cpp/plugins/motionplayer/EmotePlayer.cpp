@@ -679,9 +679,6 @@ namespace motion {
             (numparams >= 4 && param[3]) ? param[3]->AsReal() : 0.0;
         self->setVariable(ttstr(*param[0]), param[1]->AsReal(), transition,
                           ease);
-        LOGGER->info("emote.abi.var label={} value={} transition={} ease={}",
-                     ttstr(*param[0]).AsStdString(), param[1]->AsReal(),
-                     transition, ease);
         return TJS_S_OK;
     }
 
@@ -805,8 +802,6 @@ namespace motion {
     }
 
     void EmotePlayer::playTimeline(ttstr label, tjs_int flags) {
-        LOGGER->info("emote.abi.tl.play label={} flags={}",
-                     label.AsStdString(), flags);
         _player.playTimeline(label, flags);
         _modified = true;
     }
@@ -820,7 +815,6 @@ namespace motion {
     }
 
     void EmotePlayer::stopTimeline(ttstr label) {
-        LOGGER->info("emote.abi.tl.stop label={}", label.AsStdString());
         _player.stopTimeline(label);
     }
 
@@ -853,11 +847,6 @@ namespace motion {
             (numparams >= 5 && param[4]) ? param[4]->AsInteger() != 0 : false;
         self->_player.setTimelineBlendRatioEx(label, ratio, transition,
                                               easing, stopWhenBlendDone);
-        LOGGER->info(
-            "emote.abi.tl.blend label={} ratio={} transition={} ease={} "
-            "stop={}",
-            label.AsStdString(), ratio, transition, easing,
-            stopWhenBlendDone ? 1 : 0);
         return TJS_S_OK;
     }
 
@@ -1271,7 +1260,6 @@ namespace motion {
     }
 
     void EmotePlayer::skipToSync() {
-        LOGGER->info("emote.abi.sync skip");
         _player.skipToSync();
         _modified = true;
     }
@@ -1280,7 +1268,6 @@ namespace motion {
     // pass() is parameterless (manual.tjs / AffineSourceMotion sync); time
     // advancement is progress(tickStep) called separately by the script.
     void EmotePlayer::pass() {
-        LOGGER->info("emote.abi.sync pass");
         _player.releaseSyncWait();
         _modified = true;
     }
