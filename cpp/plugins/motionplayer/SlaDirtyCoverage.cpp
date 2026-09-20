@@ -55,12 +55,16 @@ namespace motion {
                                  item.sourceKey.size());
                 hash = hashBytes(hash, item.corners.data(),
                                  sizeof(float) * item.corners.size());
+                hash = hashBytes(hash, item.meshPoints.data(),
+                                 sizeof(float) * item.meshPoints.size());
                 hash = hashBytes(hash, item.clipRect.data(),
                                  sizeof(int) * item.clipRect.size());
                 hash = hashBytes(hash, item.packedColors.data(),
                                  sizeof(std::uint32_t) *
                                      item.packedColors.size());
                 hash = hashValue(hash, item.meshType);
+                hash = hashValue(hash, item.meshDivX);
+                hash = hashValue(hash, item.meshDivY);
                 hash = hashValue(hash, item.blendMode);
                 hash = hashValue(hash, item.opacity);
                 return hash;
@@ -212,6 +216,26 @@ namespace motion {
                                           std::chrono::steady_clock::now()
                                               .time_since_epoch())
                                           .count();
+            if(state.canvasWidth != canvasWidth ||
+               state.canvasHeight != canvasHeight) {
+                state.previous.clear();
+                state.current.clear();
+                state.dirty.clear();
+                state.areaRatios.clear();
+                state.replayRatios.clear();
+                state.selfCheckPassed = 0;
+                state.frames = 0;
+                state.commands = 0;
+                state.changedItems = 0;
+                state.replayCommands = 0;
+                state.canvasWidth = canvasWidth;
+                state.canvasHeight = canvasHeight;
+                state.hasPreviousFrame = false;
+                state.windowStartSeconds = nowSeconds;
+                state.windowOutputHitsStart =
+                    runtime.emoteCommandOutputCacheHits;
+                state.windowLeafHitsStart = runtime.emoteCommandLeafCacheHits;
+            }
             if(state.windowStartSeconds == 0.0) {
                 state.windowStartSeconds = nowSeconds;
                 state.windowOutputHitsStart =
@@ -219,34 +243,93 @@ namespace motion {
                 state.windowLeafHitsStart = runtime.emoteCommandLeafCacheHits;
             }
 
-            const bool hadPreviousFrame = !state.previous.empty();
+            const bool hadPreviousFrame = state.hasPreviousFrame;
             state.current.clear();
             state.dirty.clear();
             std::uint64_t commands = 0;
-            std::uint64_t changed = 0;
+            std::vector<std::uint64_t> currentOrder;
+            std::unordered_set<std::uint64_t> changedKeys;
             for(const auto &command : runtime.renderCommands) {
                 const auto *item = command.item;
                 if(!item || !item->drawFlag) {
                     continue;
                 }
-                ++commands;
+                const std::size_t order = currentOrder.size();
                 const std::uint64_t key = commandKey(command);
-                state.current[key] = { item->clipRect, itemSignature(*item) };
-                if(!hadPreviousFrame) {
-                    continue;
+                currentOrder.push_back(key);
+                state.current[key] = {
+                    item->clipRect, itemSignature(*item), order
+                };
+                ++commands;
+            }
+
+            const auto appendDirtyRect = [&](const std::array<int, 4> &rect) {
+                const int width = std::max<tjs_int>(canvasWidth, 0);
+                const int height = std::max<tjs_int>(canvasHeight, 0);
+                const std::array<int, 4> clipped = {
+                    std::clamp(rect[0], 0, width),
+                    std::clamp(rect[1], 0, height),
+                    std::clamp(rect[2], 0, width),
+                    std::clamp(rect[3], 0, height),
+                };
+                if(clipped[0] < clipped[2] && clipped[1] < clipped[3]) {
+                    state.dirty.push_back(clipped);
+                }
+            };
+            const auto markChanged = [&](std::uint64_t key) {
+                if(!changedKeys.insert(key).second) {
+                    return;
                 }
                 const auto previous = state.previous.find(key);
-                if(previous != state.previous.end() &&
-                   previous->second.signature ==
-                       state.current[key].signature) {
-                    continue;
-                }
-                ++changed;
                 if(previous != state.previous.end()) {
-                    state.dirty.push_back(previous->second.rect);
+                    appendDirtyRect(previous->second.rect);
                 }
-                state.dirty.push_back(item->clipRect);
+                const auto current = state.current.find(key);
+                if(current != state.current.end()) {
+                    appendDirtyRect(current->second.rect);
+                }
+            };
+
+            if(hadPreviousFrame) {
+                for(const auto &[key, current] : state.current) {
+                    const auto previous = state.previous.find(key);
+                    if(previous == state.previous.end() ||
+                       previous->second.signature != current.signature) {
+                        markChanged(key);
+                    }
+                }
+                // Commands which disappear still leave their previous pixels
+                // on a retained canvas, so their old rect must be cleared.
+                for(const auto &[key, previous] : state.previous) {
+                    (void)previous;
+                    if(state.current.find(key) == state.current.end()) {
+                        markChanged(key);
+                    }
+                }
+                // Compare relative order only among surviving commands. This
+                // catches a real z-order inversion without marking every item
+                // after an insertion/removal as reordered.
+                std::vector<std::uint64_t> survivingOrder;
+                survivingOrder.reserve(currentOrder.size());
+                for(const auto key : currentOrder) {
+                    if(state.previous.find(key) != state.previous.end()) {
+                        survivingOrder.push_back(key);
+                    }
+                }
+                for(std::size_t i = 0; i < survivingOrder.size(); ++i) {
+                    const auto &previousI = state.previous.at(survivingOrder[i]);
+                    for(std::size_t j = i + 1; j < survivingOrder.size(); ++j) {
+                        const auto &previousJ =
+                            state.previous.at(survivingOrder[j]);
+                        if(previousI.order > previousJ.order) {
+                            markChanged(survivingOrder[i]);
+                            markChanged(survivingOrder[j]);
+                        }
+                    }
+                }
             }
+
+            const std::uint64_t changed = changedKeys.size();
 
             std::uint64_t replay = 0;
             if(hadPreviousFrame && changed > 0) {
@@ -265,6 +348,7 @@ namespace motion {
             }
 
             state.previous.swap(state.current);
+            state.hasPreviousFrame = true;
             ++state.frames;
             state.commands += commands;
             state.changedItems += changed;

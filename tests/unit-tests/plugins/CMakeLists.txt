@@ -13,6 +13,7 @@ set(SOURCES
         extNagano-dll.cpp
         plugin-safety-dll.cpp
         motionplayer-physics.cpp
+        motionplayer-dirty-coverage.cpp
         motionplayer-param.cpp
         motionplayer-source-dialect.cpp
 )

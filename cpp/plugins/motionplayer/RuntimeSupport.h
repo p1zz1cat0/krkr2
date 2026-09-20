@@ -724,6 +724,7 @@ namespace motion::detail {
             struct Entry {
                 std::array<int, 4> rect{ 0, 0, 0, 0 };
                 std::uint64_t signature = 0;
+                std::size_t order = 0;
             };
             std::unordered_map<std::uint64_t, Entry> previous;
             std::unordered_map<std::uint64_t, Entry> current;
@@ -733,6 +734,9 @@ namespace motion::detail {
             // 仅 KRKR_SLA_DIRTY_SELFCHECK=1 时使用的满分辨率校验网格与计数。
             std::vector<std::uint8_t> selfCheckGrid;
             std::uint64_t selfCheckPassed = 0;
+            tjs_int canvasWidth = 0;
+            tjs_int canvasHeight = 0;
+            bool hasPreviousFrame = false;
             double windowStartSeconds = 0.0;
             std::uint64_t windowOutputHitsStart = 0;
             std::uint64_t windowLeafHitsStart = 0;
