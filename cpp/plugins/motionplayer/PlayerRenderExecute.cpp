@@ -4,8 +4,10 @@
 #include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
+#include "RenderManager.h"
 #include "SourceCache.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <exception>
 #include <unordered_set>
@@ -1312,6 +1314,13 @@ namespace motion {
         tTJSVariant graphScratchLayerSlot;
         iTJSDispatch2 *graphScratchLayerObject = nullptr;
         tTJSNI_BaseLayer *graphScratchLayer = nullptr;
+        static const bool premultipliedSlaEnabled = [] {
+            const char *value = std::getenv("KRKR_EMOTE_PREMULTIPLIED_SLA");
+            return value && value[0] != '\0' && value[0] != '0';
+        }();
+        const bool premultipliedSlaRequested =
+            premultipliedSlaEnabled && !TVPGetRenderManager()->IsSoftware();
+        bool premultipliedSlaActive = premultipliedSlaRequested;
         if(kRenderCommandGraphEnabled) {
             graphScratchLayerObject =
                 ensurePrivateOutputLayer(graphScratchLayerSlot);
@@ -2046,8 +2055,28 @@ namespace motion {
         } else {
             executionItems = _runtime->preparedRenderItemsTopLevel;
         }
+        // The final replay is the hot path: ltAddAlpha selects the existing
+        // fixed-function source-over methods instead of AlphaBlend_d's
+        // target snapshot. Cached leaf/composite surfaces remain straight
+        // alpha, and one GPU conversion restores the public Layer ABI below.
+        // Photoshop blend modes still depend on straight destination colour,
+        // so a frame containing one keeps the old path intact.
+        if(premultipliedSlaActive) {
+            for(const auto *item : executionItems) {
+                if(item && resolveBlendOperationModeLike_0x6C7440(
+                               item->blendMode) != omAlpha) {
+                    premultipliedSlaActive = false;
+                    break;
+                }
+            }
+        }
+        if(graphScratchLayer) {
+            graphScratchLayer->SetType(
+                premultipliedSlaActive ? ltAddAlpha : ltAlpha);
+        }
         bool outputCopyException = false;
-        auto *drawTargetLayer = graphScratchLayer ? graphScratchLayer : renderLayer;
+        auto *drawTargetLayer =
+            graphScratchLayer ? graphScratchLayer : renderLayer;
 
         for(auto *itemPtr : executionItems) {
             if(!itemPtr) {
@@ -2306,6 +2335,9 @@ namespace motion {
             const tTVPRect scratchRect(
                 0, 0, static_cast<tjs_int>(graphScratchLayer->GetWidth()),
                 static_cast<tjs_int>(graphScratchLayer->GetHeight()));
+            if(premultipliedSlaActive) {
+                graphScratchLayer->GetMainImage()->ConvertAddAlphaToAlpha();
+            }
             renderLayer->CopyRect(0, 0, graphScratchLayer->GetMainImage(),
                                   nullptr, scratchRect);
             targetLayerClipIsFull = true;
