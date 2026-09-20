@@ -1311,7 +1311,10 @@ namespace motion {
                 item.composedLayer, scratchOwner, scratchParent,
                 static_cast<tTVPLayerType>(ltAlpha), false);
         };
-        tTJSVariant graphScratchLayerSlot;
+        // The replay canvas lives as long as the PlayerRuntime, not the call:
+        // a freshly constructed Layer carries the default image size, so
+        // prepareLayerForRender had to grow it back to the render-layer canvas
+        // on every frame (ChangeImageSize -> CreateTexture2D -> CopyTexture).
         iTJSDispatch2 *graphScratchLayerObject = nullptr;
         tTJSNI_BaseLayer *graphScratchLayer = nullptr;
         static const bool premultipliedSlaEnabled = [] {
@@ -1323,7 +1326,7 @@ namespace motion {
         bool premultipliedSlaActive = premultipliedSlaRequested;
         if(kRenderCommandGraphEnabled) {
             graphScratchLayerObject =
-                ensurePrivateOutputLayer(graphScratchLayerSlot);
+                ensurePrivateOutputLayer(_runtime->scratchWorkLayer);
             graphScratchLayer = resolveNativeLayer(graphScratchLayerObject);
             if(!graphScratchLayerObject || !graphScratchLayer ||
                !prepareLayerForRender(

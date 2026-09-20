@@ -414,7 +414,10 @@ namespace motion::detail {
         // Aligned to libkrkr2.so player+696: internal render layer consumed by
         // sub_6CE7D8 / sub_6CE938 style post-draw update.
         tTJSVariant internalRenderLayer;
-        // Reusable work layer for sub_6C4E28-style per-item local clipping.
+        // Persistent parentless canvas that the accurate-SLA command graph
+        // replays into before the finished frame is copied to the public
+        // render layer. Kept here so the replay surface keeps its image size
+        // across frames.
         tTJSVariant scratchWorkLayer;
         std::array<double, 6> drawAffineMatrix{ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         tjs_int nextLayerId = 1;
