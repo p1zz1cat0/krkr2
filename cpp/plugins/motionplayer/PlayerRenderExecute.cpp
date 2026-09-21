@@ -212,6 +212,15 @@ namespace motion {
         // always uses the REF render-command graph.
         constexpr bool kRenderCommandGraphEnabled = true;
 
+        constexpr bool directPathClipIsHandled(bool scratchCanvasEnabled,
+                                               bool requiresLocalClip) {
+            return scratchCanvasEnabled || !requiresLocalClip;
+        }
+        static_assert(directPathClipIsHandled(false, false));
+        static_assert(!directPathClipIsHandled(false, true));
+        static_assert(directPathClipIsHandled(true, false));
+        static_assert(directPathClipIsHandled(true, true));
+
         // REF renderReuseHashCombine + renderCommandLeafReuseSignature
         // (PlayerRender.cpp 274-454). Exact float hashes are intentional:
         // quantizing animation geometry would freeze sub-pixel eye/hair
@@ -1770,8 +1779,9 @@ namespace motion {
             // clip does that job, so the viewport gate is REF-route only.
             const bool useDirectRenderPath =
                 shouldUseDirectRenderPathLike_0x6C7440(item, _clearEnabled) &&
-                (!scratchCanvasEnabled ||
-                 !itemRequiresLocalClipLike_0x6C7440(item)) &&
+                directPathClipIsHandled(
+                    scratchCanvasEnabled,
+                    itemRequiresLocalClipLike_0x6C7440(item)) &&
                 !hasChildren && item.parentItem == nullptr && !item.skipFlag0 &&
                 !item.rawFlag16 && !(_preview && item.skipFlag1) &&
                 item.opacity > 0;
