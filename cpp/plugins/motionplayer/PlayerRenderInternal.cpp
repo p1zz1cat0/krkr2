@@ -370,14 +370,17 @@ namespace motion::internal::render_detail {
             object->PropSet(TJS_MEMBERENSURE, name, nullptr, &var, object));
     }
 
-    bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
-                               int height, tjs_uint32 clearColor) {
-        return prepareLayerForRender(resolveNativeLayer(layerObject), width,
-                                     height, clearColor);
+    bool sizeLayerForRender(iTJSDispatch2 *layerObject, int width, int height) {
+        return sizeLayerForRender(resolveNativeLayer(layerObject), width,
+                                  height);
     }
 
-    bool prepareLayerForRender(tTJSNI_BaseLayer *layer, int width, int height,
-                               tjs_uint32 clearColor) {
+    // Sizes and clips a layer that the executor will paint, without clearing
+    // it: the frame-start clear belongs to executeLayerRenderCommands (REF
+    // renderMotionFrameToTarget), and an entry point that also cleared here
+    // wrote every target twice per frame. The image only grows, so a surface
+    // reused across canvas sizes keeps its texture.
+    bool sizeLayerForRender(tTJSNI_BaseLayer *layer, int width, int height) {
         if(!layer || width <= 0 || height <= 0) {
             return false;
         }
@@ -394,6 +397,21 @@ namespace motion::internal::render_detail {
         }
         layer->SetSize(width, height);
         layer->SetClip(0, 0, width, height);
+        return true;
+    }
+
+    bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
+                               int height, tjs_uint32 clearColor) {
+        return prepareLayerForRender(resolveNativeLayer(layerObject), width,
+                                     height, clearColor);
+    }
+
+    bool prepareLayerForRender(tTJSNI_BaseLayer *layer, int width, int height,
+                               tjs_uint32 clearColor) {
+        if(!sizeLayerForRender(layer, width, height)) {
+            return false;
+        }
+
         tTVPRect rect(0, 0, width, height);
         layer->FillRect(rect, clearColor);
         return true;

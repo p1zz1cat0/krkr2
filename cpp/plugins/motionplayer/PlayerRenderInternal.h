@@ -40,6 +40,8 @@ namespace motion::internal::render_detail {
                               int &height);
     bool setObjectIntProperty(iTJSDispatch2 *object, const tjs_char *name,
                               tjs_int value);
+    bool sizeLayerForRender(iTJSDispatch2 *layerObject, int width, int height);
+    bool sizeLayerForRender(tTJSNI_BaseLayer *layer, int width, int height);
     bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
                                int height, tjs_uint32 clearColor);
     bool prepareLayerForRender(tTJSNI_BaseLayer *layer, int width, int height,

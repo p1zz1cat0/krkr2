@@ -712,6 +712,51 @@ check(afterAllManagersModule !== data,
     "final owner release allows a fresh parse");
 freshManager.clearCache();
 
+// R03b: the D3DAdaptor route must reach the continuous alpha-mask executor.
+// D3DAdaptor::copyTextureFrom rejects a source texture smaller than the
+// adaptor, so an intermediate layer that lost its canvas size silently
+// degrades the E-mote mask to the binary stencil path. Both mask modes draw
+// the same frame, so identical canvases mean the alpha draw fell back.
+// The shared manager has already dropped its registrations by this point in
+// the fixture, so this route loads the module through its own manager.
+var adaptorManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
+var adaptorModule = adaptorManager.load("../emote/e-mote3.0バニラパジャマa.psb");
+function d3dAdaptorCanvasDigest(maskMode) {
+    var window = new Window();
+    var root = new Layer(window, null);
+    root.setImageSize(1280, 720);
+    root.setSize(1280, 720);
+    root.visible = true;
+    var adaptor = new Motion.D3DAdaptor(window, 1280, 720, 640, 360);
+    adaptor.canvasCaptureEnabled = true;
+    adaptor.clearEnabled = true;
+    adaptor.setClearColor(0x00000000);
+    adaptor.visible = true;
+    var adaptorPlayer = new Motion.EmotePlayer(adaptorManager);
+    adaptorPlayer.maskMode = maskMode;
+    adaptorPlayer.motionKey = Storages.getPlacedPath(
+        "../emote/e-mote3.0バニラパジャマa.psb");
+    adaptorPlayer.chara = adaptorModule.metadata.base.chara;
+    adaptorPlayer.play(adaptorModule.metadata.base.motion,
+        Motion.PlayFlagForce);
+    adaptorPlayer.setCoord(640, 740);
+    adaptorPlayer.setScale(1.0);
+    adaptorPlayer.initPhysics(adaptorModule.metadata);
+    adaptorPlayer.progress(0);
+    adaptorPlayer.draw(adaptor);
+    var capture = new Layer(new Window(), null);
+    capture.setImageSize(1280, 720);
+    capture.setSize(1280, 720);
+    adaptor.captureCanvas(capture);
+    return composedCanvasDigest(capture);
+}
+var d3dAlphaDigest = d3dAdaptorCanvasDigest(Motion.MaskModeAlpha);
+var d3dStencilDigest = d3dAdaptorCanvasDigest(Motion.MaskModeStencil);
+Debug.message("MOTION_D3D_DIGEST alpha=" + d3dAlphaDigest +
+    " stencil=" + d3dStencilDigest);
+check(d3dAlphaDigest != d3dStencilDigest,
+    "D3DAdaptor alpha-mask draw reaches the continuous mask executor");
+
 // R03c: the parsed module identity includes the active decrypt configuration.
 var configManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
 var configModule =

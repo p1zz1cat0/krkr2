@@ -821,9 +821,11 @@ namespace motion {
         iTJSDispatch2 *renderLayerObject = ensureReusableLayerObject(
             _runtime->internalRenderLayer, windowObject, primaryLayerObject,
             static_cast<tTVPLayerType>(ltAlpha), false);
+        // Size only: the executor clears whatever target it paints, so a
+        // clear here would write this layer twice per frame.
         if(!renderLayerObject ||
-           !prepareLayerForRender(renderLayerObject, adaptor->getWidth(),
-                                  adaptor->getHeight(), 0x00000000)) {
+           !sizeLayerForRender(renderLayerObject, adaptor->getWidth(),
+                               adaptor->getHeight())) {
             return false;
         }
         const bool renderCommandsBuilt = commandGraphEnabled()
@@ -1057,17 +1059,19 @@ namespace motion {
                 resolvedLayerObject, static_cast<tTVPLayerType>(ltAlpha),
                 false);
         }
-        if(renderLayerObject != resolvedLayerObject) {
-            if(!prepareLayerForRender(renderLayerObject, canvasWidth,
-                                      canvasHeight, 0x00000000)) {
+        if(renderLayerObject == resolvedLayerObject) {
+            auto *targetLayer = resolveNativeLayer(resolvedLayerObject);
+            if(!targetLayer) {
                 return false;
             }
-        } else if(auto *targetLayer = resolveNativeLayer(resolvedLayerObject)) {
             if(targetLayer->GetWidth() != canvasWidth ||
                targetLayer->GetHeight() != canvasHeight) {
                 targetLayer->SetSize(canvasWidth, canvasHeight);
             }
-        } else {
+        } else if(!sizeLayerForRender(renderLayerObject, canvasWidth,
+                                      canvasHeight)) {
+            // The reusable internal layer is the draw target here; it carries
+            // the canvas size and the executor clears it.
             return false;
         }
 
