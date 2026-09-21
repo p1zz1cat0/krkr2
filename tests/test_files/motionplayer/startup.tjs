@@ -40,6 +40,27 @@ function canvasRasterSamples(source, x0, y0, x1, y1) {
     out.visible = true;
     return hash;
 }
+// Full-canvas fingerprint of a composed target. The 8x8 grid above resolves
+// part identity; this walks every third pixel of the 1280x720 canvas so a
+// stale pixel, a misplaced clip or a spilled direct draw also shows up.
+// Sampling is coarse because the fixture runs this in the TJS interpreter;
+// a one-off comparison can drop the step to 1 for a per-pixel digest.
+function composedCanvasDigest(source) {
+    var out = new Layer(new Window(), null);
+    out.setImageSize(1280, 720);
+    out.setSize(1280, 720);
+    out.piledCopy(0, 0, source, 0, 0, 1280, 720);
+    var hash = 0;
+    for (var y = 0; y < 720; y += 3) {
+        for (var x = 0; x < 1280; x += 3) {
+            // TJS integers are 64 bit, so mask explicitly: an unbounded
+            // accumulator loses its low bits to double precision and stops
+            // reacting to pixel differences.
+            hash = (hash * 31 + out.getMainPixel(x, y)) & 0x7fffffff;
+        }
+    }
+    return hash;
+}
 Plugins.link("motionplayer.dll");
 Plugins.link("emoteplayer.dll");
 
@@ -483,6 +504,80 @@ stackPlayer.draw(stackAdaptor);
 var stableSig2 = canvasRasterSamples(stackRoot, 0, 0, 1280, 720);
 check(stableSig != 0, "stable redraw keeps a non-blank canvas");
 check(stableSig == stableSig2, "identical redraw does not jitter parts");
+
+// SLA canvas fingerprint. The digest is printed so the two executor routes
+// (direct-to-target by default, KRKR_EMOTE_SLA_SCRATCH_CANVAS=1 for the
+// parentless replay canvas) can be compared across two runs of this fixture:
+// diff the MOTION_SLA_CANVAS_DIGEST lines.
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+var slaDigestBaseline = composedCanvasDigest(stackRoot);
+check(slaDigestBaseline != 0,
+    "SLA canvas digest observes the composed frame");
+Debug.message("MOTION_SLA_CANVAS_DIGEST neutral=" + slaDigestBaseline);
+
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+pluginAssertEqual("second identical draw reproduces the canvas",
+    slaDigestBaseline, composedCanvasDigest(stackRoot));
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+pluginAssertEqual("third identical draw reproduces the canvas",
+    slaDigestBaseline, composedCanvasDigest(stackRoot));
+
+// Continuous alpha masks: these players keep the default alpha mask mode,
+// so masked groups composite through coverage rather than the binary
+// stencil queue. A11 below pins the mask-input semantics.
+pluginAssertEqual("stack player uses continuous alpha masks",
+    Motion.MaskModeAlpha, stackPlayer.maskMode);
+
+// Canvas grow and shrink: a render surface that is reused between frames
+// must not carry pixels from a larger frame back into the original size.
+// Both digests are taken at the original size, so part placement is
+// unchanged and any difference is residue. The SLA target is an ltBinder
+// (no main image), so only its geometry size can be resized.
+motionTarget.setSize(1920, 1080);
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+check(composedCanvasDigest(stackRoot) != 0,
+    "grown SLA canvas still renders a frame");
+motionTarget.setSize(1280, 720);
+stackPlayer.progress(0);
+stackPlayer.draw(stackAdaptor);
+var slaDigestRestored = composedCanvasDigest(stackRoot);
+Debug.message("MOTION_SLA_CANVAS_DIGEST restored=" + slaDigestRestored);
+pluginAssertEqual("canvas size restore reproduces the frame",
+    slaDigestBaseline, slaDigestRestored);
+
+// Plain-Layer draw route (no SeparateLayerAdaptor). The executor resets the
+// target it paints instead of compositing into a private canvas and copying
+// the finished frame over it, so a repeated draw must not accumulate the
+// previous frame through the soft alpha edges.
+var plainWindow = new Window();
+var plainRoot = new Layer(plainWindow, null);
+plainRoot.setImageSize(1280, 720);
+plainRoot.setSize(1280, 720);
+plainRoot.visible = true;
+var plainTarget = new Layer(plainWindow, plainRoot);
+plainTarget.setImageSize(1280, 720);
+plainTarget.setSize(1280, 720);
+plainTarget.visible = true;
+var plainPlayer = new Motion.EmotePlayer(manager);
+plainPlayer.motionKey = Storages.getPlacedPath(
+    "../emote/e-mote3.0バニラパジャマa.psb");
+plainPlayer.chara = data.metadata.base.chara;
+plainPlayer.play(data.metadata.base.motion, Motion.PlayFlagForce);
+plainPlayer.setCoord(640, 740);
+plainPlayer.setScale(1.0);
+plainPlayer.progress(0);
+plainPlayer.draw(plainTarget);
+var plainDigestFirst = composedCanvasDigest(plainTarget);
+check(plainDigestFirst != 0, "plain Layer draw reaches the target");
+Debug.message("MOTION_SLA_CANVAS_DIGEST plainLayer=" + plainDigestFirst);
+plainPlayer.progress(0);
+plainPlayer.draw(plainTarget);
+pluginAssertEqual("plain Layer redraw does not accumulate frames",
+    plainDigestFirst, composedCanvasDigest(plainTarget));
 
 // A10: NEKOPARA lip sync writes face_talk every frame through
 // CopyValueAction; a click-skip runs Action.tjs stopAction, which reads the

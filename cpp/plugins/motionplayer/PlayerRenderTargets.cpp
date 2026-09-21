@@ -1346,8 +1346,9 @@ namespace motion {
                                        static_cast<tjs_uint>(canvasHeight));
             privateLayer->SetSize(canvasWidth, canvasHeight);
             privateLayer->SetClip(0, 0, canvasWidth, canvasHeight);
-            privateLayer->FillRect(tTVPRect(0, 0, canvasWidth, canvasHeight),
-                                   0x00000000);
+            // The transparent clear that used to happen here (REF 11283) is
+            // part of the executor's target preparation now, so this entry
+            // point does not clear the canvas twice per frame.
             if(commandGraphEnabled()) {
                 buildRenderCommandGraph(canvasWidth, canvasHeight);
             } else {

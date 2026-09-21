@@ -4,7 +4,6 @@
 #include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
-#include "RenderManager.h"
 #include "SourceCache.h"
 #include <algorithm>
 #include <cstdlib>
@@ -1311,20 +1310,25 @@ namespace motion {
                 item.composedLayer, scratchOwner, scratchParent,
                 static_cast<tTVPLayerType>(ltAlpha), false);
         };
+        // REF executeLayerRenderCommands draws every command straight into the
+        // target Layer and never writes that Layer's clip: a viewport-clipped
+        // command is diverted to a clip-sized composition surface at build
+        // time instead (itemRequiresLocalClipLike_0x6C7440). The fork used to
+        // divert the whole command list into a parentless replay canvas and
+        // composite the finished frame back, only so the per-command clip had
+        // a destination outside the layer tree. That route stays reachable as
+        // an explicit rollback / A-B switch.
+        static const bool scratchCanvasEnabled = [] {
+            const char *value = std::getenv("KRKR_EMOTE_SLA_SCRATCH_CANVAS");
+            return value && value[0] != '\0' && value[0] != '0';
+        }();
         // The replay canvas lives as long as the PlayerRuntime, not the call:
         // a freshly constructed Layer carries the default image size, so
         // prepareLayerForRender had to grow it back to the render-layer canvas
         // on every frame (ChangeImageSize -> CreateTexture2D -> CopyTexture).
         iTJSDispatch2 *graphScratchLayerObject = nullptr;
         tTJSNI_BaseLayer *graphScratchLayer = nullptr;
-        static const bool premultipliedSlaEnabled = [] {
-            const char *value = std::getenv("KRKR_EMOTE_PREMULTIPLIED_SLA");
-            return value && value[0] != '\0' && value[0] != '0';
-        }();
-        const bool premultipliedSlaRequested =
-            premultipliedSlaEnabled && !TVPGetRenderManager()->IsSoftware();
-        bool premultipliedSlaActive = premultipliedSlaRequested;
-        if(kRenderCommandGraphEnabled) {
+        if(scratchCanvasEnabled && kRenderCommandGraphEnabled) {
             graphScratchLayerObject =
                 ensurePrivateOutputLayer(_runtime->scratchWorkLayer);
             graphScratchLayer = resolveNativeLayer(graphScratchLayerObject);
@@ -1580,11 +1584,11 @@ namespace motion {
             };
             return true;
         };
-        // The previous frame leaves the target clip reset. Avoid touching the
-        // primary layer here on the graph path: ResetClip invalidates its
-        // exposed-region tree and costs tens of milliseconds even when no
-        // command has a viewport clip.
-        bool targetLayerClipIsFull = kRenderCommandGraphEnabled;
+        // The legacy replay route bounds a direct draw by writing the command
+        // clip onto the parentless canvas it draws into; writing it onto the
+        // tree-attached target instead invalidates that layer's exposed-region
+        // tree on every command. Only the replay route applies it.
+        bool targetLayerClipIsFull = true;
         auto applyTargetLayerClipLike_0x6C7440 =
             [&](const PreparedRenderItem &item,
                 RenderClipRect &outRect) -> bool {
@@ -1594,16 +1598,31 @@ namespace motion {
                 return false;
             }
 
+            if(!graphScratchLayer) {
+                // REF route: the target Layer clip is never written. A
+                // viewport-clipped command never reaches the direct path
+                // (itemRequiresLocalClipLike_0x6C7440) and is bounded by the
+                // clip-sized surface it composes through; an unclipped command
+                // is bounded by the target image itself.
+                outRect = {
+                    item.clipRect[0],
+                    item.clipRect[1],
+                    item.clipRect[2],
+                    item.clipRect[3],
+                };
+                return true;
+            }
+
             // libkrkr2.so Player_renderToCanvas_guess @ 0x6C77C4..0x6C78DC:
             // set target Layer clip before both direct and composed output. The
             // later operateAffine call still receives the full source rect.
-            auto *clipTarget = graphScratchLayer ? graphScratchLayer : renderLayer;
+            auto *clipTarget = graphScratchLayer;
             if(hasViewportClip) {
                 clipTarget->SetClip(outRect.left, outRect.top,
                                     outRect.right - outRect.left,
                                     outRect.bottom - outRect.top);
                 targetLayerClipIsFull = false;
-            } else if(!kRenderCommandGraphEnabled || !targetLayerClipIsFull) {
+            } else if(!targetLayerClipIsFull) {
                 clipTarget->ResetClip();
                 targetLayerClipIsFull = true;
             }
@@ -1745,8 +1764,14 @@ namespace motion {
                 }
             }
             item.composedBuilt = false;
+            // REF direct/buffered decision (PlayerRender.cpp 7193-7205 and
+            // 10088-10093): a command only reaches the presentation target
+            // directly when nothing clips it. On the replay route the canvas
+            // clip does that job, so the viewport gate is REF-route only.
             const bool useDirectRenderPath =
                 shouldUseDirectRenderPathLike_0x6C7440(item, _clearEnabled) &&
+                (!scratchCanvasEnabled ||
+                 !itemRequiresLocalClipLike_0x6C7440(item)) &&
                 !hasChildren && item.parentItem == nullptr && !item.skipFlag0 &&
                 !item.rawFlag16 && !(_preview && item.skipFlag1) &&
                 item.opacity > 0;
@@ -1800,12 +1825,10 @@ namespace motion {
                     return false;
                 }
                 item.executedDirect = true;
-                item.builtRect = {
-                    directTargetRect.left,
-                    directTargetRect.top,
-                    directTargetRect.right,
-                    directTargetRect.bottom,
-                };
+                // REF records the command's own clip rect for a direct
+                // command (PlayerRender.cpp 10096); nothing composes through
+                // it because a direct command has no output surface.
+                item.builtRect = item.clipRect;
                 return true;
             }
             if(!item.rawFlag21) {
@@ -2058,28 +2081,23 @@ namespace motion {
         } else {
             executionItems = _runtime->preparedRenderItemsTopLevel;
         }
-        // The final replay is the hot path: ltAddAlpha selects the existing
-        // fixed-function source-over methods instead of AlphaBlend_d's
-        // target snapshot. Cached leaf/composite surfaces remain straight
-        // alpha, and one GPU conversion restores the public Layer ABI below.
-        // Photoshop blend modes still depend on straight destination colour,
-        // so a frame containing one keeps the old path intact.
-        if(premultipliedSlaActive) {
-            for(const auto *item : executionItems) {
-                if(item && resolveBlendOperationModeLike_0x6C7440(
-                               item->blendMode) != omAlpha) {
-                    premultipliedSlaActive = false;
-                    break;
-                }
-            }
-        }
-        if(graphScratchLayer) {
-            graphScratchLayer->SetType(
-                premultipliedSlaActive ? ltAddAlpha : ltAlpha);
-        }
+        // Commands paint the presentation target itself: the SLA private
+        // target in normal operation, or the parentless replay canvas on the
+        // legacy route. Straight-alpha Layer semantics apply either way.
+        // REF resets and sizes the target before the command walk
+        // (renderMotionFrameToTarget's prepareLayerForRender). The legacy
+        // route gets that reset when the canvas is prepared above, and the
+        // copy-back then overwrites the target anyway.
         bool outputCopyException = false;
         auto *drawTargetLayer =
             graphScratchLayer ? graphScratchLayer : renderLayer;
+        if(!graphScratchLayer &&
+           !prepareLayerForRender(drawTargetLayer,
+                                  static_cast<int>(renderLayer->GetWidth()),
+                                  static_cast<int>(renderLayer->GetHeight()),
+                                  0x00000000)) {
+            return false;
+        }
 
         for(auto *itemPtr : executionItems) {
             if(!itemPtr) {
@@ -2148,6 +2166,16 @@ namespace motion {
 #endif
                     const bool meshAsAffine = item.meshType == 1 &&
                         item.meshDivX <= 2 && item.meshDivY <= 2;
+                    // REF direct fast path (PlayerRender.cpp 10934-11031):
+                    // a fully opaque source at full opacity only replaces the
+                    // destination, so the per-pixel alpha blend is pure
+                    // overhead. IsOpaque is maintained by the loader and the
+                    // texture backend; sampling alpha would miss sparse
+                    // transparency and let the copy erase what was already
+                    // drawn below.
+                    const bool directCopyWithoutOpacity =
+                        (item.blendMode & 0x0F) == 0 && opa >= 255 &&
+                        source.bitmap->IsOpaque();
                     if(item.meshType == 0 || meshAsAffine) {
                         // Affine only — see the leaf path above: an integer
                         // OperateStretch rect quantises per-component
@@ -2160,9 +2188,18 @@ namespace motion {
                                         "direct.beforeOperateAffine",
                                         "before", "native-operateAffine");
 #endif
-                        operateAffineBitmapWithoutLayerUpdate(
-                            drawTargetLayer, worldPts.data(), source.bitmap.get(),
-                            sourceRect, blendMode, opa, emoteStretchType);
+                        if(directCopyWithoutOpacity) {
+                            branch = "direct.affineCopy";
+                            copyAffineBitmapWithoutLayerUpdate(
+                                drawTargetLayer, worldPts.data(),
+                                source.bitmap.get(), sourceRect,
+                                emoteStretchType);
+                        } else {
+                            operateAffineBitmapWithoutLayerUpdate(
+                                drawTargetLayer, worldPts.data(),
+                                source.bitmap.get(), sourceRect, blendMode,
+                                opa, emoteStretchType);
+                        }
 #if defined(KRKR2_WASMTIME_HEADLESS)
                         if(detail::motionTraceIsAccurateSlaRenderActive()) {
                             if(!renderAccurateSlaPostDrawCandidateLike_0x6C9CA8(
@@ -2190,20 +2227,30 @@ namespace motion {
                         auto worldMeshPoints =
                             buildMeshPoints(item.meshPoints, -0.5f, -0.5f);
                         if(item.meshType == 1 || item.meshType == 2) {
-                            branch = "direct.operateMesh";
+                            auto *meshSource = source.meshImage
+                                ? source.meshImage
+                                : source.image;
+                            branch = directCopyWithoutOpacity
+                                ? "direct.meshCopy"
+                                : "direct.operateMesh";
 #if defined(KRKR2_WASMTIME_HEADLESS)
                             emitDirectProbe(
                                 "Player::executeLayerRenderCommands.direct."
                                 "beforeOperateMesh",
                                 "before");
 #endif
-                            drawTargetLayer->OperateMesh(
-                                worldMeshPoints.data(), item.meshDivX,
-                                item.meshDivY,
-                                source.meshImage ? source.meshImage
-                                                 : source.image,
-                                sourceRect,
-                                blendMode, opa, emoteStretchType, _clearEnabled);
+                            if(directCopyWithoutOpacity) {
+                                drawTargetLayer->MeshCopy(
+                                    worldMeshPoints.data(), item.meshDivX,
+                                    item.meshDivY, meshSource, sourceRect,
+                                    emoteStretchType, _clearEnabled);
+                            } else {
+                                drawTargetLayer->OperateMesh(
+                                    worldMeshPoints.data(), item.meshDivX,
+                                    item.meshDivY, meshSource, sourceRect,
+                                    blendMode, opa, emoteStretchType,
+                                    _clearEnabled);
+                            }
 #if defined(KRKR2_WASMTIME_HEADLESS)
                             emitDirectProbe(
                                 "Player::executeLayerRenderCommands.direct."
@@ -2326,9 +2373,13 @@ namespace motion {
             }
         }
 
-        // libkrkr2.so Player_renderToCanvas_guess @ 0x6C8FCC resets the target
-        // Layer clip once the top-level render-item walk is complete.
+        // Legacy replay route: publish the composed canvas by copying it into
+        // the real target. The REF route paints the target directly, so there
+        // is nothing to convert or copy back here.
         if(graphScratchLayer) {
+            // libkrkr2.so Player_renderToCanvas_guess @ 0x6C8FCC resets the
+            // target Layer clip once the top-level render-item walk is
+            // complete.
             const auto &targetClip = renderLayer->GetClip();
             if(targetClip.left != 0 || targetClip.top != 0 ||
                targetClip.right != static_cast<tjs_int>(renderLayer->GetWidth()) ||
@@ -2338,16 +2389,8 @@ namespace motion {
             const tTVPRect scratchRect(
                 0, 0, static_cast<tjs_int>(graphScratchLayer->GetWidth()),
                 static_cast<tjs_int>(graphScratchLayer->GetHeight()));
-            if(premultipliedSlaActive) {
-                graphScratchLayer->GetMainImage()->ConvertAddAlphaToAlpha();
-            }
             renderLayer->CopyRect(0, 0, graphScratchLayer->GetMainImage(),
                                   nullptr, scratchRect);
-            targetLayerClipIsFull = true;
-        }
-        if(!kRenderCommandGraphEnabled || !targetLayerClipIsFull) {
-            renderLayer->ResetClip();
-            targetLayerClipIsFull = true;
         }
         if(!skipUpdate) {
             renderLayer->Update(false);

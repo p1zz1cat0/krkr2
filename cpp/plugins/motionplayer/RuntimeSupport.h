@@ -414,10 +414,12 @@ namespace motion::detail {
         // Aligned to libkrkr2.so player+696: internal render layer consumed by
         // sub_6CE7D8 / sub_6CE938 style post-draw update.
         tTJSVariant internalRenderLayer;
-        // Persistent parentless canvas that the accurate-SLA command graph
-        // replays into before the finished frame is copied to the public
-        // render layer. Kept here so the replay surface keeps its image size
-        // across frames.
+        // Parentless replay canvas for the legacy accurate-SLA route
+        // (KRKR_EMOTE_SLA_SCRATCH_CANVAS=1), which replays the command graph
+        // into it and then copies the finished frame to the public render
+        // layer. Kept here so the replay surface keeps its image size across
+        // frames. The default route draws straight into the SLA private target
+        // and never touches this slot.
         tTJSVariant scratchWorkLayer;
         std::array<double, 6> drawAffineMatrix{ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         tjs_int nextLayerId = 1;

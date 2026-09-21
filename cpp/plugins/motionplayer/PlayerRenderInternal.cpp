@@ -372,7 +372,12 @@ namespace motion::internal::render_detail {
 
     bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
                                int height, tjs_uint32 clearColor) {
-        auto *layer = resolveNativeLayer(layerObject);
+        return prepareLayerForRender(resolveNativeLayer(layerObject), width,
+                                     height, clearColor);
+    }
+
+    bool prepareLayerForRender(tTJSNI_BaseLayer *layer, int width, int height,
+                               tjs_uint32 clearColor) {
         if(!layer || width <= 0 || height <= 0) {
             return false;
         }
@@ -514,6 +519,41 @@ namespace motion::internal::render_detail {
         return target->GetMainImage()->AffineBlt(
             target->GetClip(), source, sourceRect, points, method, opacity,
             &updateRect, target->GetHoldAlpha(), type);
+    }
+
+    bool copyAffineBitmapWithoutLayerUpdate(
+        tTJSNI_BaseLayer *target, const tTVPPointD *points,
+        iTVPBaseBitmap *source, const tTVPRect &sourceRect,
+        tTVPBBStretchType type) {
+        if(!target || !target->GetMainImage() || !points || !source) {
+            return false;
+        }
+
+        // REF direct.affineCopy (PlayerRender.cpp 10979-10983) routes a fully
+        // opaque source at full opacity through Layer::AffineCopy, which
+        // blits with bmCopy instead of the per-pixel alpha blend. bmCopy
+        // replaces the destination including alpha, so it is only equivalent
+        // while the source really has no partial transparency.
+        tTVPRect updateRect;
+        return target->GetMainImage()->AffineBlt(
+            target->GetClip(), source, sourceRect, points, bmCopy, 255,
+            &updateRect, target->GetHoldAlpha(), type);
+    }
+
+    bool itemRequiresLocalClipLike_0x6C7440(
+        const motion::detail::PlayerRuntime::PreparedRenderItem &item) {
+        // REF buildRenderCommands (PlayerRender.cpp 8167-8171): a viewport
+        // that actually shrinks the paint box makes the command ineligible
+        // for direct target execution. REF then renders it into a scratch
+        // surface sized to clipRect and composes it with an offset
+        // OperateRect, so the executor never has to clip the target Layer.
+        if(!item.hasViewport) {
+            return false;
+        }
+        return item.viewport[0] > item.paintBox[0] + 0.01f ||
+            item.viewport[1] > item.paintBox[1] + 0.01f ||
+            item.viewport[2] < item.paintBox[2] - 0.01f ||
+            item.viewport[3] < item.paintBox[3] - 0.01f;
     }
 
     bool shouldUseDirectRenderPathLike_0x6C7440(

@@ -42,11 +42,15 @@ namespace motion::internal::render_detail {
                               tjs_int value);
     bool prepareLayerForRender(iTJSDispatch2 *layerObject, int width,
                                int height, tjs_uint32 clearColor);
+    bool prepareLayerForRender(tTJSNI_BaseLayer *layer, int width, int height,
+                               tjs_uint32 clearColor);
     std::string summarizeLayerChildren(tTJSNI_BaseLayer *layer,
                                        int maxChildren = 12);
     bool shouldUseDirectRenderPathLike_0x6C7440(
         const motion::detail::PlayerRuntime::PreparedRenderItem &item,
         bool clearEnabled);
+    bool itemRequiresLocalClipLike_0x6C7440(
+        const motion::detail::PlayerRuntime::PreparedRenderItem &item);
 
     tTVPBlendOperationMode
     resolveBlendOperationModeLike_0x6C7440(int rawBlendMode);
@@ -55,6 +59,10 @@ namespace motion::internal::render_detail {
         tTJSNI_BaseLayer *target, const tTVPPointD *points,
         iTVPBaseBitmap *source, const tTVPRect &sourceRect,
         tTVPBlendOperationMode mode, tjs_int opacity,
+        tTVPBBStretchType type);
+    bool copyAffineBitmapWithoutLayerUpdate(
+        tTJSNI_BaseLayer *target, const tTVPPointD *points,
+        iTVPBaseBitmap *source, const tTVPRect &sourceRect,
         tTVPBBStretchType type);
 
     std::array<tTVPPointD, 3>
