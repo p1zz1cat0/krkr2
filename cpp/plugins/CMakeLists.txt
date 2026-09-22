@@ -90,22 +90,16 @@ add_subdirectory(packinone)
 add_subdirectory(extNagano)
 #add_subdirectory(steam)
 #add_subdirectory(DrawDeviceForSteam)
-# Oracle builds swap the emote implementation: linking both would register two
-# Motion classes and the reference would lose the name.
-set(_krkr2plugin_children
+target_link_libraries(${PROJECT_NAME} PUBLIC
         psdfile
         psbfile
         layerExSave
         layerExDraw
         layerExBtoA
+        motionplayer
         fstat
         packinone
-        extNagano)
-if(NOT YOGHOURT_EMOTE_REF_PLUGIN)
-    list(APPEND _krkr2plugin_children motionplayer)
-endif()
-target_link_libraries(${PROJECT_NAME} PUBLIC
-        ${_krkr2plugin_children}
+        extNagano
 #        json steam DrawDeviceForSteam
 )
 
@@ -120,37 +114,3 @@ target_link_libraries(${PROJECT_NAME} PRIVATE spdlog::spdlog)
 # 并提供 ZLIB::ZLIB 导入目标。
 find_package(ZLIB REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
-
-# Optional oracle build (YOGHOURT_EMOTE_REF_PLUGIN at the top level). The
-# reference snapshot registers Motion under emoteplayer.dll; it is an untracked
-# local copy, so this stays off for normal builds and is only enabled in a
-# scratch build directory. Defined here so fmt/spdlog usage requirements are
-# already available. An object library keeps every translation unit linked, and
-# the copy takes its own anchor name because this plugin defines the same symbol
-# in the same binary.
-if(YOGHOURT_EMOTE_REF_PLUGIN)
-    set(_emote_ref_dir "${CMAKE_CURRENT_SOURCE_DIR}/motionplayer/ref")
-    if(NOT EXISTS "${_emote_ref_dir}/main.cpp")
-        message(FATAL_ERROR "YOGHOURT_EMOTE_REF_PLUGIN=ON but ${_emote_ref_dir}/main.cpp is missing")
-    endif()
-    file(GLOB EMOTE_REF_SOURCES "${_emote_ref_dir}/*.cpp")
-    add_library(emoteplayer-ref OBJECT ${EMOTE_REF_SOURCES})
-    # The plugin it replaces is not linked in this configuration, so the
-    # reference keeps the anchor name the internal registry calls.
-    target_include_directories(emoteplayer-ref PRIVATE ${_emote_ref_dir})
-    # Include dirs only: linking psbfile here would close a cycle through the
-    # aggregate (psbfile -> krkr2plugin -> emoteplayer-ref). The runtime link
-    # line already provides the symbols.
-    target_include_directories(emoteplayer-ref PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/xp3filter
-        ${CMAKE_CURRENT_SOURCE_DIR}/common
-        ${CMAKE_CURRENT_SOURCE_DIR}/simplebinder)
-    target_link_libraries(emoteplayer-ref PRIVATE krkr2core fmt::fmt spdlog::spdlog)
-    target_sources(${PROJECT_NAME} PRIVATE $<TARGET_OBJECTS:emoteplayer-ref>)
-    # The snapshot drives desktop-GL entry points such as glClearDepth that the
-    # ANGLE/EGL build does not carry; the framework supplies the symbols.
-    if(APPLE)
-        target_link_libraries(${PROJECT_NAME} PUBLIC "-framework OpenGL")
-    endif()
-endif()
