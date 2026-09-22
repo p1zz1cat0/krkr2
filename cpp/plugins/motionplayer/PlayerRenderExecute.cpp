@@ -1371,6 +1371,45 @@ namespace motion {
                srcImage->GetHeight() <= 0) {
                 return true;
             }
+            // Temporary investigation probe (KRKR_EMOTE_ITEM_GEOM=1): the
+            // source bitmap size versus the quad it is drawn into separates a
+            // geometry error from a wrong-source-variant error.
+            static const bool itemGeomDump = [] {
+                const char *e = std::getenv("KRKR_EMOTE_ITEM_GEOM");
+                return e && e[0] != '\0' && e[0] != '0';
+            }();
+            if(itemGeomDump) {
+                const auto &nodes = _runtime->nodes;
+                const char *label = "<none>";
+                if(item.nodeIndex >= 0 &&
+                   static_cast<size_t>(item.nodeIndex) < nodes.size()) {
+                    label = nodes[static_cast<size_t>(item.nodeIndex)]
+                                .layerName.c_str();
+                }
+                const double srcW = sourceRect.right - sourceRect.left;
+                const double srcH = sourceRect.bottom - sourceRect.top;
+                float minX = 0.0f, maxX = 0.0f, minY = 0.0f, maxY = 0.0f;
+                if(item.corners.size() >= 2) {
+                    minX = maxX = item.corners[0];
+                    minY = maxY = item.corners[1];
+                    for(size_t i = 2; i + 1 < item.corners.size(); i += 2) {
+                        minX = std::min(minX, item.corners[i]);
+                        maxX = std::max(maxX, item.corners[i]);
+                        minY = std::min(minY, item.corners[i + 1]);
+                        maxY = std::max(maxY, item.corners[i + 1]);
+                    }
+                }
+                std::fprintf(
+                    stderr,
+                    "ITEMGEOM label=%s src=%s mesh=%d srcSize=%.0fx%.0f "
+                    "quadSize=%.1fx%.1f ratio=%.3f,%.3f clip=[%d,%d,%d,%d]\n",
+                    label, item.sourceKey.empty() ? "<none>"
+                                                  : item.sourceKey.c_str(),
+                    item.meshType, srcW, srcH, maxX - minX, maxY - minY,
+                    srcW > 0.0 ? (maxX - minX) / srcW : 0.0,
+                    srcH > 0.0 ? (maxY - minY) / srcH : 0.0, item.clipRect[0],
+                    item.clipRect[1], item.clipRect[2], item.clipRect[3]);
+            }
             if(detail::logoSnapshotMarkEnabledForPath(motionPath) &&
                motionPath.find("m2logo.mtn") != std::string::npos &&
                _clampedEvalTime >= 30.0 && _clampedEvalTime <= 50.0) {

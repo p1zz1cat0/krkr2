@@ -29,6 +29,11 @@ project(${APP_NAME})
 
 option(ENABLE_TESTS "enable tests execute build(exclude android)" ON)
 option(BUILD_TOOLS "build tools execute build(exclude android ios)" ON)
+# Oracle build: link the local sdl3-ref snapshot (cpp/plugins/motionplayer/ref)
+# as a second emote implementation selectable with Plugins.link("emoteplayer.dll").
+# The snapshot is an untracked local reference, so this stays OFF for normal
+# builds and is only turned on in a scratch build directory for A/B work.
+option(YOGHOURT_EMOTE_REF_PLUGIN "link the sdl3-ref emote reference for oracle builds" OFF)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
