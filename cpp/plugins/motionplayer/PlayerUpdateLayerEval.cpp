@@ -119,6 +119,32 @@ namespace motion::internal {
             node.interpolatedCache.prtZ = state.prtZ;
             node.interpolatedCache.prtRange = state.prtRange;
             node.prtTrigger = state.prtTrigger;
+            if(node.meshType == 1 && state.visible) {
+                node.meshControlPoints.resize(32);
+                if(state.meshBezierPoints.size() == 32) {
+                    std::transform(state.meshBezierPoints.begin(),
+                                   state.meshBezierPoints.end(),
+                                   node.meshControlPoints.begin(),
+                                   [](double value) {
+                                       return static_cast<float>(value);
+                                   });
+                } else {
+                    for(int y = 0; y < 4; ++y) {
+                        for(int x = 0; x < 4; ++x) {
+                            const size_t point =
+                                static_cast<size_t>(y * 4 + x) * 2;
+                            node.meshControlPoints[point] =
+                                static_cast<float>(x) / 3.0f;
+                            node.meshControlPoints[point + 1] =
+                                static_cast<float>(y) / 3.0f;
+                        }
+                    }
+                }
+            } else {
+                node.meshControlPoints.clear();
+                node.meshRenderPoints.clear();
+                node.meshWorldControlPoints.clear();
+            }
             node.interpolatedCache.ccc_x = state.ccc.x;
             node.interpolatedCache.ccc_y = state.ccc.y;
             node.interpolatedCache.cp_x = state.cp.x;
@@ -685,6 +711,25 @@ namespace motion {
             root.interpolatedCache.packedColors = rootState.packedColors;
             root.interpolatedCache.meshBezierPoints =
                 rootState.meshBezierPoints;
+            if(root.meshType == 1 && rootState.visible) {
+                root.meshControlPoints.resize(32);
+                for(size_t point = 0; point < 16; ++point) {
+                    root.meshControlPoints[point * 2] =
+                        rootState.meshBezierPoints.size() == 32
+                            ? static_cast<float>(
+                                  rootState.meshBezierPoints[point * 2])
+                            : static_cast<float>(point % 4) / 3.0f;
+                    root.meshControlPoints[point * 2 + 1] =
+                        rootState.meshBezierPoints.size() == 32
+                            ? static_cast<float>(
+                                  rootState.meshBezierPoints[point * 2 + 1])
+                            : static_cast<float>(point / 4) / 3.0f;
+                }
+            } else {
+                root.meshControlPoints.clear();
+                root.meshRenderPoints.clear();
+                root.meshWorldControlPoints.clear();
+            }
             copyPackedColorsToBytes(root.colorBytes, rootState.packedColors);
             root.interpolatedCache.hasTransformOrder =
                 rootState.hasTransformOrder;

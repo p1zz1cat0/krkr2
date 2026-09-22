@@ -166,11 +166,11 @@ namespace motion {
                     maxY = y;
             };
 
-            if(!node.meshControlPoints.empty()) {
-                for(size_t pi = 0; pi + 1 < node.meshControlPoints.size();
+            if(!node.meshRenderPoints.empty()) {
+                for(size_t pi = 0; pi + 1 < node.meshRenderPoints.size();
                     pi += 2) {
-                    extendPoint(node.meshControlPoints[pi],
-                                node.meshControlPoints[pi + 1]);
+                    extendPoint(node.meshRenderPoints[pi],
+                                node.meshRenderPoints[pi + 1]);
                 }
             } else if(node.clipW > 0.0 || node.clipH > 0.0) {
                 for(int ci = 0; ci < 4; ++ci) {
@@ -828,11 +828,11 @@ namespace motion {
                 entry.coordinateMode = node.coordinateMode;
                 entry.objTriPriority = node.objTriPriority;
                 entry.visibleAncestorIndex = node.visibleAncestorIndex;
-                const bool warpedQuad = node.meshWarpedQuad &&
-                    node.meshControlPoints.empty();
-                entry.meshType = node.meshWarpedQuad ? 2 : node.meshType;
-                entry.meshDivX = warpedQuad ? 2 : node.meshDivX;
-                entry.meshDivY = warpedQuad ? 2 : node.meshDivY;
+                entry.meshType = node.meshRenderPoints.empty()
+                    ? 0
+                    : (node.meshType == 1 ? 1 : 2);
+                entry.meshDivX = node.meshDivX;
+                entry.meshDivY = node.meshDivY;
             }
 
             // Local scope stamping (REF PlayerUpdateLayers.cpp 5215-5225).
@@ -861,32 +861,13 @@ namespace motion {
                 }
             }
 
-            if(hasOwnSource && !node.meshControlPoints.empty()) {
-                entry.meshPoints.resize(node.meshControlPoints.size());
-                for(size_t pi = 0; pi + 1 < node.meshControlPoints.size();
+            if(hasOwnSource && !node.meshRenderPoints.empty()) {
+                entry.meshPoints.resize(node.meshRenderPoints.size());
+                for(size_t pi = 0; pi + 1 < node.meshRenderPoints.size();
                     pi += 2) {
                     const auto pt =
-                        transformPoint(node.meshControlPoints[pi],
-                                       node.meshControlPoints[pi + 1]);
-                    entry.meshPoints[pi] = static_cast<float>(pt.x);
-                    entry.meshPoints[pi + 1] = static_cast<float>(pt.y);
-                    updatePaintBox(entry, pt.x, pt.y, !havePaintBox);
-                    havePaintBox = true;
-                }
-            }
-
-            if(hasOwnSource && node.meshWarpedQuad &&
-               node.meshControlPoints.empty()) {
-                const std::array<float, 8> corners = {
-                    node.vertices[0], node.vertices[1], node.vertices[2],
-                    node.vertices[3], node.vertices[4], node.vertices[5],
-                    node.vertices[6], node.vertices[7]
-                };
-                const auto points = detail::quadCornersToMeshPoints(corners);
-                entry.meshPoints.assign(points.begin(), points.end());
-                for(size_t pi = 0; pi + 1 < entry.meshPoints.size(); pi += 2) {
-                    const auto pt = transformPoint(entry.meshPoints[pi],
-                                                   entry.meshPoints[pi + 1]);
+                        transformPoint(node.meshRenderPoints[pi],
+                                       node.meshRenderPoints[pi + 1]);
                     entry.meshPoints[pi] = static_cast<float>(pt.x);
                     entry.meshPoints[pi + 1] = static_cast<float>(pt.y);
                     updatePaintBox(entry, pt.x, pt.y, !havePaintBox);

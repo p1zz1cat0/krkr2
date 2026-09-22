@@ -95,11 +95,11 @@ namespace motion::detail {
         // merges. Same length as stencilCompositeMaskNodeIndices on every
         // path that appends here.
         std::vector<std::pair<int, const void *>> stencilCompositeMaskOwners;
-        bool meshCombineAuthored = false; // PSB "meshCombine"
         bool meshCombineEnabled =
             false; // node+1963: mesh combines with children
-        int meshParentIndex = -1; // nearest node+0x636 mesh ancestor
-        bool meshWarpedQuad = false; // meshType=0 leaf uses an external mesh
+        // node+1968 is the inherited mesh chain. It is distinct from the
+        // shape/stencil clip ancestry above.
+        int meshAncestorIndex = -1;
         // libkrkr2.so seeds node+52 from PSB "stencilType" in
         // Player_initNodeFields (0x6B3C78) and later runtime stages only read
         // the field; they do not rebuild it from frame state.
@@ -112,12 +112,13 @@ namespace motion::detail {
         int lastActiveMotionFlags = 0;
         std::string lastActiveMotionDtgt;
 
-        // Mesh control points (node+2024..2032 in libkrkr2.so).
-        // For meshType=1: 16 × 2 floats (Bezier patch 4×4 control grid) = 32
-        // floats. For meshType=2: (divX+1)*(divY+1)*2 floats (grid mesh). Built
-        // by sub_6BC4F0 vertex computation.
-        std::vector<float> meshControlPoints; // node+2024
-        std::vector<float> meshControlPointsPrev; // node+2048 (previous frame)
+        // The native node owns three different vectors. The authored unit
+        // patch must not be overwritten with either world-space control
+        // points or the dense render grid: doing so applies deformation in
+        // the wrong coordinate space and changes the character proportions.
+        std::vector<float> meshControlPoints; // node+2024, 16 unit XY pairs
+        std::vector<float> meshRenderPoints; // node+2048, dense world XY pairs
+        std::vector<float> meshWorldControlPoints; // node+2072, 16 world pairs
 
         // emoteEdit PSB dict reference (node+1980, sub_6B3C78 at 0x6B3D48)
         std::shared_ptr<const PSB::PSBDictionary> emoteEditDict;

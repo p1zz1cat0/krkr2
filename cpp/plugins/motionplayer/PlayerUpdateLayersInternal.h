@@ -365,8 +365,9 @@ namespace {
     // Bezier patch. Called from Player_updateLayers at 0x6BB714 when
     // parent.meshType != 0.
     //
-    // Child positions stay parent-local. Only content.mesh.bp (unit 4×4)
-    // drives the surface sample — dense meshControlPoints is draw geometry.
+    // Child positions stay parent-local. Only the authored unit-space 4×4
+    // patch drives this surface sample; dense draw geometry lives in the
+    // separate meshRenderPoints buffer.
     inline void sub_69AE74_meshDeform(const motion::detail::MotionNode &parent,
                                       motion::detail::MotionNode &node) {
         if(parent.meshType != 1 || (parent.meshFlags & 1) == 0 ||

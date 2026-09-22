@@ -708,7 +708,9 @@ namespace motion {
                 // frameProgress+updateLayers。
                 if(emoteLike) {
                     child._externalMeshParents.clear();
-                    int meshParentIndex = mn.meshParentIndex;
+                    int meshParentIndex = mn.meshCombineEnabled
+                        ? static_cast<int>(i)
+                        : mn.meshAncestorIndex;
                     for(int guard = 0;
                         meshParentIndex >= 0 &&
                             meshParentIndex < static_cast<int>(nodes.size()) &&
@@ -717,10 +719,10 @@ namespace motion {
                         const auto &meshParent = nodes[static_cast<size_t>(
                             meshParentIndex)];
                         child._externalMeshParents.push_back(&meshParent);
-                        if(meshParent.meshParentIndex == meshParentIndex) {
+                        if(meshParent.meshAncestorIndex == meshParentIndex) {
                             break;
                         }
-                        meshParentIndex = meshParent.meshParentIndex;
+                        meshParentIndex = meshParent.meshAncestorIndex;
                     }
                     // Preserve the full nearest-to-farthest chain across
                     // nested Players. The child first traverses this Player's
