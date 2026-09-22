@@ -378,24 +378,24 @@ namespace motion::internal::render_detail {
     // Sizes and clips a layer that the executor will paint, without clearing
     // it: the frame-start clear belongs to executeLayerRenderCommands (REF
     // renderMotionFrameToTarget), and an entry point that also cleared here
-    // wrote every target twice per frame. The image only grows, so a surface
-    // reused across canvas sizes keeps its texture.
+    // wrote every target twice per frame.
+    //
+    // Order matters: SetSize grows an existing image (grow-only) and a layer
+    // without an image allocates at the Rect it already has, so sizing before
+    // SetHasImage turns the "default-size create, then grow-clone" pair into a
+    // single allocation at the final size. A fresh player pays that pair once
+    // per drawable part on its first frame, which is the ~25 ms draw measured
+    // after a character/motion switch. Do not move SetSize back below
+    // SetHasImage.
     bool sizeLayerForRender(tTJSNI_BaseLayer *layer, int width, int height) {
         if(!layer || width <= 0 || height <= 0) {
             return false;
         }
 
+        layer->SetSize(width, height);
         if(!layer->GetHasImage()) {
             layer->SetHasImage(true);
         }
-        const int imageWidth = static_cast<int>(layer->GetImageWidth());
-        const int imageHeight = static_cast<int>(layer->GetImageHeight());
-        if(imageWidth < width || imageHeight < height) {
-            layer->SetImageSize(
-                static_cast<tjs_uint>(std::max(imageWidth, width)),
-                static_cast<tjs_uint>(std::max(imageHeight, height)));
-        }
-        layer->SetSize(width, height);
         layer->SetClip(0, 0, width, height);
         return true;
     }

@@ -579,6 +579,17 @@ plainPlayer.draw(plainTarget);
 pluginAssertEqual("plain Layer redraw does not accumulate frames",
     plainDigestFirst, composedCanvasDigest(plainTarget));
 
+// A rebind (load + play) drops every cached command signature while keeping the
+// command Layers as scratch surfaces. The next frame must reproduce the same
+// canvas instead of presenting a retained layer as a cache hit, so this pins
+// the invalidation that lets the executor keep its allocations.
+plainPlayer.load(data);
+plainPlayer.play(data.metadata.base.motion, Motion.PlayFlagForce);
+plainPlayer.progress(0);
+plainPlayer.draw(plainTarget);
+pluginAssertEqual("rebind reuses command layers without stale pixels",
+    plainDigestFirst, composedCanvasDigest(plainTarget));
+
 // A10: NEKOPARA lip sync writes face_talk every frame through
 // CopyValueAction; a click-skip runs Action.tjs stopAction, which reads the
 // variable and writes it back. The talk input must still open the mouth, but
