@@ -1227,14 +1227,25 @@ namespace motion {
                     const double lm21 = localAffine[1];
                     const double lm12 = localAffine[2];
                     const double lm22 = localAffine[3];
-                    node.accumulated.m11 = rootNode.accumulated.m11 * lm11 +
-                        rootNode.accumulated.m12 * lm21;
-                    node.accumulated.m21 = rootNode.accumulated.m21 * lm11 +
-                        rootNode.accumulated.m22 * lm21;
-                    node.accumulated.m12 = rootNode.accumulated.m11 * lm12 +
-                        rootNode.accumulated.m12 * lm22;
-                    node.accumulated.m22 = rootNode.accumulated.m21 * lm12 +
-                        rootNode.accumulated.m22 * lm22;
+                    // Geometry composes against the PARENT matrix, not the
+                    // root's. The scalar accumulators above already undo and
+                    // re-apply the root contribution for this partial-inherit
+                    // case, but the part's own quad still carries every
+                    // ancestor between the root and this node — that is what
+                    // makes a face/glyph layer keep the authored size when it
+                    // omits the scale bits while its position still follows
+                    // them (REF PlayerUpdateLayers Phase D 0x6BBA24, M2 glyph
+                    // comment). Composing against the root dropped the
+                    // intermediate scales, so head and face layers rendered at
+                    // the wrong size.
+                    node.accumulated.m11 = parent.accumulated.m11 * lm11 +
+                        parent.accumulated.m12 * lm21;
+                    node.accumulated.m21 = parent.accumulated.m21 * lm11 +
+                        parent.accumulated.m22 * lm21;
+                    node.accumulated.m12 = parent.accumulated.m11 * lm12 +
+                        parent.accumulated.m12 * lm22;
+                    node.accumulated.m22 = parent.accumulated.m21 * lm12 +
+                        parent.accumulated.m22 * lm22;
                 }
             }
 
