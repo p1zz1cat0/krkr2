@@ -579,10 +579,10 @@ plainPlayer.draw(plainTarget);
 pluginAssertEqual("plain Layer redraw does not accumulate frames",
     plainDigestFirst, composedCanvasDigest(plainTarget));
 
-// A rebind (load + play) drops every cached command signature while keeping the
-// command Layers as scratch surfaces. The next frame must reproduce the same
-// canvas instead of presenting a retained layer as a cache hit, so this pins
-// the invalidation that lets the executor keep its allocations.
+// A rebind (load + play) drops the cached command layers. The next frame must
+// reproduce the same canvas instead of presenting whatever those layers held,
+// so this pins the invalidation that keeps node-index reuse from leaking the
+// previous motion's pixels.
 plainPlayer.load(data);
 plainPlayer.play(data.metadata.base.motion, Motion.PlayFlagForce);
 plainPlayer.progress(0);

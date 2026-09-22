@@ -251,24 +251,9 @@ namespace motion {
                 : detail::ScreenSize{};
             // Node indices are reused after every motion rebuild. Retained
             // command layers must not become the next motion's pixels merely
-            // because source and geometry happen to match, so every entry
-            // loses its validity and signatures. The Layer objects stay: the
-            // slots are keyed by (runtime, node index) and a rebind that keeps
-            // them skips one TJS Layer plus its texture allocations per
-            // drawable part. Unused entries are pruned by the existing
-            // generation GC.
-            for(auto &cacheEntry : runtime.emoteCommandOutputCache) {
-                auto &entry = cacheEntry.second;
-                entry.leafValid = false;
-                entry.outputValid = false;
-                entry.maskValid = false;
-                entry.leafBuilt = false;
-                entry.composedBuilt = false;
-                entry.leafSignature = 0;
-                entry.outputSignature = 0;
-                entry.maskSignature = 0;
-                entry.lastUseGeneration = 0;
-            }
+            // because source and geometry happen to match, so the entry is
+            // dropped whole.
+            runtime.emoteCommandOutputCache.clear();
             runtime.emoteCommandOutputCacheGeneration = 0;
             runtime.emoteCommandOutputCacheHits = 0;
             runtime.emoteCommandLeafCacheHits = 0;
