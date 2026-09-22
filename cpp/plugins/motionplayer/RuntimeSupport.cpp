@@ -87,6 +87,118 @@ namespace motion::detail {
             }
         }
 
+        // Session-scoped retention. The game constructs a fresh ResourceManager
+        // per KAG layer transfer and drops the old one, so an index that only
+        // lives as long as its owners made every re-appearance re-parse the
+        // same PSB (NEKOPARA Vol.1 re-parsed one path nine times in a single
+        // scene: ~60 ms of PSB parse plus a full clip/node init on the render
+        // thread, per appearance). Retained entries are bounded by
+        // kRetainedSnapshotLimit, least recently used first, and every entry
+        // whose decrypt configuration is no longer current is dropped because
+        // its bytes were decoded under a different seed/callback.
+        constexpr std::size_t kRetainedSnapshotLimit = 8;
+
+        std::vector<std::string> &snapshotRetentionOrder() {
+            static std::vector<std::string> order;
+            return order;
+        }
+
+        void touchRetainedSnapshotLocked(const std::string &cacheKey) {
+            auto &order = snapshotRetentionOrder();
+            order.erase(std::remove(order.begin(), order.end(), cacheKey),
+                        order.end());
+            order.insert(order.begin(), cacheKey);
+        }
+
+        std::size_t snapshotOwnerCount(const iTJSDispatch2 *object) {
+            const auto it = snapshotOwnerCounts().find(object);
+            return it == snapshotOwnerCounts().end() ? 0u : it->second;
+        }
+
+        // seed + decrypt-configuration generation, i.e. the cache key without
+        // the path. Entries sharing it can reuse bytes across paths.
+        std::string
+        snapshotConfigurationPrefix(const std::string &cacheKey) {
+            const auto seedEnd = cacheKey.find('\n');
+            if(seedEnd == std::string::npos) {
+                return cacheKey;
+            }
+            const auto generationEnd = cacheKey.find('\n', seedEnd + 1);
+            return generationEnd == std::string::npos
+                ? cacheKey
+                : cacheKey.substr(0, generationEnd + 1);
+        }
+
+        bool snapshotIsRetainable(const std::string &cacheKey) {
+            const auto it = snapshotPathIndex().find(cacheKey);
+            if(it == snapshotPathIndex().end() || !it->second ||
+               it->second->moduleValue.Type() != tvtObject) {
+                return false;
+            }
+            auto *object = it->second->moduleValue.AsObjectNoAddRef();
+            return object != nullptr && snapshotOwnerCount(object) == 0;
+        }
+
+        void dropRetainedSnapshotLocked(const std::string &cacheKey) {
+            auto &order = snapshotRetentionOrder();
+            order.erase(std::remove(order.begin(), order.end(), cacheKey),
+                        order.end());
+            auto &index = snapshotPathIndex();
+            const auto it = index.find(cacheKey);
+            if(it == index.end()) {
+                return;
+            }
+            const auto snapshot = it->second;
+            index.erase(it);
+            if(snapshot && snapshot->moduleValue.Type() == tvtObject) {
+                if(auto *object = snapshot->moduleValue.AsObjectNoAddRef()) {
+                    if(snapshotOwnerCount(object) == 0) {
+                        snapshotRegistry().erase(object);
+                        snapshotOwnerCounts().erase(object);
+                    }
+                }
+            }
+        }
+
+        void
+        evictRetainedSnapshotsLocked(const std::string &configurationPrefix) {
+            std::vector<std::string> doomed;
+            std::size_t kept = 0;
+            for(const auto &cacheKey : snapshotRetentionOrder()) {
+                const auto it = snapshotPathIndex().find(cacheKey);
+                if(it == snapshotPathIndex().end() || !it->second) {
+                    doomed.push_back(cacheKey); // unregistered elsewhere
+                    continue;
+                }
+                if(!snapshotIsRetainable(cacheKey)) {
+                    continue; // still owned by a live manager
+                }
+                const bool currentConfiguration =
+                    cacheKey.compare(0, configurationPrefix.size(),
+                                     configurationPrefix) == 0;
+                if(!currentConfiguration || kept >= kRetainedSnapshotLimit) {
+                    doomed.push_back(cacheKey);
+                } else {
+                    ++kept;
+                }
+            }
+            for(const auto &cacheKey : doomed) {
+                dropRetainedSnapshotLocked(cacheKey);
+            }
+        }
+
+        void touchSnapshotPathEntries(
+            const std::shared_ptr<MotionSnapshot> &snapshot) {
+            if(!snapshot) {
+                return;
+            }
+            for(const auto &[cacheKey, indexed] : snapshotPathIndex()) {
+                if(indexed == snapshot) {
+                    touchRetainedSnapshotLocked(cacheKey);
+                }
+            }
+        }
+
         struct LogoChainTraceSession {
             std::uint64_t sequence = 0;
             std::string motionPath;
@@ -147,6 +259,7 @@ namespace motion::detail {
             std::lock_guard lock(snapshotRegistryMutex());
             if(const auto it = snapshotPathIndex().find(cacheKey);
                it != snapshotPathIndex().end()) {
+                touchRetainedSnapshotLocked(cacheKey);
                 return it->second;
             }
 
@@ -154,6 +267,8 @@ namespace motion::detail {
             snapshotRegistry()[object] = snapshot;
             snapshotOwnerCounts().try_emplace(object, 0);
             snapshotPathIndex()[cacheKey] = snapshot;
+            touchRetainedSnapshotLocked(cacheKey);
+            evictRetainedSnapshotsLocked(snapshotConfigurationPrefix(cacheKey));
             return snapshot;
         }
 
@@ -1624,6 +1739,7 @@ namespace motion::detail {
             if(const auto it = snapshotPathIndex().find(cacheKey);
                it != snapshotPathIndex().end()) {
                 indexedSnapshot = it->second;
+                touchRetainedSnapshotLocked(cacheKey);
             }
         }
         if(indexedSnapshot) {
@@ -1856,11 +1972,22 @@ namespace motion::detail {
             --ownerIt->second;
             return;
         }
+        if(ownerIt == snapshotOwnerCounts().end() || ownerIt->second == 0) {
+            // Already released: the parse is retained for the next layer
+            // transfer, so there is nothing left to drop here.
+            return;
+        }
 
-        const auto snapshot = registryIt->second;
-        snapshotRegistry().erase(registryIt);
-        snapshotOwnerCounts().erase(object);
-        eraseSnapshotPathEntries(snapshot);
+        // Retain the parse instead of dropping it. The game rebuilds its KAG
+        // layers (and therefore its managers) on every transfer, so dropping
+        // the entry here made each re-appearance re-parse the PSB and redo the
+        // full clip/node init on the render thread. The registry entry stays
+        // too, so a caller still holding the module object keeps resolving it
+        // through lookupModuleSnapshot. Retention is bounded by
+        // kRetainedSnapshotLimit (LRU, evicted on publish) and by decrypt
+        // configuration changes.
+        ownerIt->second = 0;
+        touchSnapshotPathEntries(registryIt->second);
     }
 
     std::shared_ptr<MotionSnapshot>
@@ -1895,6 +2022,7 @@ namespace motion::detail {
         snapshotRegistry().clear();
         snapshotOwnerCounts().clear();
         snapshotPathIndex().clear();
+        snapshotRetentionOrder().clear();
     }
 
     tTJSVariant makeArray(const std::vector<tTJSVariant> &items) {

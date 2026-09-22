@@ -685,8 +685,11 @@ check(!player.contains(hitX, hitY),
     "contains no longer reports the pre-transform position");
 
 // R03b: one manager may release its cache while another manager still owns the
-// same indexed snapshot. The surviving module must stay usable, and only the
-// final owner release should make a later load parse a new module.
+// same indexed snapshot. The surviving module must stay usable, and the parse
+// itself is retained for the session: the game builds a fresh ResourceManager
+// per KAG layer transfer and drops the old one, so an owner-scoped index made
+// every re-appearance re-parse the same PSB. Only a decrypt configuration
+// change forces a new parse (R03c/R03d).
 var evictManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
 var evictModule = evictManager.load("../emote/e-mote3.0バニラパジャマa.psb");
 check(evictModule === data, "new manager reuses the parsed module");
@@ -708,9 +711,13 @@ evictManager.unloadAll();
 var freshManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
 var afterAllManagersModule =
     freshManager.load("../emote/e-mote3.0バニラパジャマa.psb");
-check(afterAllManagersModule !== data,
-    "final owner release allows a fresh parse");
+check(afterAllManagersModule === data,
+    "the released parse stays indexed for the rest of the session");
 freshManager.clearCache();
+var laterManager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
+check(laterManager.load("../emote/e-mote3.0バニラパジャマa.psb") === data,
+    "a manager created after the release reuses the retained parse");
+laterManager.clearCache();
 
 // R03b: the D3DAdaptor route must reach the continuous alpha-mask executor.
 // D3DAdaptor::copyTextureFrom rejects a source texture smaller than the
