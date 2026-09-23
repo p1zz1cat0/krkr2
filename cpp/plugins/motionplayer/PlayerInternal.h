@@ -1200,7 +1200,17 @@ namespace motion {
 
             if(mask & 0x02000000) {
                 if(auto mesh = psbDictionaryValue(content, "mesh")) {
-                    if(auto points = psbDictionaryList(mesh, "bp")) {
+                    // e-mote3.0 frames author the Bezier patch under "bp", and
+                    // older/compact frames under "b"; Aether's public fallback
+                    // reads both. Reading only "bp" left every head/body mesh
+                    // ancestor on the unit patch, so inherited deformations
+                    // evaluated to the identity and the drawn parts kept their
+                    // undeformed placement.
+                    auto points = psbDictionaryList(mesh, "bp");
+                    if(!points) {
+                        points = psbDictionaryList(mesh, "b");
+                    }
+                    if(points) {
                         state.meshBezierPoints.reserve(points->size());
                         for(size_t index = 0; index < points->size(); ++index) {
                             if(auto value = psbNumberValue((*points)[index])) {

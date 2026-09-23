@@ -365,27 +365,23 @@ namespace {
     // Bezier patch. Called from Player_updateLayers at 0x6BB714 when
     // parent.meshType != 0.
     //
-    // Child positions stay parent-local. Only the authored unit-space 4×4
-    // patch drives this surface sample; dense draw geometry lives in the
+    // Ported verbatim from the Aether public fallback (PlayerUpdateLayers.cpp
+    // "sub_69AE74: Mesh position deformation"): the surface sample is the
+    // parent's authored unit patch (`meshControlPoints`, 16 normalized XY
+    // pairs), the normalization only folds in the parent's own origin — not
+    // the parent's clip origin — the deformed coordinate is the sample point
+    // for the gradient/jacobian blocks, and the result always lands on posY.
+    // Child positions stay parent-local; dense draw geometry lives in the
     // separate meshRenderPoints buffer.
     inline void sub_69AE74_meshDeform(const motion::detail::MotionNode &parent,
                                       motion::detail::MotionNode &node) {
         if(parent.meshType != 1 || (parent.meshFlags & 1) == 0 ||
-           !parent.accumulated.active || !parent.hasSource)
+           !node.accumulated.active || !node.hasSource)
             return;
-        if(parent.interpolatedCache.meshBezierPoints.size() != 32)
-            return;
-        const double slotOX = parent.activeSlot().ox;
-        const double slotOY = parent.activeSlot().oy;
-        const double totalOX = slotOX + parent.originX;
-        const double totalOY = slotOY + parent.originY;
         const double pw = parent.clipW > 0.0 ? parent.clipW : 1.0;
         const double ph = parent.clipH > 0.0 ? parent.clipH : 1.0;
-        const double childSecondary = parent.coordinateMode != 0
-            ? node.accumulated.posZ
-            : node.accumulated.posY;
-        const double normX = (node.accumulated.posX + totalOX) / pw;
-        const double normY = (childSecondary + totalOY) / ph;
+        const double normX = (node.accumulated.posX + parent.originX) / pw;
+        const double normY = (node.accumulated.posY + parent.originY) / ph;
 
         auto evalBezierPatch = [](const float *mesh, float u, float v,
                                   float &outX, float &outY) {
@@ -403,33 +399,24 @@ namespace {
             }
         };
 
-        std::array<float, 32> unitPatch{};
-        for(size_t i = 0; i < 32; ++i) {
-            unitPatch[i] = static_cast<float>(
-                parent.interpolatedCache.meshBezierPoints[i]);
-        }
-        const float *sampleMesh = unitPatch.data();
+        if(parent.meshControlPoints.size() < 32)
+            return;
+        const float *mesh = parent.meshControlPoints.data();
 
         float defX = static_cast<float>(normX);
         float defY = static_cast<float>(normY);
-        evalBezierPatch(sampleMesh, defX, defY, defX, defY);
-        node.accumulated.posX = static_cast<double>(defX) * pw - totalOX;
-        if(parent.coordinateMode != 0) {
-            node.accumulated.posZ = static_cast<double>(defY) * ph - totalOY;
-        } else {
-            node.accumulated.posY = static_cast<double>(defY) * ph - totalOY;
-        }
+        evalBezierPatch(mesh, defX, defY, defX, defY);
+        node.accumulated.posX = static_cast<double>(defX) * pw - parent.originX;
+        node.accumulated.posY = static_cast<double>(defY) * ph - parent.originY;
 
         if((parent.meshFlags & 2) != 0 && (node.inheritFlags & 0x10) != 0) {
             const float eps = 0.0001f;
             float x1, y1, x2, y2, x3, y3, x4, y4;
-            // Sample around the pre-deform unit coords for a local jacobian.
-            const float su = static_cast<float>(normX);
-            const float sv = static_cast<float>(normY);
-            evalBezierPatch(sampleMesh, su - eps, sv, x1, y1);
-            evalBezierPatch(sampleMesh, su + eps, sv, x2, y2);
-            evalBezierPatch(sampleMesh, su, sv - eps, x3, y3);
-            evalBezierPatch(sampleMesh, su, sv + eps, x4, y4);
+            // Sample the same already-deformed coordinates as the native path.
+            evalBezierPatch(mesh, defX - eps, defY, x1, y1);
+            evalBezierPatch(mesh, defX + eps, defY, x2, y2);
+            evalBezierPatch(mesh, defX, defY - eps, x3, y3);
+            evalBezierPatch(mesh, defX, defY + eps, x4, y4);
             double a1 = std::atan2(static_cast<double>(y3 - y4),
                                    static_cast<double>(x4 - x3));
             double a2 = std::atan2(static_cast<double>(x2 - x1),
@@ -440,12 +427,10 @@ namespace {
         if((parent.meshFlags & 4) != 0 && (node.inheritFlags & 0x60) != 0) {
             const float eps = 0.0001f;
             float x1, y1, x2, y2, x3, y3, x4, y4;
-            const float su = static_cast<float>(normX);
-            const float sv = static_cast<float>(normY);
-            evalBezierPatch(sampleMesh, su - eps, sv, x1, y1);
-            evalBezierPatch(sampleMesh, su + eps, sv, x2, y2);
-            evalBezierPatch(sampleMesh, su, sv - eps, x3, y3);
-            evalBezierPatch(sampleMesh, su, sv + eps, x4, y4);
+            evalBezierPatch(mesh, defX - eps, defY, x1, y1);
+            evalBezierPatch(mesh, defX + eps, defY, x2, y2);
+            evalBezierPatch(mesh, defX, defY - eps, x3, y3);
+            evalBezierPatch(mesh, defX, defY + eps, x4, y4);
             double dx1 = x2 - x1;
             double dy1 = y2 - y1;
             double area1 = std::fabs(dx1 * (y4 - y1) - dy1 * (x4 - x1)) * 0.5;

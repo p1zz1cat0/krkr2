@@ -591,8 +591,15 @@ namespace motion::detail {
                                 dictionaryString(frameDic,
                                                  { "label", "name", "id" })
                                     .value_or(std::to_string(frameIndex));
+                            // e-mote3.0 PSBs author the variable frame value
+                            // under "value"; Aether's public fallback reads
+                            // {"frame","f","value"}. Reading "f" alone left
+                            // every authored variable frame at 0, so motions
+                            // that animate variables (head/body/face axes)
+                            // never moved.
                             const double frameValue =
-                                dictionaryNumber(frameDic, { "f" })
+                                dictionaryNumber(frameDic,
+                                                 { "frame", "f", "value" })
                                     .value_or(0.0);
                             frames.push_back({ frameLabel, frameValue });
                             minValue = std::min(minValue, frameValue);
