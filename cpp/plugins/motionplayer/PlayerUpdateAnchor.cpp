@@ -1,6 +1,4 @@
 // PlayerUpdateAnchor.cpp — updateLayers anchor node phase
-// Split from PlayerUpdateLayers.cpp for maintainability.
-//
 #include "PlayerUpdateLayersInternal.h"
 
 namespace motion {

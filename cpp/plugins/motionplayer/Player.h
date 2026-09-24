@@ -374,9 +374,9 @@ namespace motion {
         tjs_int getTimelineTotalFrameCount(ttstr label);
         void playTimeline(ttstr label, tjs_int flags);
         void stopTimeline(ttstr label);
-        // A08: set the explicit loop override for a timeline (consumed by
-        // frame wrapping and serialized timeline state). Unknown labels are
-        // ignored here; playTimeline logs its own lookup failure.
+        // Explicit timeline loop overrides affect frame wrapping and serialized
+        // timeline state. Unknown labels are ignored here; playTimeline logs its
+        // own lookup failure.
         void setTimelineLoop(ttstr label, bool loop);
         void setTimelineBlendRatio(ttstr label, double ratio);
         // Full-arity form matching the M2 contract:
@@ -518,14 +518,10 @@ namespace motion {
         void resetNodeTreeForBuildLike_0x6B56F8();
         // Aligned to libkrkr2.so Player_initVariables (0x6CD750). Writes the
         // Player+1296 std::vector<LabelEntry> from PSB content["variable"].
-        // Currently a placeholder; real implementation lands with the
-        // std::vector<VariableLabelEntry> field (see RuntimeSupport.h).
         void initVariables();
-        // F03: single-shot default-parameter binding at init. Nodes without
-        // their own parameterize get the clip's default parameter axis here —
-        // the only second channel besides node-level parameterize. Phase2
-        // must not re-resolve it per frame (playing-timeline clip changes
-        // would silently rebind axes mid-play).
+        // Bind the clip's default parameter axis once during initialization for
+        // nodes without their own parameterize. Keep the axis fixed for the
+        // playback session.
         void bindDefaultParameterEntriesLike_sdl3();
         friend void
         detail::buildNodeTree(detail::PlayerRuntime &runtime,
@@ -847,12 +843,8 @@ namespace motion {
         // - written from Player_playImpl / load-motion result path
         // - propagated to child particle players (sub_6BF0DC at 0x6BF9C0)
         // - copied into render item +248 by sub_6C2334
-        // Its exact semantic name is still under investigation, so keep the
-        // local field neutral instead of claiming it is emoteEdit-specific.
-        // libkrkr2.so player+1012:
-        // second result returned by Player_loadMotion / Player_playImpl and
-        // then fed back into Player_loadMotion as the first argument to
-        // "findMotion" (0x6B0F10 / 0x6B2284), including child-player copies.
+        // Neutral local field for the second result of Player_loadMotion /
+        // Player_playImpl; child-player copies pass it back to findMotion.
         tTJSVariant _findMotionContextVariant; // player+1012
     };
 

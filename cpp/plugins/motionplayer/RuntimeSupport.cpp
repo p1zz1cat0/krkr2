@@ -53,10 +53,9 @@ namespace motion::detail {
         // Process-global index from (placed storage path, decrypt
         // configuration) back to the parsed snapshot. The registry and this
         // index remain reachable while any ResourceManager State owns the
-        // module; the last owner release drops both. Necessary because the
-        // game constructs a fresh ResourceManager per KAG layer transfer
-        // (NEKOPARA's AffineSourceMotion), and a per-manager cache cannot see
-        // the previous manager's parse.
+        // module; the last owner release drops both. ResourceManager instances
+        // are recreated during KAG layer transfers, so a per-manager cache
+        // would parse the same PSB repeatedly.
         std::unordered_map<std::string, std::shared_ptr<MotionSnapshot>> &
         snapshotPathIndex() {
             static std::unordered_map<std::string,
@@ -591,12 +590,7 @@ namespace motion::detail {
                                 dictionaryString(frameDic,
                                                  { "label", "name", "id" })
                                     .value_or(std::to_string(frameIndex));
-                            // e-mote3.0 PSBs author the variable frame value
-                            // under "value"; Aether's public fallback reads
-                            // {"frame","f","value"}. Reading "f" alone left
-                            // every authored variable frame at 0, so motions
-                            // that animate variables (head/body/face axes)
-                            // never moved.
+                            // Accept the authored variable-frame aliases: "value", "frame", and "f".
                             const double frameValue =
                                 dictionaryNumber(frameDic,
                                                  { "frame", "f", "value" })
@@ -1497,9 +1491,7 @@ namespace motion::detail {
                                                   const tjs_int decryptSeed) {
             auto file = std::make_shared<PSB::PSBFile>();
             file->setSeed(decryptSeed);
-            // R01（REF EmotePlayer/ResourceManager → emotefile::setFun →
-            // PSBFile::setDecryptCallback）：保存的 decrypt closure 必须随
-            // 每次 load 生效，否则加密 PSB 按无回调路径加载。
+            // Install the saved decrypt closure on every PSB load.
             file->setDecryptCallback(
                 ::motion::ResourceManager::getEmotePSBDecryptFunc());
             if(!file->loadPSBFile(path)) {
@@ -1512,33 +1504,12 @@ namespace motion::detail {
 
     } // namespace
 
-    // E-mote "dx_" PSBs address a frame's source as a (bank, item)
-    // pair — content["src"] names the bank, content["icon"] the item —
-    // where the plain family packs the same reference into one
-    // slash-joined string. Aligned to libkrkr2.so sub_692AB0, whose
-    // source block reads "src" *and* "icon"; this implementation had
-    // only ever read "src", so every dx_ reference arrived truncated to
-    // its bank name (a bare "body_parts" reaching resolveMotion as the
-    // storage path "motion/body_parts/body_parts", which throws).
-    //
-    // The two dialects carry identical values either side of the split,
-    // verified field-by-field on the same character's plain and dx_ PSBs:
-    //   plain "blank/331:432:165:216"  == dx "blank"      + "331:432:165:216"
-    //   plain "motion/body_parts/全身変形基礎"
-    //                                 == dx "body_parts" + "全身変形基礎"
-    //   plain "src/head_parts/輪郭00"   == dx "tex#001"    + "19"
-    // so the pair is joined back into the plain form once, here, and
-    // every downstream consumer keeps its single-string contract.
-    //
-    // The prefix is decided by locating the item itself, not by the shape
-    // of the bank name: a name can be both an object group and a source
-    // bank in one file (the plain family uses "head_parts" for both), so
-    // neither table can be given blanket precedence.
-    //
-    // Each PSB string occurrence is materialised as its own PSBString
-    // (PSBFile.cpp copy-constructs from the string table), so rewriting
-    // one reference cannot alias another. Re-entry is a no-op: a joined
-    // reference already contains '/'.
+    // dx_ PSBs address a frame source as a (bank, item) pair: `src` names
+    // the bank and `icon` names the item. Join them into the slash-separated
+    // reference consumed downstream. Locate the item to choose the prefix,
+    // because a bank name can also name an object group. Each PSB string
+    // occurrence is independent, so joining one reference cannot alias
+    // another; a reference containing '/' is already normalized.
     void normalizeSplitSourceReferences(
         const std::shared_ptr<PSB::PSBDictionary> &root) {
         if(!root) {
@@ -1985,14 +1956,10 @@ namespace motion::detail {
             return;
         }
 
-        // Retain the parse instead of dropping it. The game rebuilds its KAG
-        // layers (and therefore its managers) on every transfer, so dropping
-        // the entry here made each re-appearance re-parse the PSB and redo the
-        // full clip/node init on the render thread. The registry entry stays
-        // too, so a caller still holding the module object keeps resolving it
-        // through lookupModuleSnapshot. Retention is bounded by
-        // kRetainedSnapshotLimit (LRU, evicted on publish) and by decrypt
-        // configuration changes.
+        // Retain the parsed snapshot across KAG layer transfers. The registry
+        // entry remains available to callers holding the module object. Retention
+        // is bounded by kRetainedSnapshotLimit (LRU eviction on publish) and by
+        // decrypt configuration changes.
         ownerIt->second = 0;
         touchSnapshotPathEntries(registryIt->second);
     }

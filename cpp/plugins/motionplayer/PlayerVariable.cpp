@@ -1,6 +1,4 @@
 // PlayerVariable.cpp — variable/eval-result/parameter bindings
-// Split out for maintainability.
-//
 #include "PlayerInternal.h"
 #include "ncbind.hpp"
 
@@ -64,9 +62,8 @@ namespace {
     void bindParameterEntriesLike_0x6C4668(
         std::vector<motion::detail::MotionParameterEntry> &entries,
         const ParameterLabelParts &parts, int mode, double rawValue) {
-        // F01（REF emotemotion::getTickByIdx 单轨契约）：参数化入口只有一个
-        // —— transToTick（division × (raw−rangeBegin)/(rangeEnd−rangeBegin)），
-        // selector/离散参数走保留的 discretization。
+        // Parameterization uses transToTick: division × normalized raw range.
+        // Selector and discrete parameters use their preserved discretization.
         for(auto &entry : entries) {
             if(!parameterIdMatchesLabelLike_0x6D0BF4(entry, parts)) {
                 continue;
@@ -276,12 +273,9 @@ namespace motion {
             return false;
         };
 
-        // sdl3 REF 对齐：emotefile::setVariable 写文件级全局表 _varList，
-        // 任何 motion 树（含 motion 引用的子树）参数化都直读它——没有
-        // child 传播链。此处以顶层 wrapper 的全局表（_variableValues +
-        // _evalResultValues）扮演 _varList：即使子 Player 刚被重播清空了
-        // inheritedVariableInputs，参数化也能读到当前值（face 参数不再
-        // 掉到 0）。传播链保留为二线 fallback。
+        // Parameterized nodes in a motion tree read the file-level variable table.
+        // The top-level wrapper's evaluated table is authoritative; propagation
+        // supplies child-owned parameters when the wrapper has no label value.
         const Player *controllerOwner = this;
         while(controllerOwner->_parentPlayer) {
             controllerOwner = controllerOwner->_parentPlayer;
@@ -402,9 +396,8 @@ namespace motion {
                 continue;
             }
             const double raw = initialParameterRawValueLike_0x6B1ABC(entry.id);
-            // F01（REF emotemotion::getTickByIdx 单轨契约）：不区分
-            // direct-controller 帧号，所有参数化统一 transToTick。
-            // 原 directControllerFrame clamp 分支为历史 WIP，删除。
+            // All parameterization uses the single transToTick domain, including
+            // direct-controller frame values.
             entry.value = normalizeParameterValueLike_0x6B1718(entry, raw);
             entry.mode = 1;
         }

@@ -1,6 +1,5 @@
 // PlayerUpdateParticles.cpp — updateLayers particle emitter and particle system
-// phases Split from PlayerUpdateLayers.cpp for maintainability.
-//
+// Particle update phases.
 #include "PlayerUpdateLayersInternal.h"
 
 namespace motion {
@@ -319,9 +318,8 @@ namespace motion {
                             // and calls initEmoteMotion. If not: writes to root
                             // node accumulated.angle.
                             if(child->_directEdit) {
-                                // Emote angle path — not applicable in web port
-                                // player+464 = emote angle,
-                                // Player_initEmoteMotion(child, 2)
+                                // Emote angle path for the web-compatible port: player+464 stores the
+                                // emote angle, and Player_initEmoteMotion(child, 2) initializes it.
                             } else {
                                 double cAngle =
                                     cr.accumulated.angle + angleDelta;
@@ -598,12 +596,7 @@ namespace motion {
                             }
                         }
 
-                        // Stealth motion play (0x6BFA08..0x6BFA40)
-                        // Binary: if child+776 (stealth path) exists, play it
-                        // with flags=16 In our architecture, stealth is stored
-                        // at player level. The binary copies the stealth path
-                        // from the resource manager state. For web port,
-                        // stealth motion is rarely used; skip for now.
+                        // The web-compatible path does not play stealth motions.
 
                         // 3c. Position based on flyDirection
                         // (0x6BFAC8..0x6BFC88)

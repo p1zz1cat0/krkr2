@@ -1,6 +1,4 @@
 // PlayerRender.cpp — render state, canvas/source/cache helpers, no-arg draw
-// Split from Player.cpp for maintainability.
-//
 #include "PlayerInternal.h"
 #include "SourceCache.h"
 

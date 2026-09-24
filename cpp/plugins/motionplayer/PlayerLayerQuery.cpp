@@ -1,6 +1,4 @@
 // PlayerLayerQuery.cpp — viewport, layer query, hit-test, selector, misc
-// Split out for maintainability.
-//
 #include "PlayerInternal.h"
 #include "HitTestInternal.h"
 #include "SourceCache.h"
@@ -366,13 +364,9 @@ namespace motion {
 
     // --- Selector ---
     bool Player::isSelectorTarget(ttstr name) {
-        // Aligned to libkrkr2.so sub_6823FC (EmotePlayer-level selector
-        // target): checks membership in the "selectorControl" registry
-        // parsed at PSB load time, NOT the layer list. Our snapshot already
-        // populates selectorControls (RuntimeSupport.cpp:681) from the same
-        // PSB "selectorControl" array. The previous implementation incorrectly
-        // checked layer existence via layersByName, which conflated layer
-        // tree membership with selector-target registration.
+        // Selector-target membership comes from the `selectorControl` registry
+        // populated from the PSB `selectorControl` array. It is independent of
+        // layer-tree membership.
         if(!_runtime->activeMotion) {
             return false;
         }

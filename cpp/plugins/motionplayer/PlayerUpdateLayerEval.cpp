@@ -1,6 +1,4 @@
 // PlayerUpdateLayerEval.cpp — updateLayers phase1 and phase2 evaluation
-// Split from PlayerUpdateLayers.cpp for maintainability.
-//
 #include "PlayerUpdateLayersInternal.h"
 
 #include <cmath>
@@ -519,13 +517,10 @@ namespace motion::internal {
         currentTime =
             frameSelectionTimeLike_0x6B7E44(node, currentTime, isEmoteMode);
 
-        // F07（REF EmoteNode::progress 436-443/516-519）：coord 特殊值动态
-        // 修正——NaN→区域左/上边缘（-lim.origin）、Inf→右/下边缘
-        // （lim.width|height − lim.origin，按语义取 x→width、y→height，
-        // 不抄 REF 的交叉笔误），用于贴边类关键帧。lim 是本节点的有效
-        // 区域（effectiveNodeLimLike_REF：父矩形/继承区域/root 逻辑屏），
-        // 哨兵值在本节点局部锚点坐标系消费；无尺寸区域（宽或高为 0）不
-        // 修正，保持原值。
+        // Resolve special coordinate values against the node's effective region:
+        // NaN maps to the left/top edge and Inf to the right/bottom edge. The
+        // region uses the parent rectangle, inherited area, or root logical screen;
+        // zero-sized regions leave values unchanged.
         if(lim.width > 0.0 && lim.height > 0.0) {
             const auto fixCoord = [&lim](double &x, double &y) {
                 if(std::isnan(x)) {
@@ -783,14 +778,8 @@ namespace motion {
                 writeEvalResultValueLike_0x6C4668(label, 0,
                                                   frames.front().value);
             }
-            // F04/F05（REF emotefile::_varList 文件级单表）：嵌套 child 的
-            // _variableValues 必须每帧镜像 controllerOwner 的全局表。此前
-            // child 各自独立演化：varFrames 只在首帧 seed 一次 frames.front
-            // （多为 0），EyeControl 等唯一 owner 的逐帧值只落在 root 的
-            // 表里——child 持有过期 0 值驱动本层 bind/parameterize，与
-            // wrapper 侧 sync 的 blink 值分叉（帧间抖动源）。seeded default
-            // 不得遮蔽 owner 值（与 A1 决策一致：inherited inputs 胜过
-            // neutral seeds）。
+            // Nested child Players mirror controllerOwner's file-level variable
+            // table every frame. Seeded defaults yield to inherited values.
             if(_parentPlayer != nullptr) {
                 const Player *controllerOwner = this;
                 while(controllerOwner->_parentPlayer) {
@@ -937,13 +926,9 @@ namespace motion {
         const bool emoteLike = detail::isEmoteLikeMotion(*_runtime);
         const bool freezeBodyTimeline = emoteLike;
         if(!_runtime->perNodeEvalData.empty()) {
-            // F07：root 节点（index 0）的区域 = PSB logicalScreen；子节点
-            // 的区域在循环内按父先子后传递（见 effectiveNodeLimLike_REF）。
-            // F07-①：嵌套 child Player 的 root 区域 = wrapper 节点矩形
-            // （updateChildMotion 每帧 stamp wrapperLim；REF EmoteNode.cpp
-            // 758-764：emotemotion::progress 收到引用节点自身的矩形，而非
-            // 文件的 root screenSize）。无 wrapper 或矩形为零时回退
-            // logicalScreen。
+            // The root node uses PSB logicalScreen. Child regions are passed parent
+            // first; a nested child Player uses its wrapper node rectangle, and a
+            // missing or zero-sized wrapper falls back to logicalScreen.
             _runtime->perNodeEvalData[0].evalLim =
                 (_runtime->wrapperLim.width > 0.0 &&
                  _runtime->wrapperLim.height > 0.0)
@@ -954,12 +939,9 @@ namespace motion {
             auto &node = nodes[i];
 
             double nodeEvalTime = currentTime;
-            // F03：参数化只有两条通道——node-level parameterize
-            // （node.parameterEntry）和 init 时 bindDefaultParameterEntries
-            // 一次性下推的 clip 默认轴。Phase2 不逐帧经 activeClip 重解析
-            // 参数轴（第三通道已删）：playingTimelineLabels 变化会换
-            // activeClip，运行时重绑会让口/眼参数轴静默漂移；参数轴在
-            // init 时定死（REF emotemotion 构造时下推 root parameterize）。
+            // Parameterization has two channels: node-level parameterize and the
+            // clip default axis bound once at initialization. The axis stays fixed
+            // for the playback session.
             if(node.parameterizeIndex < 0 && freezeBodyTimeline) {
                 nodeEvalTime = 0.0;
             }
@@ -979,11 +961,10 @@ namespace motion {
             }
             const auto &parent = nodes[parentIdx];
 
-            // F07（REF emotenode::progress lim）：本节点的有效区域取自
-            // 合成变换所用的 resolved parent——有尺寸（icon/blank 已解析
-            // clipW/H）用父矩形，无尺寸（motion/layout/clip）继承父收到的
-            // 区域。哨兵值在 parent 局部锚点坐标系消费，必须与变换合成
-            // 用同一个父节点。
+            // A node's effective region comes from the resolved parent: sized
+            // parents use their own rectangle, while unsized motion/layout/clip
+            // parents pass through the inherited region. Sentinel coordinates use
+            // that same parent-local frame.
             const auto nodeLim = detail::effectiveNodeLimLike_REF(
                 _runtime->perNodeEvalData[parentIdx].evalLim,
                 parent.clipW, parent.clipH, parent.originX, parent.originY);
@@ -1272,17 +1253,9 @@ namespace motion {
                     const double lm21 = localAffine[1];
                     const double lm12 = localAffine[2];
                     const double lm22 = localAffine[3];
-                    // Geometry composes against the PARENT matrix, not the
-                    // root's. The scalar accumulators above already undo and
-                    // re-apply the root contribution for this partial-inherit
-                    // case, but the part's own quad still carries every
-                    // ancestor between the root and this node — that is what
-                    // makes a face/glyph layer keep the authored size when it
-                    // omits the scale bits while its position still follows
-                    // them (REF PlayerUpdateLayers Phase D 0x6BBA24, M2 glyph
-                    // comment). Composing against the root dropped the
-                    // intermediate scales, so head and face layers rendered at
-                    // the wrong size.
+                    // Compose geometry against the parent matrix. Each part's quad carries
+                    // every ancestor between the root and the node, preserving authored size
+                    // for partially inherited face and glyph layers.
                     node.accumulated.m11 = parent.accumulated.m11 * lm11 +
                         parent.accumulated.m12 * lm21;
                     node.accumulated.m21 = parent.accumulated.m21 * lm11 +

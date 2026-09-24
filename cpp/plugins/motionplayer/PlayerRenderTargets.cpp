@@ -1,6 +1,4 @@
 // PlayerRenderTargets.cpp — Layer/SLA/D3D render targets and post-draw update
-// Split from PlayerRender.cpp for maintainability.
-//
 #include "PlayerRenderInternal.h"
 #include "EmoteCompatInternal.h"
 #include "MotionTraceWeb.h"
@@ -1199,10 +1197,9 @@ namespace motion {
         iTJSDispatch2 *targetLayerObject =
             tryResolveLayerDispatch(sla->getTargetLayer());
         const bool accurateSla = isAccurateSlaRenderEnabled();
-        // Both SLA modes need the private Motion GLL target. Accurate mode
-        // used to bypass this because its deleted legacy path painted part
-        // Layers directly under targetLayerObject; the REF executor instead
-        // always renders into SLA+40 and only publishes it afterwards.
+        // Both SLA modes render through the private Motion GLL target. The
+        // executor paints into SLA+40 and publishes that surface to the
+        // user-facing target afterwards.
         iTJSDispatch2 *renderTarget =
             resolveSeparateLayerRenderTarget(sla, canvasWidth, canvasHeight);
         if(!targetLayerObject) {
@@ -1313,23 +1310,10 @@ namespace motion {
             detail::MotionTraceRenderExecuteScope renderTrace(
                 this, targetLayerObject, false);
 #endif
-            // Phase-3 architecture alignment (REF PlayerRender.cpp
-            // 13433-13440): REF's accurate-SLA mode has NO per-part
-            // rasterization — its main draw IS the command-graph executor
-            // (renderMotionFrame 0x6DE738 -> executeLayerRenderCommands)
-            // and the "after draw" step is just a target Update. TGT grew a
-            // self-built per-part SLA branch that bypassed the executor
-            // entirely, so every render-chain fix landed on a path the
-            // commercial game never draws through.
-            //
-            // 0x6C9CA8 equivalent (REF 13433-13440): accurate mode draws
-            // through the command-graph executor into the SLA private
-            // target (an alpha layer) — never the user-facing
-            // targetLayerObject, which may be a ltBinder without a main
-            // image. The first step is the transparent clear (REF 11283):
-            // without it every frame paints over the previous frame's
-            // pixels — full-body ghosting. The REF after-draw step is just
-            // a target Update.
+            // Accurate-SLA mode renders through the command-graph executor into
+            // the private SLA target (an alpha layer), then updates the public target.
+            // Painting the private target first supports ltBinder presentation objects;
+            // its transparent clear prevents full-body ghosting.
             iTJSDispatch2 *slaRenderTarget = renderTarget;
             if(!slaRenderTarget) {
                 detail::logoChainTraceSummary(
@@ -1350,9 +1334,8 @@ namespace motion {
                                        static_cast<tjs_uint>(canvasHeight));
             privateLayer->SetSize(canvasWidth, canvasHeight);
             privateLayer->SetClip(0, 0, canvasWidth, canvasHeight);
-            // The transparent clear that used to happen here (REF 11283) is
-            // part of the executor's target preparation now, so this entry
-            // point does not clear the canvas twice per frame.
+            // Target preparation owns the transparent clear, so this entry point does
+            // not clear the canvas again.
             if(commandGraphEnabled()) {
                 buildRenderCommandGraph(canvasWidth, canvasHeight);
             } else {

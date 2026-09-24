@@ -1,6 +1,4 @@
 // PlayerCore.cpp — Constructor, setMotion, serialize, core properties
-// Split from Player.cpp for maintainability.
-//
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -303,10 +301,9 @@ namespace motion {
     // Player pipeline.
     void
     Player::loadFromSnapshot(std::shared_ptr<detail::MotionSnapshot> snapshot) {
-        // A rebound module starts on its own local timeline. EmotePlayer
-        // instances are intentionally reusable; retaining the previous
-        // motion's clocks/playing bits makes an identical script enter the
-        // replacement pose at a history-dependent frame.
+        // EmotePlayer instances are reusable; rebinding starts a fresh local
+        // timeline with motion clocks and playing bits reset, so identical scripts
+        // enter the replacement pose at time zero.
         _frameLastTime = 0.0;
         _frameLoopTime = 0.0;
         _loopTime = 0.0;
@@ -683,11 +680,8 @@ namespace motion {
         }
 
         buildNodeTree();
-        // F01-② 对拍回归修复：非 emote 路径（e-mote3 type=0 子 Player，
-        // 如 目R/目L/頬/鼻）此前从不执行 clip 默认参数轴下推——dict 型
-        // parameterize 解析出了 defaultParameterEntryIndex 与参数表，但没有
-        // 任何节点绑定它，眼睑/眼白冻结在 tick 0。与 emote 路径同规则：
-        // init 一次性绑定，Phase2 不逐帧重解析。
+        // Non-emote child Players also bind the clip's default parameter axis
+        // during initialization and keep that axis fixed for the playback session.
         bindDefaultParameterEntriesLike_sdl3();
         initVariables();
         seedEmoteVariableDefaultsLike_sdl3();
@@ -716,9 +710,8 @@ namespace motion {
         _runtime->defaultParameterEntryPtr = nullptr;
         _runtime->defaultParameterEntryIndex = -1;
 
-        // F02：参数表归属当前播放的 clip。同一 motion 文件内切换 clip 时
-        // 也必须重建，否则旧 clip 的 id/division/range 轴会继续驱动新 clip
-        // 的参数化节点。
+        // The active clip owns its parameter table. Switching clips in one motion
+        // file rebuilds the table and its id/division/range axes.
         const std::string activeClipLabel =
             clip ? clip->label : std::string{};
         const bool motionChanged = !_runtime->activeMotion ||
@@ -780,21 +773,16 @@ namespace motion {
         }
     }
 
-    // F03：init 时一次性把 clip 默认参数轴绑给所有无 node-level
-    // parameterize 的节点（对应 REF emotemotion 构造时把 root
-    // parameterize 下推给 nodeList 全体）。Phase2 不得逐帧重解析：
-    // playingTimelineLabels 变化导致 activeClip 变化时会把参数轴静默
-    // 换轨（口/眼抖动源），参数轴在播放会话内定死。
+    // Bind the clip's default parameter axis at initialization for every
+    // node without node-level parameterize. Keep the axis fixed for the
+    // playback session; active-clip changes do not rebind it.
     void Player::bindDefaultParameterEntriesLike_sdl3() {
         if(!_runtime) {
             return;
         }
-        // F01-② 对拍回归修复（89147af 后 EYE_DIAG 探针，6068 行
-        // evalTime=0）：dict 型 parameterize 的 clip（如 目R 的
-        // dpi=0/entries=1）此前在 parameterEntries 非空时永不设置
-        // defaultParameterEntryIndex——init 通道对眼睑/眼白失联，删除
-        // 逐帧通道 3 后它们冻结在 tick 0（=旧注释「眨眼露眼白」结构）。
-        // root 保底：activeClip 无 parameterize 时退回 root clip 的轴。
+        // Dict-shaped parameterize clips with entries set
+        // defaultParameterEntryIndex. Nodes without a clip-specific axis use the
+        // root clip's axis.
         if(_runtime->defaultParameterEntryIndex < 0) {
             if(const auto *clip = selectActiveClip();
                clip && clip->defaultParameterIndex >= 0 &&
@@ -897,19 +885,9 @@ namespace motion {
         };
 
         auto &motion = *_runtime->activeMotion;
-        // F02（REF emotemotion::parameter 单轨）：参数表属于当前正在播放的
-        // clip（selectActiveClip 的 motionObject["parameter"]），不做
-        // 「頭部変形基礎/全体構造」名字优先或「参数数最多」启发——素材改名或
-        // 另一个 clip 参数更多时会被静默绑定错表。root 仅作最终保底。
-        //
-        // F02-① 裁决（2026-09-01，intentional override 固化）：active clip
-        // 无 parameter 表时 REF getTickByIdx 返回 -1 → 参数化节点不画；
-        // 本实现回退 root 表继续画。不跟 REF，理由：
-        // 1. REF 的 -1 是「查不到别画」的防御分支，非格式语义——E-mote
-        //    素材没有「无表表达隐藏」的设计惯例证据；
-        // 2. 已知商业素材（NEKOPARA 系）全部 clip 均有 parameter 表，
-        //    该路径不可达，两边实际等价；
-        // 3. 失败方向不对称：保底多画的后果远小于 REF 式凭空消失。
+        // The active clip owns the parameter table. When it has no parameter
+        // table, use the root clip's table so parameterized nodes retain a usable
+        // axis.
         const detail::MotionClip *clip = selectActiveClip();
         if(clip && clip->motionObject) {
             loadFromObject(clip->motionObject);
@@ -1165,12 +1143,9 @@ namespace motion {
 
         _variableKeys = detail::makeArray(
             detail::stringsToVariants(_runtime->activeMotion->variableLabels));
-        // NOTE: no syncSelectorControlsLike_0x670D1C here. This helper runs
-        // after every motion activation including repeated child-player
-        // bootstrap, and the selector sweep wipes + re-applies option
-        // snapshots for every pose variable it registers (body_UD, ...),
-        // which fought live diff-timeline contributions every frame.
-        // Selector state syncs on explicit events instead.
+        // Selector state synchronizes on explicit events. This helper runs after
+        // every motion activation, including repeated child-player bootstrap, so
+        // per-frame selector sweeps preserve live diff-timeline contributions.
     }
 
     void Player::syncSelectorControlsLike_0x670D1C() {

@@ -1,6 +1,4 @@
 // PlayerTimeline.cpp — timeline queries and playback raw callbacks
-// Split out for maintainability.
-//
 #include <algorithm>
 
 #include "PlayerInternal.h"
@@ -127,11 +125,9 @@ namespace motion {
             _runtime->activeMotion->diffTimelineLabels));
     }
 
-    // A08: explicit loop override behind EmotePlayer::setTimeline(label,
-    // loop). TimelineState.loop gates the wrap decisions in frame progress
-    // and skipToSync; primed values (snapshot.loopTimelines /
-    // timelineControlByLabel) are re-applied on motion reload, so this
-    // override is per-play-session by construction.
+    // EmotePlayer::setTimeline(label, loop) sets an explicit per-session loop
+    // override used by frame wrapping and skipToSync. Reload reapplies the
+    // primed snapshot values.
     void Player::setTimelineLoop(ttstr label, bool loop) {
         ensureMotionLoaded();
         if(!_runtime || label.IsEmpty()) {
@@ -152,24 +148,9 @@ namespace motion {
         it->second.loopOverrideSet = true;
     }
 
-    // T02 (resolved 2026-09-01, emoteplayer.dll 2020-06 disassembly,
-    // sub_0x1006B890): the original binary looks up the label in the
-    // timelineControl table and returns `lastTime < 0` — i.e. a timeline
-    // is "loop" when it has never been played. That is a bug, not a
-    // contract: the parser (0x7D960..0x7DA68) reads loopBegin/loopEnd/lastTime
-    // from the PSB into offsets +0x18/+0x20/+0x28, and the REF's own
-    // getTimelineTotalFrameCount uses loopEnd-loopBegin+1, proving the
-    // loopBegin/loopEnd pair is the authored loop definition. lastTime is a
-    // runtime playhead, not a loop flag; sdl3-ref copies this bug verbatim
-    // (its emotetimeline.lastTime is never written either).
-    //
-    // Verdict (intentional override): keep the structural check
-    // (loopBegin >= 0 && loopEnd > loopBegin), which matches the authored
-    // PSB fields and the original totalFrameCount formula. The original
-    // binary's lastTime<0 answer degenerates to "always true before first
-    // play, always false after" — not a loop flag. If a real game is ever
-    // observed calling getLoopTimeline and misbehaving, revisit with that
-    // fixture; do not let this query drive playback semantics.
+    // `loop` is determined by the authored interval:
+    // `loopBegin >= 0 && loopEnd > loopBegin`. `lastTime` is the runtime
+    // playhead and does not participate in this query.
     bool Player::getLoopTimeline(ttstr label) {
         ensureMotionLoaded();
         if(!_runtime->activeMotion) {
@@ -519,15 +500,9 @@ namespace motion {
             }
         }
 
-        // A label that is not a timeline label (the base clip "全体構造"
-        // played through play(metadata.base.motion, Force)) starts NO
-        // timeline. NEKOPARA drives pose timelines explicitly via
-        // playTimeline/_playTimeline from TJS; auto-starting every main
-        // timeline here runs all authored control tracks at once and each
-        // crossing rewrites the same pose variables — the fixed
-        // choreography replay seen on every play()/switch. The M2 manual's
-        // sample flow likewise pairs play(base.motion) with plain
-        // progress/draw and no timeline calls.
+        // The base clip label (the non-timeline label "全体構造") starts no
+        // timeline. TJS starts pose timelines explicitly through playTimeline or
+        // _playTimeline; progress/draw alone leaves those tracks inactive.
 
         _allplaying = !_runtime->playingTimelineLabels.empty();
         return started;

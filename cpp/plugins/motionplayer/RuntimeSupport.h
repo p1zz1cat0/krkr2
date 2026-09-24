@@ -187,16 +187,9 @@ namespace motion::detail {
         }
         normalized = std::clamp(normalized, 0.0, 1.0);
 
-        // F01（REF transToTick）：tick 轴 = 参数表 division，而不是
-        // clip.totalFrames−1。totalFrames 的 lastTime 是“最后帧时间”，
-        // 两者只在素材恰好对齐时相等；以 totalFrames 优先会在
-        // lastTime 未写/长 clip 上把参数轴拉偏。无 division 时再回退
-        // totalFrames−1 保底。
-        // 与 REF 的偏差：REF transToTick 不做 clamp，这里归一化后保留
-        // [0,1]，超范围写入落到端点帧，防止越界 tick 进入选帧。
-        // F01-①（2026-09-01 定域）：本函数的返回值即原 DLL 参数对象 +0x28
-        // 处的存储值（normalized tick），消费点见 PlayerUpdateChildMotion
-        // 的 crossfade/case-3 注释——两边同域，无需换算。
+        // Parameter ticks use the parameter table's division axis; when division
+        // is absent, fall back to totalFrames - 1. Clamp normalized ticks to
+        // [0,1] so out-of-range input selects an endpoint frame.
         const double timelineEnd = parameter.division > 0.0
             ? parameter.division
             : std::max(0.0, clip.totalFrames - 1.0);
@@ -258,11 +251,10 @@ namespace motion::detail {
         double height = 0.0;
     };
 
-    // F07（REF emotenode::progress 的 emotelimit）：节点收到的有效区域。
-    // 有尺寸的父节点（icon/blank，clipW/H/originX/Y 已解析）用它自己的
-    // 矩形；motion/layout/clip 等无尺寸父节点把收到的区域原样下发；
-    // root 收 PSB logicalScreen。NaN/Inf 坐标哨兵（evaluateTimelineLike）
-    // 以该区域换算贴边值——区域不同，贴边像素不同。
+    // Effective region for a node: sized parents use their own rectangle;
+    // unsized motion/layout/clip parents pass through the inherited region;
+    // root uses PSB logicalScreen. NaN/Inf coordinate sentinels are mapped
+    // against this region.
     inline ScreenSize effectiveNodeLimLike_REF(const ScreenSize &parentLim,
                                                double parentWidth,
                                                double parentHeight,
@@ -331,8 +323,6 @@ namespace motion::detail {
     //   +24  ttstr label  — from entry["label"].
     //   +68  u8  flag68=1 — observed default (semantics not yet reversed).
     //   +124 u8  flag124=1 — observed default (semantics not yet reversed).
-    // Read paths in the binary have not been fully traced; the struct exists
-    // so the eager initialisation sequence can land without drifting further.
     struct VariableLabelEntry {
         ttstr name;
         ttstr label;
@@ -352,13 +342,11 @@ namespace motion::detail {
         // when MultiCache adds an attached motion.
         bool activeMotionHasPrivateComposition = false;
         // Active motion's logical world boundary (PSB root screenSize).
-        // Zeroed when no motion is active; consumed by frame evaluation
-        // (coord NaN/Inf sentinel fix) and upcoming render alignment.
+        // Zeroed when no motion is active; frame evaluation uses it for coordinate
+        // sentinel correction and render alignment.
         ScreenSize logicalScreen;
-        // F07-①: wrapper-provided root region. For nested child Players this
-        // carries the wrapper node's rectangle (REF: emotemotion::progress
-        // receives the wrapper node's originX/originY/width/height, not the
-        // file's root screenSize). Zeroed = fall back to logicalScreen.
+        // Wrapper-provided root region for nested child Players. A zeroed region
+        // falls back to logicalScreen.
         ScreenSize wrapperLim;
         // Incremented for every motion activation/deactivation. Controller
         // candidates bind to this generation so a failed init after a motion
@@ -398,8 +386,7 @@ namespace motion::detail {
         // of the slow-frame threshold.
         bool slaFirstRenderLogged = false;
         // Rolling per-frame statistics for the accurate-SLA path; emitted as
-        // "sla.accurate.stats" every ~3s so animated scenes report their
-        // average/max frame cost instead of only slow-frame spikes.
+        // "sla.accurate.stats" every ~3s with average and maximum frame cost.
         double slaStatsWindowStart = 0.0;
         int slaStatsFrames = 0;
         double slaStatsMsSum = 0.0;
@@ -414,12 +401,11 @@ namespace motion::detail {
         // Aligned to libkrkr2.so player+696: internal render layer consumed by
         // sub_6CE7D8 / sub_6CE938 style post-draw update.
         tTJSVariant internalRenderLayer;
-        // Parentless replay canvas for the legacy accurate-SLA route
-        // (KRKR_EMOTE_SLA_SCRATCH_CANVAS=1), which replays the command graph
-        // into it and then copies the finished frame to the public render
-        // layer. Kept here so the replay surface keeps its image size across
-        // frames. The default route draws straight into the SLA private target
-        // and never touches this slot.
+        // Optional parentless replay canvas for
+        // KRKR_EMOTE_SLA_SCRATCH_CANVAS=1. It receives the replayed command
+        // graph, copies the result to the public render layer, and retains its
+        // image size across frames. The standard executor uses the private SLA
+        // target.
         tTJSVariant scratchWorkLayer;
         std::array<double, 6> drawAffineMatrix{ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         tjs_int nextLayerId = 1;
@@ -457,11 +443,11 @@ namespace motion::detail {
         std::unordered_map<std::string, double> inheritedVariableInputs;
         // Layer evaluation overlays persistent, evaluated and inherited
         // variables on every tick (aligned to Aether REF
-        // RuntimeSupport.h effectiveVariableScratch).  Retain the union's
+        // RuntimeSupport.h effectiveVariableScratch). Retain the union's
         // nodes between ticks so stable E-mote variable tables update values
-        // in place instead of allocating two temporary unordered_maps per
-        // frame.  The generation excludes labels which disappeared this tick
-        // without requiring the scratch map itself to be cleared.
+        // in place without per-frame map allocation. The generation excludes
+        // labels which disappeared this tick without requiring the scratch map
+        // itself to be cleared.
         struct EffectiveVariableScratchEntry {
             double value = 0.0;
             std::uint64_t generation = 0;
@@ -729,10 +715,9 @@ namespace motion::detail {
                 padding[5] = {}; // offsets 0-39 (unused in our current scope)
             double evalTime = 0.0;
             int dirtyFlag = 0;
-            // F07: effective emotelimit this node received for the current
-            // frame (parent rect or inherited region; root = logicalScreen).
-            // Written parent-first in Phase2 before the node's own eval, so a
-            // child's sentinel resolves against the parent's current rect.
+            // Effective region received for the current frame (parent rectangle,
+            // inherited region, or root logicalScreen), written parent-first before
+            // node evaluation so child sentinels resolve against the current parent rect.
             ScreenSize evalLim;
         };
         std::vector<PerNodeEvalData> perNodeEvalData;
@@ -744,10 +729,8 @@ namespace motion::detail {
         std::string emoteDiagMotionPath;
         std::string emoteDiagLoggedClip;
         std::string cachedParameterMotionPath;
-        // F02: parameter-table ownership is (motion path, active clip).
-        // Cached separately so replaying another clip of the same motion
-        // file rebuilds the table instead of reusing the previous clip's
-        // id/division/range axis.
+        // Parameter-table ownership is (motion path, active clip). The table is
+        // cached per clip so replaying another clip rebuilds its id/division/range axes.
         std::string cachedParameterClipLabel;
     };
 

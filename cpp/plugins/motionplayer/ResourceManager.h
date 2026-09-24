@@ -50,17 +50,14 @@ namespace motion {
                                                 tTJSVariant **p,
                                                 iTJSDispatch2 *obj);
 
-        // R01（REF emotefile::setFun）：load 前把当前 decrypt closure 交给
-        // PSBFile#setDecryptCallback；此前只存不消费，加密 PSB 按无 callback
-        // 加载，接口看似成功但内容不可用。
+        // Install the current decrypt callback on PSBFile before loading.
         [[nodiscard]] static tTJSVariantClosure
         getEmotePSBDecryptFunc() {
             return _decryptFunc;
         }
 
-        // R02（REF ResourceManager::unloadAll）：REF 脚本按此名释放全部
-        // 本 State 缓存；注册同名 alias 保证 REF API 调用不因成员缺失失败。
-        // 共享 snapshot 只有在最后一个 State 释放时才从全局 registry 移除。
+        // unloadAll releases all entries cached by this State. The shared snapshot
+        // leaves the global registry when its last State owner is released.
         void unloadAll() const { clearCache(); }
 
     private:

@@ -1,6 +1,4 @@
 // PlayerDrawDispatch.cpp — draw raw callback dispatch and draw target routing
-// Split out for maintainability.
-//
 #include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 #include "ncbind.hpp"
@@ -180,11 +178,8 @@ namespace motion {
 #endif
         }
 
-        // Step 2: Check if param is SLA.
-        // Aligned to libkrkr2.so Player_drawCompat (0x6D5FB8):
-        // the native code only checks the SeparateLayerAdaptor class ID here.
-        // It does not route plain Layer objects through the SLA backend just
-        // because they resolve to an owner/target layer.
+        // Select the SLA backend only for SeparateLayerAdaptor instances. Plain
+        // Layer objects stay on the direct Layer path.
         {
             auto *sla =
                 ncbInstanceAdaptor<SeparateLayerAdaptor>::GetNativeInstance(

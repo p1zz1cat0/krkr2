@@ -1,6 +1,4 @@
 // PlayerUpdateLayers.cpp — updateLayers dispatcher and native phase order
-// Split from Player.cpp for maintainability.
-//
 #include "PlayerInternal.h"
 #include "MotionTraceWeb.h"
 

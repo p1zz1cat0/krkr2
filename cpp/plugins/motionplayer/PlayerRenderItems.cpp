@@ -1,6 +1,4 @@
 // PlayerRenderItems.cpp — calcBounds and prepared render-item build
-// Split from PlayerUpdateLayers.cpp for maintainability.
-//
 #include "PlayerInternal.h"
 #include "MotionTraceWeb.h"
 
@@ -119,22 +117,10 @@ namespace motion {
             node.bounds[2] = -1.0f;
             node.bounds[3] = -1.0f;
 
-            // Aligned to Player_calcBounds @ 0x6C40B0 (libkrkr2.so):
-            //   v30 = 1 << nodeType
-            //   v31 = completionType ? 0x1449 : 0x1441
-            //   if ((v31 & v30) == 0 || !*(BYTE*)(node+200)) skip
-            // The actual native gate is the Path A nodeType mask PLUS
-            // renderTreeFlag200 (node+0xC8) — NOT drawFlag (Path B) and
-            // NOT drawnThisFrame (node+1944, set by sub_6C2334 but not
-            // read here). Port's previous drawFlag/drawnThisFrame reads
-            // were both proxies; this is the authoritative gate.
-            //
-            // NOTE: libkrkr2's calcBounds also has (a) a slot-done byte
-            // gate at node+536*slot+344 and (b) recursive handling for
-            // nodeType=3 sub-players (0x6C4048) and nodeType=4 particles
-            // (0x6C3F08). Port's simplified structure doesn't model those
-            // yet; hasSource is the current placeholder for "this node
-            // has its own geometry to contribute to the bbox".
+            // calcBounds uses the Path A nodeType mask together with
+            // renderTreeFlag200. drawFlag and drawnThisFrame are excluded from this
+            // gate. `hasSource` records whether this node contributes its own geometry
+            // to the bounding box.
             const int visBitmaskCalc = _completionType ? 0x1449 : 0x1441;
             if(((1 << node.nodeType) & visBitmaskCalc) == 0 ||
                !node.renderTreeFlag200) {
@@ -329,9 +315,8 @@ namespace motion {
                 source.rfind("motion/", 0) != 0;
         };
         std::unordered_set<int> requiredGroupNodeIndices;
-        // 参考 sdl3（不编译）：子 motion 节点在子 Player 的 nodeList
-        // merged child preparedRenderItems keep foreign nodeIndex values and
-        // must not be indexed through this player's nodes[] vector.
+        // Child motion entries retain the child Player's local node indices;
+        // merged items must not be indexed through this player's nodes[] vector.
         const auto isLocalPreparedItem =
             [runtime = _runtime.get()](
                 const detail::PlayerRuntime::PreparedRenderItem &entry)
@@ -741,12 +726,10 @@ namespace motion {
             if(!hasOwnSource && !needsGroupEntry)
                 continue;
 
-            // src/#custom/1（■髪揺れ_前髪）与 前髪00 共用同一张位图和同一个
-            // pos，但绘制顺序把它们分在五官两侧：前髪00 在脸部部件之前
-            // （底层hair），#custom/1 在之后——**它才是盖住眼角/眉毛的那层
-            // 半透明前发**。不要在这里加跳过它的「去双影」分支：
-            // 跳过会让五官压到头发上面，与参考实现（Aether 公开 fallback
-            // 的 i=196 命令）和原版 DLL 的观感都不一致。
+            // src/#custom/1 and 前髪00 share a bitmap and position, but draw order
+            // places 前髪00 beneath facial parts and #custom/1 over the eye corners
+            // and eyebrows. The translucent front-hair layer is part of the authored
+            // compositing order.
 
             detail::PlayerRuntime::PreparedRenderItem entry;
             entry.nodeIndex = static_cast<int>(i);
@@ -778,8 +761,7 @@ namespace motion {
             entry.skipFlag0 = ((skipTypeBitmask & (1 << node.nodeType)) == 0);
             entry.skipFlag1 = !(inheritedFlag18 || (node.priorDraw != 0));
             // libkrkr2.so sub_6C2334 copies player+1012 straight into item+248.
-            // Keep that variant explicit in the local render item instead of
-            // folding it away completely.
+            // Keep the player+1012 variant explicit in the local render item.
             entry.contextVariant = _findMotionContextVariant;
             entry.layerId = node.layerId1;
             entry.layerId2 = node.layerId2;
@@ -1337,20 +1319,11 @@ namespace motion {
             }
         }
         // Aligned to libkrkr2.so sub_6C2334: item+264 (parentItem) is written
-        // in exactly two places — Branch A for nodeType=3 sub-player wrappers
-        // (0x6c2b28) and the type12 composite aggregation branch (0x6c2654).
-        // Normal type0 / type1 / type2 layers — including transform-only
-        // parents like yuzulogo's `slide` nodes — **never** see their item+264
-        // populated by the binary, so their visibleAncestor chain stays at the
-        // render command level only (item+24 children vector is untouched).
-        //
-        // The previous generic "assign parentItem for any visibleAncestor" loop
-        // caused moji_y/u/z/... to inherit `hasRenderParent=true` from their
-        // slide parents, which the top-level execute filter at
-        // PlayerRender.cpp:1851 then skipped — leaving the letters unrendered
-        // despite correct updateLayers data. The type12 composite case is
-        // handled further below at the selfSeedChildList loop, which matches
-        // Branch 0x6C3740..0x6C3924 / sub_6F3424.
+        // only for nodeType=3 sub-player wrappers and type-12 composite
+        // aggregation. Ordinary type0/type1/type2 transform parents keep
+        // item+264 unset, while their visible-ancestor relationship remains in
+        // the render-command hierarchy. Type-12 descendants are attached during
+        // self-seeded child-list processing.
 
         // Align to 0x6C3800..0x6C3924 and sub_6F3424:
         // under a special type12 composite parent, nodeType 0 children are
@@ -1523,9 +1496,8 @@ namespace motion {
                     std::max(parent.paintBox[3], child.paintBox[3]);
             };
 
-        // Materialize authored stencil inputs in the flattened namespace.
-        // The previous port retained only the target-node boolean, which made
-        // an eye mask indistinguishable from an ordinary top-level bitmap.
+        // Materialize every authored stencil input in the flattened namespace so
+        // eye masks remain distinct from ordinary top-level bitmaps.
         for(auto &group : _runtime->preparedRenderItems) {
             if(group.stencilMaskNodeIndices.empty()) {
                 continue;
@@ -1664,10 +1636,8 @@ namespace motion {
             }
         }
 
-        // Preserving sourceMotion alone is not enough if nested command
-        // composition is discarded while flattening. The type-aware passes
-        // above restore that composition without changing the direct render
-        // status of ordinary facial leaves.
+        // Type-aware passes preserve nested command composition while flattening;
+        // ordinary facial leaves retain direct-render status.
 
 #if defined(KRKR2_WASMTIME_HEADLESS)
         detail::motionTraceRenderBuildItemsLeave(this);

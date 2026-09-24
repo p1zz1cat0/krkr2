@@ -18,8 +18,7 @@
 namespace motion::physics {
 
     // The 2016 DLL constructors leave these fields untouched even though the
-    // update helpers read them. Zero is a deterministic compatibility policy,
-    // not a claim about the original undefined heap contents.
+    // update helpers read them. Zero is a deterministic compatibility policy.
     inline constexpr double kDeterministicLegacyBustYBias = 0.0;
     inline constexpr double kDeterministicPendVerticalReference = 0.0;
 
@@ -240,11 +239,9 @@ namespace motion::physics {
         double lastPublished_ = 0.0;
         bool hasPublished_ = false;
         bool suppressed_ = false;
-        // F04/F05 对拍修复：抑制解除去抖。外部写者（创作时间轴轨）驱动的
-        // label 在过 0 交叉时只会短暂驻留 begin 值；若单帧驻留即解除抑制，
-        // EyeControl 会抢写 beginFrame 与轨乒乓（用户可见抖动/半睁卡住）。
-        // 仅当外部值在 begin 驻留足够的动画时间才解除；使用 elapsed
-        // time 而不是调用次数，避免重复 progress(0) 伪造稳定帧。
+        // Release suppression only after an externally driven label remains at
+        // begin for a minimum animation-time span. Repeated progress(0) calls
+        // do not satisfy the span.
         double stableDuration_ = 0.0;
         double stableValue_ = 0.0;
     };

@@ -1,6 +1,4 @@
 // PlayerRenderInternal.cpp — shared render helpers moved from PlayerRender.cpp
-// Split from PlayerRender.cpp for maintainability.
-//
 #include <cstdlib>
 #include "PlayerRenderInternal.h"
 #include "ConfigManager/IndividualConfigManager.h"

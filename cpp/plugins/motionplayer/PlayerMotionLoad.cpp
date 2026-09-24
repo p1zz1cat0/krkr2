@@ -1,6 +1,4 @@
 // PlayerMotionLoad.cpp — motion load, variable init, and node tree build
-// Split out for maintainability.
-//
 #include "PlayerInternal.h"
 #include "MotionTraceWeb.h"
 

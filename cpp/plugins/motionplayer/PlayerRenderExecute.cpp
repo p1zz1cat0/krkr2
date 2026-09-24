@@ -1,6 +1,4 @@
 // PlayerRenderExecute.cpp — render command build and execution
-// Split from PlayerRender.cpp for maintainability.
-//
 #include "PlayerRenderInternal.h"
 #include "MotionTraceWeb.h"
 #include "PrivateMotionGLL.h"
@@ -208,8 +206,7 @@ namespace motion {
     }
 
     namespace {
-        // The legacy per-part accurate-SLA path has been removed, so E-mote
-        // always uses the REF render-command graph.
+        // E-mote rendering uses the render-command graph for every part.
         constexpr bool kRenderCommandGraphEnabled = true;
 
         constexpr bool directPathClipIsHandled(bool scratchCanvasEnabled,
@@ -633,10 +630,8 @@ namespace motion {
                     const bool isStandaloneAlphaModifier =
                         ancestorCommand.stencilMaskInputs.empty() &&
                         (ancestorCommand.itemFlags & 7) == 6;
-                    // The independent difference-alpha classification stays
-                    // behind the REF policy seam, which is null in the
-                    // public fallback renderer this port mirrors; the
-                    // pairing fields remain wired for phase 2.
+                    // Keep independent difference-alpha classification behind the renderer
+                    // policy seam; pairing fields remain available to the command executor.
                     if(!ancestorCommand.stencilMaskInputs.empty() ||
                        isStandaloneAlphaModifier) {
                         ancestorCommand.childCommandIndices.push_back(
@@ -664,12 +659,9 @@ namespace motion {
             }
         }
 
-        // Pass 4 — flags-6 alpha modifiers attach to a concrete parent
-        // command (REF 8719..8741), resolved through the same scoped
-        // ancestor resolver. Composition-side application of the item+264
-        // alpha carrier lands with phase 2; until then the legacy
-        // child-as-mask fallback inside the executor still covers these
-        // groups, so the wiring is recorded graph-side only.
+        // Pass 4 — attach flags-6 alpha modifiers to concrete parent commands
+        // through the scoped ancestor resolver. Record the graph-side wiring used
+        // by the executor's child-as-mask fallback.
         for(size_t i = 0; i < commands.size(); ++i) {
             auto &modifier = commands[i];
             if(!modifier.groupOnly || !modifier.stencilMaskInputs.empty() ||
@@ -1017,14 +1009,11 @@ namespace motion {
                 groupItem->rawFlag21 = true;
             }
         }
-        // Pass 6 — projection onto the PreparedRenderItem pointer channels
-        // (parentItem/childItems/stencilMaskItems) that the proven executor
-        // consumes. Legacy relationships produced by the prepare post-pass
-        // are preserved (they own the type12 aggregation and wrapper-splice
-        // semantics that the binary enforces); the graph only APPENDS the
-        // scoped mask bindings the legacy numeric namespace could not
-        // resolve. Flags-6 modifier edges stay graph-only until the
-        // executor learns the item+264 alpha carrier (phase 2).
+        // Pass 6 — project scoped mask relationships onto the
+        // PreparedRenderItem parentItem, childItems, and stencilMaskItems
+        // channels consumed by the executor. Preserve prepared type-12
+        // aggregation and wrapper-splice semantics alongside the scoped mask
+        // bindings.
         const auto isPassThroughGroup =
             [](const ScopedRenderCommand &command) {
             // A group whose authored mask went empty this frame is NOT a
@@ -1255,8 +1244,8 @@ namespace motion {
             // the bitmap impl and would read this back from the GPU, so they
             // keep using `image`. Null under the software manager.
             iTVPBaseBitmap *meshImage = nullptr;
-            // Kept for the headless post-draw probes. Normal rendering no
-            // longer materializes a SourceCache Layer just to obtain pixels.
+            // Kept for headless post-draw probes; normal rendering uses decoded
+            // source pixels directly.
             iTJSDispatch2 *layerObject = nullptr;
             tTJSNI_BaseLayer *layer = nullptr;
             iTVPBaseBitmap *image = nullptr;
@@ -1387,14 +1376,11 @@ namespace motion {
                 item.composedLayer, scratchOwner, scratchParent,
                 static_cast<tTVPLayerType>(ltAlpha), false);
         };
-        // REF executeLayerRenderCommands draws every command straight into the
-        // target Layer and never writes that Layer's clip: a viewport-clipped
-        // command is diverted to a clip-sized composition surface at build
-        // time instead (itemRequiresLocalClipLike_0x6C7440). The fork used to
-        // divert the whole command list into a parentless replay canvas and
-        // composite the finished frame back, only so the per-command clip had
-        // a destination outside the layer tree. That route stays reachable as
-        // an explicit rollback / A-B switch.
+        // executeLayerRenderCommands paints directly into the target Layer.
+        // Viewport-clipped commands use a clip-sized composition surface chosen
+        // at build time (itemRequiresLocalClipLike_0x6C7440). The explicit
+        // KRKR_EMOTE_SLA_SCRATCH_CANVAS=1 replay path uses a parentless surface
+        // and publishes the finished frame.
         static const bool scratchCanvasEnabled = [] {
             const char *value = std::getenv("KRKR_EMOTE_SLA_SCRATCH_CANVAS");
             return value && value[0] != '\0' && value[0] != '0';
@@ -1439,9 +1425,8 @@ namespace motion {
                srcImage->GetHeight() <= 0) {
                 return true;
             }
-            // Temporary investigation probe (KRKR_EMOTE_ITEM_GEOM=1): the
-            // source bitmap size versus the quad it is drawn into separates a
-            // geometry error from a wrong-source-variant error.
+            // Optional geometry diagnostic probe (KRKR_EMOTE_ITEM_GEOM=1) compares
+            // source bitmap size with the destination quad.
             static const bool itemGeomDump = [] {
                 const char *e = std::getenv("KRKR_EMOTE_ITEM_GEOM");
                 return e && e[0] != '\0' && e[0] != '0';
@@ -2141,13 +2126,10 @@ namespace motion {
             return true;
         };
 
-        // The REF executor walks the render-command graph, not the legacy
-        // prepared top-level list. Synthetic type-12 stencil groups are
-        // intentionally emitted only in the auxiliary group list
-        // (topLevelList=false); using preparedRenderItemsTopLevel therefore
-        // drops the group and its children before buildItemOutput can
-        // compose them. That is the intermittent whole-face/body loss seen
-        // when an action switches a group between direct and masked output.
+        // Walk the render-command graph and include synthetic type-12 stencil
+        // groups from the auxiliary group list. The prepared top-level list omits
+        // those groups and their children, so buildItemOutput composes them from
+        // the graph-side relationship channels.
         std::vector<PreparedRenderItem *> executionItems;
         if(kRenderCommandGraphEnabled && !_runtime->renderCommands.empty()) {
             executionItems.reserve(_runtime->renderCommands.size());

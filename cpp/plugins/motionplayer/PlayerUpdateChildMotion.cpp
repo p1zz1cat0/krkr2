@@ -1,6 +1,4 @@
 // PlayerUpdateChildMotion.cpp — updateLayers motion sub-node phase
-// Split from PlayerUpdateLayers.cpp for maintainability.
-//
 #include "PlayerUpdateLayersInternal.h"
 
 namespace motion {
@@ -42,11 +40,8 @@ namespace motion {
                 }
                 Player &child = *childPtr;
                 const auto &slotSrc = mn.activeSlot().src;
-                // C02（REF findmotionByName 结构判定）：首帧 bootstrap 看
-                // 「子 Player 尚无 active motion 且 wrapper 有 slot src」，
-                // 不做路径前缀匹配——前缀外的合法嵌套 motion 此前永远
-                // build 不出节点树（e-mote 有界子树在首帧可能尚无
-                // v12/dirty，但仍需 play 才能 build 节点树）。
+                // Bootstrap a nested Player when it has no active motion and the wrapper
+                // has a slot source, regardless of the label's path prefix.
                 const bool needsBoundedChildBootstrap =
                     !child.hasActiveMotion() && !slotSrc.empty();
 
@@ -263,22 +258,9 @@ namespace motion {
                     if(mn.activeSlot().motionDocmpl &&
                        mn.activeSlot().crossfading && !mn.otherSlot().done &&
                        mn.otherSlot().motionDt != 0) {
-                        // F01-① (resolved 2026-09-01, libkrkr2.so arm64
-                        // 0x6BE858..0x6BE898): x10=[node+8] (parameter-entry
-                        // ptr); x11=x10+0x28; parentTime=*(double*)(entry+0x28)
-                        // — i.e. the +0x28 field IS the normalized tick value
-                        // (entry.value, the transToTick product), not a raw
-                        // frame. Write side confirmed in sub_6B1718
-                        // (0x6B188C..0x6B19E4): entry fields are laid out as
-                        // id(str)@0..0x1F, discretization@0x20, rangeBegin
-                        // @-0x28 from end, ..., value@+0x28 written via the
-                        // transToTick computation (division * (raw-
-                        // rangeBegin)/(rangeEnd-rangeBegin)). Consumers here
-                        // (0x6BE864 crossfade angle, 0x6BE688 case-3 finite
-                        // difference) read entry+0x28 directly as the parent
-                        // clock; fallback when node+8 is null is player+456
-                        // (_clampedEvalTime, same tick domain). Current code
-                        // passes parameterEntry->value — matches the binary.
+                        // ParameterEntry.value is the normalized parent tick used by crossfade
+                        // angle and finite-difference evaluation. When no entry is available,
+                        // use player._clampedEvalTime in the same tick domain.
                         double parentTime = parameterEntry
                             ? parameterEntry->value
                             : _clampedEvalTime;
@@ -365,11 +347,8 @@ namespace motion {
                                     // Guard fails → LABEL_119: hasAngle=false
                                     break;
                                 }
-                                // Parent time (0x6BE688..0x6BE6B0): node+8+40
-                                // is parameterEntry->value; fallback is
-                                // player+456. F01-① (2026-09-01): +0x28 is
-                                // the normalized tick value (see the detailed
-                                // note at the crossfade block above).
+                                // Parent time uses parameterEntry->value and falls back to player+456.
+                                // The +0x28 entry field is the normalized tick value.
                                 double parentTime = parameterEntry
                                     ? parameterEntry->value
                                     : _clampedEvalTime;
@@ -562,9 +541,6 @@ namespace motion {
 
                         // isEmoteMode check + zFactor (0x6BEA90..0x6BEA94)
                         child._zFactor = _zFactor;
-                        // Binary at 0x6BEA98: if isEmoteMode, call
-                        // Player_initEmoteMotion(child, 2) This syncs emote
-                        // bone state. Emote mode is not used in web port.
 
                         // === Angle → child (0x6BEAA8..0x6BEB08) ===
                         if(hasAngle) {
@@ -690,12 +666,9 @@ namespace motion {
                 const bool runChildStep = !emoteLike || _emoteDirty ||
                     (mn.flags & 0x01) != 0 || child._queuing ||
                     child._noUpdateYet;
-                // F07-①（REF EmoteNode.cpp 758-764）：子 motion 的有效区域
-                // = wrapper 节点当前的 (originX, originY, width, height)，
-                // zMax 沿用。REF 把节点矩形原样传给 emotemotion::progress；
-                // 这里以 wrapper 节点（mn）的几何作为 child 的 root region。
-                // 无尺寸 wrapper（motion/layout/clip，clipW/H=0）→ region
-                // 全零 → child 的 Phase2 回退到自己 PSB 的 screenSize。
+                // A child motion's effective region is the wrapper node's current
+                // (originX, originY, width, height); zMax is inherited. A zero-sized wrapper
+                // falls back to the child PSB's screenSize.
                 const auto inheritedWrapperLim =
                     (i < _runtime->perNodeEvalData.size())
                         ? _runtime->perNodeEvalData[i].evalLim

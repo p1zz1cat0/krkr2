@@ -168,16 +168,8 @@ namespace motion::physics {
         if(!active_) {
             return 0.0;
         }
-        // Take the strongest gust covering x, not the first one in slot
-        // order. Slots are a recycled free list and every gust carries its
-        // own [powerMin, powerMax] draw, so "first active slot that covers x"
-        // made the sampled force jump between unrelated random magnitudes
-        // from frame to frame as gusts spawned and expired — a per-frame
-        // velocity perturbation on every pend-driven part (hair, parts,
-        // clothes) while the character was otherwise standing still. Facial
-        // features carry no pend control and so never showed it.
-        // Selecting the maximum keeps the original value domain (bounded by
-        // powerMax * |signedSpeed_|) while removing the dependence on slot
+        // Select the strongest gust whose interval covers x. This keeps sampled
+        // force within powerMax * abs(signedSpeed_) and independent of slot
         // recycling order.
         double strongest = 0.0;
         for(const auto &gust : gusts_) {
@@ -362,16 +354,9 @@ namespace motion::physics {
             output_[index] =
                 soft(-dx * config_.scaleX[index] * globalScale);
             if(static_cast<int>(index) == config_.verticalOutputSegment) {
-                // Measure the vertical output from the authored rest sag
-                // (`pend.param.ofs`), not from zero. A pend hangs at the
-                // equilibrium where gravity balances the weak back spring —
-                // for this asset 0.2 / 0.003711 = 53.892, and the authored
-                // ofs is -53.89473 — so referencing zero reports that static
-                // droop as a permanent large vertical signal. applyBend()
-                // then keeps bendEnvelope_ pinned at 1.0 and the bend
-                // oscillator runs forever at full amplitude, which is the
-                // standing-still hair/tail sway. metadataOffset defaults to
-                // 0.0, so assets without the field keep the old behaviour.
+                // Measure vertical output from the authored rest sag (`pend.param.ofs`).
+                // A missing metadataOffset is treated as zero, preserving the rest-pose
+                // equilibrium used by the bend oscillator.
                 output_[2] = soft((config_.metadataOffset - dy) *
                                   config_.scaleY[index] * globalScale);
             }
@@ -456,15 +441,10 @@ namespace motion::physics {
             return std::nullopt;
         }
 
-        // F04/F05 对拍修复（抑制解除去抖）：外部写者（创作时间轴轨）驱动
-        // 时，值只在过 0 交叉的瞬间驻留 begin；原实现单帧驻留即解除抑制，
-        // EyeControl 抢写 beginFrame 与轨乒乓（商业素材上表现为抖动与
-        // 半睁卡住）。现在要求值按动画时间驻留 begin 才解除——轨的
-        // authored 长零段（idle）会自然满足，过零交叉不会。
-        // REF 对应语义：updateEyeControl 先于 updateTimelineControl 执行、
-        // 轨无条件后写覆盖（EmoteFileCore.cpp 536/701，progress 调用序
-        // 507-508），创作轨最终赢；本抑制机制是其上的增强，去抖使其不与
-        // REF 结果冲突。
+        // Suppression is released only after an externally driven value remains
+        // at begin for a minimum span of animation time. Authored idle holds
+        // satisfy the span; zero crossings do not. Timeline controls run after
+        // EyeControl and remain the final writer.
         constexpr double kStableDurationNeeded = 8.0;
         if(std::abs(currentVariableValue - stableValue_) > 0.000001) {
             stableValue_ = currentVariableValue;
@@ -494,8 +474,7 @@ namespace motion::physics {
                 current_ = config_.beginFrame;
                 resetCountdown(random);
             } else {
-                // 值在 begin 附近但动画时间驻留不足：视为外部写者仍在驱动，进入
-                // 抑制等待（不再抢写）。
+                // While the external writer is still driving begin, wait without writing.
                 suppressed_ = true;
                 phase_ = Phase::Idle;
                 current_ = currentVariableValue;

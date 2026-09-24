@@ -1,6 +1,5 @@
 // PlayerUpdateGeometry.cpp — updateLayers geometry, visibility, camera, and
-// shape phases Split from PlayerUpdateLayers.cpp for maintainability.
-//
+// Geometry update phases.
 #include "PlayerUpdateLayersInternal.h"
 
 #include <cstdio>
@@ -726,9 +725,8 @@ namespace motion {
                 _cameraPosX = camNode.accumulated.posX;
                 _cameraPosY = camNode.accumulated.posY;
                 _cameraPosZ = camNode.accumulated.posZ;
-                // Look up target node via clip slot action path
-                // For now, target defaults to previous positions
-                // Compute angle: atan2(camPosZ - targetZ, camPosX - targetX)
+                // Resolve the target position from the clip-slot action path, defaulting
+                // to the previous position.
                 double angleRad =
                     std::atan2(camNode.accumulated.posZ - _cameraTargetZ,
                                camNode.accumulated.posX - _cameraTargetX);

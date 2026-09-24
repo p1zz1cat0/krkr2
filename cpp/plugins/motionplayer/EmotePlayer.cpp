@@ -243,9 +243,8 @@ namespace motion {
 
     // Aligned to libkrkr2.so sub_52FD84: create() is actually "destroy/reset"
     void EmotePlayer::create() {
-        // A07（台账/Aether 对照同一候选）：reset 必须清干净 wrapper 请求态，
-        // 否则旧 _storageKey/_clipLabel 会参与下一次 play() 的 fallback
-        // 选择（MultiCache/motionKey 命中旧路径）。
+        // Reset wrapper request state so each play() resolves only the current
+        // storage and clip request.
         _module.Clear();
         _storageKey.Clear();
         _clipLabel.Clear();
@@ -348,10 +347,9 @@ namespace motion {
         copy->_player.setEmoteMeshDivisionRatio(copy->_meshDivisionRatio);
         copy->_player.setVisible(copy->_visible);
 
-        // A06（状态级 clone）：经 A05 superset schema 把 Player 内状态
-        // （变量/timeline 播放态与 currentTime/blendRatio/tick/speed/
-        // outline）转移到副本——"模块加载成功"不等于状态保真。过渡动画
-        // 队列（transition/ease animator）是瞬态，不在 schema 内。
+        // Clone transfers Player state fields (variables, timeline playback,
+        // currentTime, blendRatio, tick, speed, and outline) to the copy.
+        // Transition and ease animators remain transient.
         if(snapshot) {
             copy->_player.unserialize(_player.serialize());
         }
@@ -422,13 +420,9 @@ namespace motion {
     }
 
     tTJSVariant EmotePlayer::serialize() {
-        // A05（版本化 superset schema）：Player 层字段（chara/motion/
-        // tickcount/speed/outline/variables/timelines）原样保留在顶层，
-        // 追加 wrapper 变换状态。REF emoteplayerclass.cpp:363 的键名
-        // （currCoordx/currCoordy/currAngle/currZx/currZy）原样复用，REF
-        // 产出的存档可直接被本 unserialize 消费；wrapper 专有拆分
-        // （base/user scale、color、mirror、speedRatio）用显式键。
-        // 旧 Player schema 存档（无 wrapper 键）反序列化时字段保持当前值。
+        // The versioned superset schema keeps Player fields at the top level and
+        // stores wrapper transform state separately. REF coordinate keys remain
+        // accepted; legacy snapshots without wrapper keys retain current defaults.
         tTJSVariant playerState = _player.serialize();
         std::vector<std::pair<std::string, tTJSVariant>> entries;
         if(playerState.Type() == tvtObject &&
@@ -459,9 +453,8 @@ namespace motion {
     }
 
     void EmotePlayer::unserialize(tTJSVariant data) {
-        // A05：wrapper 字段全部可选——旧 Player schema 存档缺 wrapper 键时
-        // 保持当前值；含 REF 键或 superset 键时恢复。Player 层先恢复
-        // （可能重建节点树），wrapper 变换随后推入才能生效。
+        // Wrapper fields are optional. Restore Player state first, then apply
+        // wrapper transforms after the node tree is ready.
         if(data.Type() == tvtObject && data.AsObjectNoAddRef() != nullptr) {
             iTJSDispatch2 *dict = data.AsObjectNoAddRef();
             auto readKey = [&](const tjs_char *key, tTJSVariant &out) {
@@ -883,20 +876,18 @@ namespace motion {
     }
 
     void EmotePlayer::setTimeline(ttstr label, bool loop) {
-        // A08：参数此前被静默忽略（只 playTimeline(label, 0)）。loop 现在
-        // 生效：覆盖该 timeline 的 loop 判定（TimelineState.loop 控制
-        // skipToSync/帧推进的 wrap 行为），并按 REF TimelinePlayFlag 语义
-        // 用非并行 flag 启动（替换当前播放集合）。
+        // `loop` controls TimelineState.loop, including skipToSync and
+        // frame-advance wrapping. Start the timeline with the non-parallel play
+        // flag and replace the current playing set.
         _player.setTimelineLoop(label, loop);
         _player.playTimeline(label, 0);
     }
 
     bool EmotePlayer::play(ttstr label, tjs_int flags) {
-        // 参考 sdl3/emoteplayerclass.cpp（不编译）: EmotePlayer::play()
-        // 三种启动模式
-        //   1) motionKey bound module
-        //   2) single cached motion PSB (chara+motion path)
-        //   3) multi-cache composite (addEmoteFile — not fully ported)
+        // EmotePlayer::play() starts motion from one of three sources:
+        //   1) a module bound through motionKey;
+        //   2) a single cached motion PSB selected by chara and motion;
+        //   3) a multi-cache composite assembled by addEmoteFile.
         if(label.IsEmpty()) {
             label = _clipLabel;
         }
@@ -1030,11 +1021,9 @@ namespace motion {
                         "snapshot(s)",
                         primarySnapshot->attachedSnapshots.size());
                 } else {
-                    // R04：候选存在但 chara/motion 全部未命中请求（分辨率
-                    // 变体、空请求、同 chara 多 motion 的组合）。当前行为
-                    // 是保留精确匹配 + lastLoaded/generation 偏好的修复版
-                    // 选择器，不做 REF「第一个可解析即选」的回退；miss 时
-                    // 必须可观测，落到下面的 fallback 路径并留下证据。
+                    // Select a loaded candidate by exact chara/motion match, then by
+                    // lastLoaded/generation preference. When no candidate matches, enter
+                    // the observable fallback path.
                     LOGGER->warn(
                         "EmotePlayer::play mode=MultiCache: no candidate "
                         "matches requested chara='{}' motion='{}' over {} "
@@ -1097,8 +1086,7 @@ namespace motion {
     }
 
     // ============================================================
-    // A01（REF EmotePlayer ABI 补齐）
-    // ============================================================
+    // EmotePlayer ABI members.
 
     namespace {
         // REF emoteplayerclass.cpp:286 fillLayerColor 原样移植：整面填充
@@ -1200,8 +1188,7 @@ namespace motion {
     }
 
     void EmotePlayer::assign(tTJSVariant another) {
-        // REF emoteplayerclass.cpp:695 assign 本体即 LOGGER->info("TODO")；
-        // 按 REF incomplete 原样登记为 no-op，避免臆造拷贝语义。
+        // Keep the compatibility member as a logged no-op; no copy semantics are defined.
         (void)another;
         LOGGER->info("EmotePlayer::assign TODO");
     }
@@ -1345,9 +1332,8 @@ namespace motion {
             return false;
         }
 
-        // Prefer the last rendered AABB. setCoord 是模型原点，不是 AABB
-        // 左上角；motion width/height 也常为 0。旧实现会在切换帧把触摸盒
-        // 收成 (0,0) 附近的退化矩形。
+        // Prefer the last rendered AABB. setCoord identifies the model origin,
+        // and motion width/height may be zero.
         if(_player.hitTestBounds(x, y)) {
             return true;
         }

@@ -244,13 +244,10 @@ namespace motion {
                                         tTJSVariant **param,
                                         iTJSDispatch2 *objthis);
 
-        // --- A01（REF EmotePlayer ABI 补齐）---
-        // REF emoteplayerclass.h 暴露但本 wrapper 缺失的成员。语义对照：
-        // playing/allplaying 走 Player_getPlaying(0x6D9794)/
-        // Player_getAllplaying(0x6CCE34)；tickCount=REF clockPassed（本实现
-        // 的 _progress 累计）；speed=REF speedRatio，默认 20 仅作存储值，
-        // 尚未驱动推进（台账 A03/Open items）；variableKeys 只读返回变量
-        // 标签数组（REF setter 抛错 → RO property 同样拒绝写入）。
+        // Runtime status and clock properties.
+        // playing/allplaying delegate to Player; tickCount exposes accumulated
+        // progress. speed is stored with a default of 20 and does not currently
+        // drive advancement; variableKeys returns a read-only array of labels.
         [[nodiscard]] bool getPlaying() const { return _player.getPlaying(); }
         [[nodiscard]] bool getAllplaying() const {
             return _player.getAllplaying();
@@ -265,8 +262,7 @@ namespace motion {
         // neutralColor（0xAARRGGBB）。E-mote 双运行模式里 draw 的配套清屏。
         void clear(tTJSVariant layer, tjs_uint32 neutralColor);
 
-        // REF assign(anotherAdaptor) 本体即 "TODO"（REF incomplete）；
-        // 注册同名成员保持 ABI 存在，行为为带日志的 no-op。
+        // Keep the compatibility member registered as a logged no-op.
         void assign(tTJSVariant another);
 
         // REF setCameraOffset(w, h)：currCamX/Y 直接叠加进模型平移；委托
@@ -286,8 +282,7 @@ namespace motion {
         tTJSVariant _module;
         ttstr _storageKey; // motionKey: PSB 缓存路径
         ttstr _clipLabel; // motion: clip/timeline 名
-        // A01: REF speedRatio（emoteplayerclass.h:191 默认 20）。存储值，
-        // 推进公式（clockPassed += mstime / speedRatio）待 A03 对拍后接线。
+        // Stored speed ratio; the default is 20.
         double _speedRatio = 20.0;
         bool _useD3D = false;
         bool _smoothing = true;

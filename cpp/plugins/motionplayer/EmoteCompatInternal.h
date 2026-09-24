@@ -26,12 +26,10 @@ namespace motion {
                 !label.empty() && !instantVariable && trackLabel == label;
         }
 
-        // C01（REF emotemotion 单树递归）：是否并入父 bounds/render graph
-        // 只看结构事实——该节点是否拥有 child Player（nodeType==3，由
-        // buildNodeTree 按 PSB motion 引用结构创建）。source 前缀与日文
-        // label allowlist（motion/face_parts/…、■目L 等 15 项）是症状驱动
-        // 的启发式，已删除：未命中名字的合法附件此前会完成 update 却永不
-        // 进入渲染图。
+        // A node joins the parent bounds and render graph only when it owns a
+        // child Player created from the PSB motion-reference structure
+        // (nodeType == 3). Source prefixes and labels are excluded from this
+        // decision.
         inline bool shouldMergeEmoteBoundedChild(int nodeType,
                                                  const std::string &source,
                                                  const std::string &layerName) {
@@ -202,10 +200,8 @@ namespace motion {
             return motionPath + '\n' + sourceKey;
         }
 
-        // G02（REF EmoteNode.cpp useBezierMesh = isNeedBp || 祖先 type==1）：
-        // 是否保留 Bezier/mesh 变形只看 mesh 数据本身——参数化节点、帧
-        // authored bp、祖先 mesh surface 任一成立即保留。素材命名
-        // （face_parts/face_ 字符串分流）不是格式语义，已删除。
+        // Preserve Bezier/mesh deformation when the node has parameterized
+        // data, an authored frame `bp`, or an ancestor mesh surface.
         inline bool nodeKeepsEmoteDeformation(bool parameterized,
                                               bool hasFrameBp,
                                               bool hasMeshAncestor) {
@@ -223,12 +219,10 @@ namespace motion {
                               bool hasUnitBp, bool unitBpNearIdentity,
                               bool keepDeformation, double clipW,
                               double clipH) {
-            // G01（REF）：meshDivision 只 clamp 到 1..50，再按 icon 宽高
-            // 分配 divX/divY。删除 cap=20 与「unit-bp 折成 2x2 affine」
-            // 折叠——authored density 是像素契约，性能旋钮是 TJS
-            // meshDivisionRatio（ratio 缩放 authoredDivision）。非 name、
-            // 非 unit-bp 驱动。hasUnitBp/unitBpNearIdentity 仅为调用方
-            // 兼容保留，不再参与判定。
+            // Clamp meshDivision to 1...50, then derive divX/divY from icon
+            // dimensions. TJS meshDivisionRatio scales the authored division.
+            // hasUnitBp and unitBpNearIdentity remain compatibility accessors
+            // outside mesh selection.
             constexpr int kMeshDivHardCap = 50;
 
             const double ratio = (std::isfinite(meshDivisionRatio) &&

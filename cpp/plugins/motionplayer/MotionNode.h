@@ -315,11 +315,8 @@ namespace motion::detail {
         // render gate either.
         bool drawFlag = false;
 
-        // node+1944 in libkrkr2.so sub_6C2334 — set to 1 when a node
-        // enters the Path A render list (mainList), cleared at the top
-        // of the outer loop. Mirrors a real native field for parity but
-        // currently has no port consumer; kept for the Phase 4
-        // motion_playback differential oracle.
+        // Native parity field for Path A render-list membership, reset at the
+        // top of the outer loop.
         bool drawnThisFrame = false;
 
         int forceVisible = 0; // node+1996
@@ -384,7 +381,7 @@ namespace motion::detail {
         // Camera constraint for nodeType=9 (sub_6BC000 at 0x6BC000)
         int cameraConstraintType = 0; // node+2376: "anchor" type
 
-        // (particleChildren replaced by particleArrayVar above — TJS Array)
+        // TJS Array of particle child Players.
         int particleType = 0; // node+2164: particle subtype
         int particleMaxNum = 0; // node+2168: max particle count
         // Binary: node+2192 is a SINGLE field used as both "accel ratio" (decay
@@ -427,14 +424,6 @@ namespace motion::detail {
         int parentClipIndex = -1;
 
         // node+200 / node+201 are consumed by sub_6BC4F0 and sub_6C2334.
-        // Current-turn evidence:
-        // - node+200 is zero-initialized by sub_699390 via STRB [node,#0xC8]
-        // - node+200 is later written by sub_6C0528 (anchor path) via STRB
-        // [node,#0xC8]
-        // - node+201 is read by sub_6C2334 via LDRB [node,#0xC9]
-        // - current ctor/deque/build-node review found no standalone init
-        // writer
-        //   for node+201 inside the motionplayer node lifecycle
         bool renderTreeFlag200 = false; // node+200 / 0xC8
         // node+201 / 0xC9. Read by 0x6BC4F0 and copied into item+16 by
         // 0x6C2334. There is no standalone init writer on the current reachable

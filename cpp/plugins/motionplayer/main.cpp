@@ -338,9 +338,8 @@ NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer) {
     NCB_PROPERTY_RO(animating, getAnimating);
     NCB_PROPERTY_RO(playCallback, getPlayCallback);
 
-    // A01（REF EmotePlayer ABI 补齐；emoteplayerclass.h property_marco）
-    // REF 的 set_variableKeys 抛 "reject to set variableKeys" → RO 等价拒写。
-    // D3DEmotePlayer 继承 EmotePlayer，同一组成员在镜像注册里同样暴露。
+    // set_variableKeys is read-only; game scripts receive a property that
+    // rejects writes. D3DEmotePlayer mirrors the member for compatibility.
     NCB_PROPERTY_RO(playing, getPlaying);
     NCB_PROPERTY_RO(allplaying, getAllplaying);
     NCB_PROPERTY(tickCount, getTickCount, setTickCount);
@@ -428,7 +427,7 @@ NCB_REGISTER_SUBCLASS(ResourceManager) {
     NCB_METHOD(loadSource);
     NCB_METHOD(unload);
     NCB_METHOD(clearCache);
-    NCB_METHOD(unloadAll); // R02: REF API alias of clearCache
+    NCB_METHOD(unloadAll); // clearCache API alias.
     NCB_METHOD(findSource);
     NCB_METHOD(requireLayerId);
     NCB_METHOD(releaseLayerId);
@@ -531,10 +530,10 @@ static void PostRegistCallback() {
             return;
         }
 
-        // Player_ncb_registerMembers @ 0x6D69C8 registers useD3D as a
-        // property object on the Player class; game scripts probe that with
-        // typeof Motion.Player.useD3D. This restores the class-level NCB shape
-        // without adding a mutable static useD3D state.
+        // Player_ncb_registerMembers @ 0x6D69C8 exposes useD3D as a property
+        // object on the Player class. Game scripts probe it with
+        // typeof Motion.Player.useD3D; the class-level shape uses no mutable static
+        // state.
         playerClass->PropSet(TJS_MEMBERENSURE | TJS_STATICMEMBER,
                              TJS_W("useD3D"), nullptr, &marker, playerClass);
     };
@@ -653,9 +652,8 @@ NCB_REGISTER_CLASS(D3DEmotePlayer) {
     NCB_PROPERTY_RO(animating, getAnimating);
     NCB_PROPERTY_RO(playCallback, getPlayCallback);
 
-    // A01（REF EmotePlayer ABI 补齐；emoteplayerclass.h property_marco）
-    // REF 的 set_variableKeys 抛 "reject to set variableKeys" → RO 等价拒写。
-    // D3DEmotePlayer 继承 EmotePlayer，同一组成员在镜像注册里同样暴露。
+    // set_variableKeys is read-only; game scripts receive a property that
+    // rejects writes. D3DEmotePlayer mirrors the member for compatibility.
     NCB_PROPERTY_RO(playing, getPlaying);
     NCB_PROPERTY_RO(allplaying, getAllplaying);
     NCB_PROPERTY(tickCount, getTickCount, setTickCount);

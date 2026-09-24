@@ -987,10 +987,8 @@ namespace motion {
                     static_cast<tjs_uint>(entry.baseBitmap->GetWidth()),
                     static_cast<tjs_uint>(entry.baseBitmap->GetHeight()), 32);
             }
-            // Animated tint changes used to allocate a fresh full-size bitmap,
-            // copy the source, then walk every pixel a second time. Reuse one
-            // derivative and combine source copy plus tint in a single pass so
-            // long-running character scenes do not churn hundreds of MB.
+            // Reuse one derivative and combine source copy plus tint in a single pass,
+            // avoiding full-size allocation churn during animated tint changes.
             copyAndApplyPackedCornerTintLike_0x6A7518(
                 *entry.baseBitmap, *entry.backingBitmap, packedColors,
                 useHalfAlphaTint);

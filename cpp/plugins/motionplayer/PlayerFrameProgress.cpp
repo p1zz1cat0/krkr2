@@ -1,6 +1,4 @@
 // PlayerFrameProgress.cpp — frameProgress timeline/control stepping
-// Split from PlayerRender.cpp for maintainability.
-//
 #include <stdexcept>
 
 #include "PlayerInternal.h"
@@ -526,9 +524,9 @@ namespace motion {
                 state.currentTime += dt;
                 if(state.totalFrames > 0.0 &&
                    state.currentTime >= state.totalFrames) {
-                    // A08：显式 loop 覆盖（setTimelineLoop）优先于 authored
-                    // loopTime——loop=true 时从 0 回卷，即使素材没有写
-                    // loopTime；loop=false 时不改变 authored 回卷行为。
+                    // An explicit loop override from setTimelineLoop takes precedence over
+                    // authored loopTime: true wraps from zero; false preserves authored
+                    // wrapping.
                     const double effectiveLoopTime = state.loopOverrideSet
                         ? (state.loop
                                ? (state.loopTime >= 0.0 ? state.loopTime : 0.0)
@@ -632,9 +630,8 @@ namespace motion {
                     const bool blendAnimatorPending =
                         state.blendAnimator.active ||
                         !state.blendAnimator.queue.empty();
-                    // A08：显式 loop 覆盖（setTimelineLoop）让无 authored
-                    // loop 区间的 timeline 到 lastTime 后从 0 回卷，而不是
-                    // 停播；loop=false 维持原停播行为。
+                    // An explicit loop override makes a timeline without an authored loop
+                    // interval wrap from zero after lastTime; false preserves stop behavior.
                     if(state.loop && lastTime <= state.currentTime) {
                         state.currentTime = 0.0;
                         resetTimelineControlStateLike_0x671A50(state, *binding,
@@ -1227,9 +1224,8 @@ namespace motion {
             delta = 0;
         }
 
-        // e-mote：走 sdl3 参考实现，不用 AI 反编译的 frameProgress+全量 phase3
-        // 管线。 必须在 ensureMotionLoaded 之后判定（variableLabels 来自
-        // activeMotion）。
+        // E-mote uses the sdl3 reference path. Evaluate after ensureMotionLoaded
+        // because variableLabels comes from activeMotion.
         if(detail::isEmoteLikeMotion(*self->_runtime)) {
             self->progressEmoteLike_sdl3(delta, objthis);
             if(result) {

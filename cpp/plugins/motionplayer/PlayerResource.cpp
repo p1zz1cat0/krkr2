@@ -1,6 +1,4 @@
 // PlayerResource.cpp — Resource management: unload, findMotion, layerId
-// Split from Player.cpp for maintainability.
-//
 #include "PlayerInternal.h"
 #include "SourceCache.h"
 

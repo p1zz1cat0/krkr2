@@ -1,7 +1,4 @@
-// PlayerInternal.h — Shared internal helpers extracted from Player.cpp
-// These were originally in an anonymous namespace. Now in motion::internal
-// with inline linkage for use across multiple translation units.
-//
+// Shared internal helpers for the Player implementation.
 #pragma once
 
 #include "Player.h"
@@ -1690,9 +1687,9 @@ namespace motion {
             const std::vector<std::shared_ptr<const PSB::PSBDictionary>>
                 *rootLayerList = nullptr);
 
-        // F07: `lim` is the node's effective region for the current frame
-        // (effectiveNodeLimLike_REF) against which NaN/Inf sentinel coords
-        // resolve; NOT the root logical screen for nested nodes.
+        // `lim` is the node's effective current-frame region used to resolve
+        // NaN/Inf sentinel coordinates. Nested nodes use their effective region,
+        // not the root logical screen.
         bool evaluateTimelineLike_0x699AE4(detail::MotionNode &node,
                                            bool dirtyArg, double currentTime,
                                            bool isEmoteMode,
