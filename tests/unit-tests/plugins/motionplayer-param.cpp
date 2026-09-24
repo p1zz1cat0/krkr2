@@ -145,6 +145,13 @@ TEST_CASE("plain flattened bitmaps do not inherit an outer render group") {
     CHECK(motion::detail::flattenedItemKeepsOuterRenderAncestor(true));
 }
 
+TEST_CASE("Player depth projection is opt-in") {
+    motion::Player player;
+    CHECK(player.getZFactor() == 0.0);
+    player.setZFactor(1.0);
+    CHECK(player.getZFactor() == 1.0);
+}
+
 TEST_CASE("loading a snapshot resets motion-local playback state") {
     motion::Player player;
     player.setFrameLastTime(7.0);
