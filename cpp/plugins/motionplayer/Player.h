@@ -680,6 +680,7 @@ namespace motion {
         tjs_int _maskMode = 0; // libkrkr2.so +1148
         std::uint32_t _colorWeightPacked = 0xFF808080u; // libkrkr2.so +1156
         bool _independentLayerInherit = false; // libkrkr2.so +1097
+        // The legacy default is opt-in via KRKR_EMOTE_CUTE_MODE=1.
         double _zFactor = 0.0;
         tTJSVariant _cameraTarget;
         tTJSVariant _cameraPosition;

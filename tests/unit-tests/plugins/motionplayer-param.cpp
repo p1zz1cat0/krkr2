@@ -9,7 +9,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <optional>
+#include <string>
 #include <unordered_map>
 
 #include "motionplayer/EmoteCompatInternal.h"
@@ -146,10 +149,40 @@ TEST_CASE("plain flattened bitmaps do not inherit an outer render group") {
 }
 
 TEST_CASE("Player depth projection is opt-in") {
+    constexpr const char *key = "KRKR_EMOTE_CUTE_MODE";
+    const char *oldValue = std::getenv(key);
+    const std::optional<std::string> original = oldValue
+        ? std::optional<std::string>(oldValue)
+        : std::nullopt;
+    struct RestoreEnvironment {
+        const char *key;
+        std::optional<std::string> original;
+        ~RestoreEnvironment() {
+            if(original) {
+                ::setenv(key, original->c_str(), 1);
+            } else {
+                ::unsetenv(key);
+            }
+        }
+    } restore{key, original};
+
+    REQUIRE(::unsetenv(key) == 0);
     motion::Player player;
     CHECK(player.getZFactor() == 0.0);
     player.setZFactor(1.0);
     CHECK(player.getZFactor() == 1.0);
+
+    REQUIRE(::setenv(key, "1", 1) == 0);
+    motion::Player cutePlayer;
+    CHECK(cutePlayer.getZFactor() == 1.0);
+    cutePlayer.setZFactor(0.25);
+    CHECK(cutePlayer.getZFactor() == 0.25);
+
+    for(const char *disabled : {"0", "true", "", "10"}) {
+        REQUIRE(::setenv(key, disabled, 1) == 0);
+        motion::Player normalPlayer;
+        CHECK(normalPlayer.getZFactor() == 0.0);
+    }
 }
 
 TEST_CASE("loading a snapshot resets motion-local playback state") {

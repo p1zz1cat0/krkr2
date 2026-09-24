@@ -3,6 +3,8 @@
 //
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 
 #include "PlayerInternal.h"
@@ -166,6 +168,10 @@ namespace motion {
     Player::Player(ResourceManager rm, Player *parentPlayer) :
         _runtime(detail::makePlayerRuntime()),
         _resourceManagerNative(std::move(rm)), _parentPlayer(parentPlayer) {
+        const char *cuteMode = std::getenv("KRKR_EMOTE_CUTE_MODE");
+        if(cuteMode && std::strcmp(cuteMode, "1") == 0) {
+            _zFactor = 1.0;
+        }
         LOGGER->debug("Motion.Player constructor called");
         using ResourceManagerAdaptor = ncbInstanceAdaptor<ResourceManager>;
         if(auto *dispatch = ResourceManagerAdaptor::CreateAdaptor(
