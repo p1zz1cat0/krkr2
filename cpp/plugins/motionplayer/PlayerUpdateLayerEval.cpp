@@ -802,8 +802,8 @@ namespace motion {
             // blink, clamp and timeline blending write the latter without
             // changing the expression animator's base value.  Pass the
             // evaluated value down the motion ownership tree per frame, with
-            // the child's inherited inputs winning over neutral seeds (A1:
-            // aligned to REF effectiveVariableScratch).
+            // Inherited inputs take precedence over neutral seeds, aligned to the
+            // REF effectiveVariableScratch behavior.
             const auto effectiveVariableGeneration =
                 _runtime->beginEffectiveVariableScratch();
             for(const auto &[label, value] : _variableValues) {

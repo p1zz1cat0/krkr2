@@ -321,8 +321,8 @@ namespace motion::detail {
     //   +0   ttstr name   — from entry["scope"], split by ':' and take the
     //                       right half; empty when no scope / no colon.
     //   +24  ttstr label  — from entry["label"].
-    //   +68  u8  flag68=1 — observed default (semantics not yet reversed).
-    //   +124 u8  flag124=1 — observed default (semantics not yet reversed).
+    //   +68  u8 flag68=1 — binary default.
+    //   +124 u8 flag124=1 — binary default.
     struct VariableLabelEntry {
         ttstr name;
         ttstr label;

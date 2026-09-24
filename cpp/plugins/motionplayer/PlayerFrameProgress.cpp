@@ -1081,10 +1081,9 @@ namespace motion {
                     const bool stillAnimating =
                         stepQueuedAnimatorLike_0x67D01C(
                             state, controllerDt, steppedValue);
-                    // A live diff-timeline contribution owns this label; the
-                // controller animator's stale snapshot must not fight it
-                // (NEKOPARA posed body_UD=-30 vs accumulate ≈0 ping-ponged
-                // the character between two poses every frame).
+                    // Live diff-timeline contribution owns this label.
+                // The controller animator follows the current accumulated value
+                // while that contribution is live.
                 if(hasActiveDifferenceTimelineOwner(label)) {
                     state.currentValue = static_cast<float>(steppedValue);
                     continue;

@@ -149,7 +149,7 @@ namespace motion {
     //   name  <- entry["scope"] split by "::" first, then ":" (right half),
     //            or empty
     //   label <- entry["label"]
-    //   flag68/flag124 <- 1 (binary default; semantics not yet reversed)
+    //   flag68/flag124 <- 1 (binary default)
     void Player::initVariables() {
         if(!_runtime) {
             return;

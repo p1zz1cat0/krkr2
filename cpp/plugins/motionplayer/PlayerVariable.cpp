@@ -304,9 +304,8 @@ namespace motion {
                     return value;
                 }
             }
-            // A1 fallback: no inherited input this frame — fall back to the
-            // controllerOwner chain.  Trace once per label so the missing
-            // propagation path is observable without flooding the log.
+            // With no inherited input this frame, use the controllerOwner chain and
+            // emit one trace per label so the missing propagation path remains observable.
             {
                 static std::unordered_set<std::string> fallbackLogged;
                 if(fallbackLogged.insert(id).second) {

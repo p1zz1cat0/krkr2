@@ -39,7 +39,7 @@
 namespace motion {
     namespace internal {
 
-        // TEMP: current writer site tag for the env-gated write audit.
+        // Writer-site tag for the env-gated write audit.
         extern thread_local const char *g_emoteWriteSite;
 
 

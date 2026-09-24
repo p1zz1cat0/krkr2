@@ -1157,9 +1157,8 @@ namespace motion {
         // A diff-timeline track driving a selector label owns its value
         // while the contribution is live. NEKOPARA's transitionControl +
         // selectorControl tables register every pose variable (body_UD,
-        // head_slant, ...), so letting the sweep run freely wiped the
-        // pendingDiff bookkeeping each frame and re-applied the option
-        // snapshot — idle sway froze at the scenario pose and twitched.
+        // Selector synchronization runs at explicit events, preserving pendingDiff
+        // bookkeeping and option snapshots for the current pose.
 
         const auto removeRuntimeState = [this](const std::string &label) {
             if(label.empty() || hasActiveDifferenceTimelineOwner(label)) {
