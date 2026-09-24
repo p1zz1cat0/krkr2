@@ -741,19 +741,12 @@ namespace motion {
             if(!hasOwnSource && !needsGroupEntry)
                 continue;
 
-            // 物理未运行时只跳过「前髪双影」副本：src/#custom/1 与
-            // 前髪00 同尺寸全图重叠。#custom/4/5 是长后发主体（後ろ髪00
-            // 仅短底座），#custom/7/8 是眉追加，切勿整树隐藏 #custom/。
-            {
-                const auto &src = node.interpolatedCache.src;
-                const bool isFrontHairSwayCopy =
-                    src == "src/#custom/1" ||
-                    (src.rfind("src/#custom/", 0) == 0 &&
-                     node.layerName.find("髪揺れ_前髪") != std::string::npos);
-                if(isFrontHairSwayCopy) {
-                    continue;
-                }
-            }
+            // src/#custom/1（■髪揺れ_前髪）与 前髪00 共用同一张位图和同一个
+            // pos，但绘制顺序把它们分在五官两侧：前髪00 在脸部部件之前
+            // （底层hair），#custom/1 在之后——**它才是盖住眼角/眉毛的那层
+            // 半透明前发**。不要在这里加跳过它的「去双影」分支：
+            // 跳过会让五官压到头发上面，与参考实现（Aether 公开 fallback
+            // 的 i=196 命令）和原版 DLL 的观感都不一致。
 
             detail::PlayerRuntime::PreparedRenderItem entry;
             entry.nodeIndex = static_cast<int>(i);
