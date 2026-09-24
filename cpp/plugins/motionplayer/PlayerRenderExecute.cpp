@@ -1078,6 +1078,74 @@ namespace motion {
             this, static_cast<int>(canvasWidth),
             static_cast<int>(canvasHeight));
 #endif
+        // Diagnostic probe (KRKR_EMOTE_CMD_DUMP=1): per-command mask
+        // topology. E-mote occlusion defects (a group whose authored mask
+        // input resolves to nothing, a mask that should be empty, or children
+        // promoted to independent draws) are invisible in the rendered image
+        // but fully determined by this list, so keep it gated here rather than
+        // re-deriving it from screenshots: maskIn>0 with an empty maskCmd means
+        // the group draws unclipped, and emptyMask=1 means its content must
+        // disappear.
+        {
+            static const bool cmdDump = [] {
+                const char *e = std::getenv("KRKR_EMOTE_CMD_DUMP");
+                return e && e[0] != '\0' && e[0] != '0';
+            }();
+            if(cmdDump) {
+                const auto joinIdx = [](const std::vector<int> &v) {
+                    std::string s;
+                    for(int x : v) {
+                        if(!s.empty()) s += ",";
+                        s += std::to_string(x);
+                    }
+                    return s;
+                };
+                for(size_t ci = 0; ci < _runtime->renderCommands.size(); ++ci) {
+                    const auto &command = _runtime->renderCommands[ci];
+                    std::vector<int> maskInputIdx;
+                    for(const auto &input : command.stencilMaskInputs) {
+                        maskInputIdx.push_back(input.first);
+                    }
+                    std::string label = "<none>";
+                    std::string src = "<none>";
+                    int composite = 0, maskRef = 0, maskWrite = 0;
+                    if(command.item) {
+                        const int ni = command.item->nodeIndex;
+                        if(ni >= 0 &&
+                           static_cast<size_t>(ni) < _runtime->nodes.size() &&
+                           !_runtime->nodes[static_cast<size_t>(ni)]
+                                .layerName.empty()) {
+                            label = _runtime->nodes[static_cast<size_t>(ni)]
+                                        .layerName;
+                        }
+                        if(!command.item->sourceKey.empty()) {
+                            src = command.item->sourceKey;
+                        }
+                        composite = command.item->stencilComposite;
+                        maskRef = command.item->stencilMaskRef;
+                        maskWrite = command.item->stencilWriteRef;
+                    }
+                    spdlog::warn(
+                        "EMCMD i={} node={} label={} src={} comp={} mr={} mw={} "
+                        "hasParent={} parentNode={} maskIn={} maskNodes=[{}] "
+                        "maskCmd=[{}] "
+                        "modCmd=[{}] childCmd=[{}] emptyMask={} alphaOnly={} "
+                        "implicitGroup={}",
+                        ci, command.scopedNodeIndex, label, src, composite,
+                        maskRef, maskWrite, command.hasRenderParent ? 1 : 0,
+                        command.parentNodeIndex,
+                        static_cast<int>(command.stencilMaskInputs.size()),
+                        joinIdx(maskInputIdx),
+                        joinIdx(command.stencilMaskCommandIndices),
+                        joinIdx(command.stencilModifierCommandIndices),
+                        joinIdx(command.childCommandIndices),
+                        command.emptyAuthoredMask ? 1 : 0,
+                        command.alphaMaskOnly ? 1 : 0,
+                        command.implicitVisibleStencilGroup ? 1 : 0);
+                }
+            }
+        }
+
         return ok;
     }
 
