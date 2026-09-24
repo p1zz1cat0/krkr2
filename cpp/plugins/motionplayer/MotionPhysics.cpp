@@ -469,6 +469,10 @@ namespace motion::physics {
                 suppressed_ = true;
                 phase_ = Phase::Idle;
                 current_ = currentVariableValue;
+            } else if(phase_ != Phase::Idle) {
+                // A later timeline may hold the authored open value while
+                // this controller is closing or opening. That final writer
+                // does not restart an in-flight automatic blink.
             } else if(stableDuration_ >= kStableDurationNeeded) {
                 suppressed_ = false;
                 current_ = config_.beginFrame;

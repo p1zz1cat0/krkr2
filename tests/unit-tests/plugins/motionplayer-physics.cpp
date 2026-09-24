@@ -431,6 +431,44 @@ TEST_CASE("Eye is a pre-Core controller and zero dt republishes its value") {
             Catch::Approx(5.0));
 }
 
+TEST_CASE("Eye keeps an in-flight blink when a timeline holds the open value") {
+    motion::physics::EyeConfig config;
+    config.beginFrame = 0.0;
+    config.endFrame = 10.0;
+    config.blinkIntervalMin = 10.0;
+    config.blinkIntervalMax = 10.0;
+    config.blinkFrameCount = 2.0;
+    config.blinkEnabled = true;
+    motion::physics::EyeControl eye(config);
+
+    int draws = 0;
+    const auto random = [&draws] {
+        ++draws;
+        return 0.5;
+    };
+    for(int frame = 0; frame < 10; ++frame) {
+        REQUIRE(eye.step(1.0, 0.0, random).value() ==
+                Catch::Approx(0.0));
+    }
+    REQUIRE(eye.step(1.0, 0.0, random).value() ==
+            Catch::Approx(5.0));
+    REQUIRE(eye.step(1.0, 0.0, random).value() ==
+            Catch::Approx(10.0));
+    CHECK(draws == 1);
+    REQUIRE(eye.step(1.0, 0.0, random).value() ==
+            Catch::Approx(10.0));
+    CHECK(draws == 2);
+    REQUIRE(eye.step(1.0, 0.0, random).value() ==
+            Catch::Approx(5.0));
+    REQUIRE(eye.step(1.0, 0.0, random).value() ==
+            Catch::Approx(0.0));
+    for(int frame = 0; frame < 9; ++frame) {
+        REQUIRE(eye.step(1.0, 0.0, random).value() ==
+                Catch::Approx(0.0));
+    }
+    CHECK(draws == 2);
+}
+
 TEST_CASE("Eye supports reverse ranges and manual suppression") {
     motion::physics::EyeConfig config;
     config.beginFrame = 10.0;
