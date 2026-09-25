@@ -12,6 +12,11 @@ namespace motion::physics {
         constexpr double kSoftScale = kPi / 80.0;
         constexpr double kSoftGain = 1.149999976158142;
         constexpr double kPendLengthGuard = 0.015625;
+        // emoteplayer.dll fcn.100c5a60 cases 10/12 advance the blink by
+        // (end - begin) * dt * 2.5 / blinkFrameCount; hold and interval
+        // countdowns use plain dt. Without it blinks run 2.5x slower and
+        // linger on authored icon-swap seams (Vanilla mabuta tick 14 -> 15).
+        constexpr double kBlinkSpeedScale = 2.5;
 
         double soft(double value) {
             return std::atan(value * kSoftGain * kSoftScale) / kSoftScale;
@@ -508,7 +513,8 @@ namespace motion::physics {
                     }
                     break;
                 case Phase::Closing:
-                    current_ += delta * dt / config_.blinkFrameCount;
+                    current_ += delta * dt * kBlinkSpeedScale /
+                        config_.blinkFrameCount;
                     if(reachedEnd(current_)) {
                         current_ = config_.endFrame;
                         hold_ = config_.blinkFrameCount / 5.0;
@@ -523,7 +529,8 @@ namespace motion::physics {
                     }
                     break;
                 case Phase::Opening:
-                    current_ -= delta * dt / config_.blinkFrameCount;
+                    current_ -= delta * dt * kBlinkSpeedScale /
+                        config_.blinkFrameCount;
                     if(reachedBegin(current_)) {
                         current_ = config_.beginFrame;
                         phase_ = Phase::Idle;

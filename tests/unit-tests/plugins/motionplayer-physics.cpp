@@ -418,7 +418,7 @@ TEST_CASE("Eye is a pre-Core controller and zero dt republishes its value") {
     config.endFrame = 10.0;
     config.blinkIntervalMin = 0.0;
     config.blinkIntervalMax = 0.0;
-    config.blinkFrameCount = 2.0;
+    config.blinkFrameCount = 5.0;
     config.blinkEnabled = true;
     config.label = "face_eye_open";
     motion::physics::EyeControl eye(config);
@@ -431,13 +431,39 @@ TEST_CASE("Eye is a pre-Core controller and zero dt republishes its value") {
             Catch::Approx(5.0));
 }
 
+TEST_CASE("Eye closes and opens 2.5x faster than blinkFrameCount") {
+    // NEKOPARA Vanilla eyeControl: 0 -> 10 over blinkFrameCount 16.
+    motion::physics::EyeConfig config;
+    config.beginFrame = 0.0;
+    config.endFrame = 10.0;
+    config.blinkIntervalMin = 0.0;
+    config.blinkIntervalMax = 0.0;
+    config.blinkFrameCount = 16.0;
+    config.blinkEnabled = true;
+    motion::physics::EyeControl eye(config);
+    const auto random = [] { return 0.0; };
+
+    REQUIRE(eye.step(1.0, 0.0, random).value() == Catch::Approx(0.0));
+    for(int frame = 1; frame <= 6; ++frame) {
+        REQUIRE(eye.step(1.0, 0.0, random).value() ==
+                Catch::Approx(frame * 1.5625));
+    }
+    REQUIRE(eye.step(1.0, 0.0, random).value() == Catch::Approx(10.0));
+    // Hold is blinkFrameCount / 5 = 3.2 plain frames, not scaled.
+    for(int frame = 0; frame < 4; ++frame) {
+        REQUIRE(eye.step(1.0, 0.0, random).value() == Catch::Approx(10.0));
+    }
+    REQUIRE(eye.step(1.0, 0.0, random).value() ==
+            Catch::Approx(10.0 - 1.5625));
+}
+
 TEST_CASE("Eye keeps an in-flight blink when a timeline holds the open value") {
     motion::physics::EyeConfig config;
     config.beginFrame = 0.0;
     config.endFrame = 10.0;
     config.blinkIntervalMin = 10.0;
     config.blinkIntervalMax = 10.0;
-    config.blinkFrameCount = 2.0;
+    config.blinkFrameCount = 5.0;
     config.blinkEnabled = true;
     motion::physics::EyeControl eye(config);
 
@@ -475,7 +501,7 @@ TEST_CASE("Eye supports reverse ranges and manual suppression") {
     config.endFrame = 0.0;
     config.blinkIntervalMin = 0.0;
     config.blinkIntervalMax = 0.0;
-    config.blinkFrameCount = 2.0;
+    config.blinkFrameCount = 5.0;
     config.blinkEnabled = true;
     config.label = "face_eye_open";
     motion::physics::EyeControl eye(config);
