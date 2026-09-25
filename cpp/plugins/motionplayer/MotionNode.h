@@ -91,13 +91,6 @@ namespace motion::detail {
         // icon2/type3/mesh.bp null, shirome + add_mask icon swap in the same
         // tick), which is exactly such a boundary.
         bool patchMeshAlive = false;
-        // Derived: carried mesh patch for frames that author none. Keyed by the
-        // clip's first frame dictionary plus the frame index, so the bounded
-        // backward scan runs once per key instead of on every slot population.
-        const void *meshBezierCarryIdentity = nullptr;
-        int meshBezierCarryFrame = -1;
-        bool meshBezierCarryAuthored = false;
-        std::vector<double> meshBezierCarryPoints;
         bool stencilCompositeMaskReferenced =
             false; // node+1961: post-build mask-layer reference
         // Resolved node indices from a type-12

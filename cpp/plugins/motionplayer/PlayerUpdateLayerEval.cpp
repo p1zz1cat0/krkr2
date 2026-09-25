@@ -269,57 +269,31 @@ namespace motion::internal {
                 parseFrame(std::const_pointer_cast<PSB::PSBDictionary>(frame),
                            node.nodeType);
             // A frame that authors no mesh patch (content.mesh.bp/b absent, filled
-            // with the unit grid above) must not always anchor the patch channel at
-            // identity: Vanilla's blink has `mabuta` switch from icon1/type2 with a
-            // patch to icon2/type3 with `mesh.bp: null` inside one tick, and the
-            // unit fill snapped the eyelid ~25px to its undeformed pose for that
-            // frame and re-ramped from identity afterwards. Only that boundary —
-            // a type-3 frame with no patch whose nearest authored predecessor is a
-            // type-2 key — carries the authored patch forward. A rest/terminal
-            // frame keeps the unit grid, which is what the mouth's lip-sync
-            // write-back relies on (smoke A10).
-            const bool carriesPatch = parsed.type == 3;
-            if(parsed.slot.meshBezierAuthored) {
-                node.meshBezierCarryPoints = parsed.slot.meshBezierPoints;
-                node.meshBezierCarryAuthored = true;
-            } else if(carriesPatch) {
-                const void *identity = nullptr;
-                if(frames && frames->size() > 0) {
-                    identity = static_cast<const void *>(
-                        resolveFrameDictionaryLike(frames, 0, rootLayerList)
-                            .get());
-                }
-                if(node.meshBezierCarryIdentity != identity ||
-                   node.meshBezierCarryFrame != frameIndex) {
-                    node.meshBezierCarryIdentity = identity;
-                    node.meshBezierCarryFrame = frameIndex;
-                    node.meshBezierCarryAuthored = false;
-                    node.meshBezierCarryPoints.clear();
-                    for(int probe = frameIndex - 1;
-                        probe >= 0 && probe >= frameIndex - 8; --probe) {
-                        auto probeFrame = resolveFrameDictionaryLike(
-                            frames, probe, rootLayerList);
-                        if(!probeFrame) {
-                            continue;
-                        }
-                        ParsedFrame probeParsed = parseFrame(
-                            std::const_pointer_cast<PSB::PSBDictionary>(
-                                probeFrame),
-                            node.nodeType);
-                        if(probeParsed.slot.meshBezierAuthored) {
-                            if(probeParsed.type != 2) {
-                                break;
-                            }
-                            node.meshBezierCarryPoints =
-                                probeParsed.slot.meshBezierPoints;
-                            node.meshBezierCarryAuthored = true;
-                            break;
-                        }
+            // with the unit grid above) must not anchor the patch channel at
+            // identity. Vanilla's blink authors patches at the neighbouring keys,
+            // so the unit fill made the eyelid snap to its undeformed pose for the
+            // whole segment that starts at such a key. Carry the nearest authored
+            // patch instead. A track that never authors one keeps the unit fill.
+            // The backward walk is bounded: authored keys sit within a key or two
+            // of the null ones, and an unbounded walk would re-parse frames on
+            // every populated slot.
+            if(!parsed.slot.meshBezierAuthored) {
+                for(int probe = frameIndex - 1;
+                    probe >= 0 && probe >= frameIndex - 8; --probe) {
+                    auto probeFrame =
+                        resolveFrameDictionaryLike(frames, probe, rootLayerList);
+                    if(!probeFrame) {
+                        continue;
                     }
-                }
-                if(node.meshBezierCarryAuthored) {
-                    parsed.slot.meshBezierPoints = node.meshBezierCarryPoints;
-                    parsed.slot.meshBezierAuthored = true;
+                    ParsedFrame probeParsed = parseFrame(
+                        std::const_pointer_cast<PSB::PSBDictionary>(probeFrame),
+                        node.nodeType);
+                    if(probeParsed.slot.meshBezierAuthored) {
+                        parsed.slot.meshBezierPoints =
+                            probeParsed.slot.meshBezierPoints;
+                        parsed.slot.meshBezierAuthored = true;
+                        break;
+                    }
                 }
             }
             FrameContentState state;
