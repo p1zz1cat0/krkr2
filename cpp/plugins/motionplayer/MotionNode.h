@@ -191,6 +191,13 @@ namespace motion::detail {
             // part of the frame payload and must survive the two-slot
             // crossfade cache just like transform/color fields.
             std::vector<double> meshBezierPoints;
+            // True only when this slot's frame authored content.mesh.bp/b.
+            // Frames that author none are filled with the unit grid
+            // (fillUnitMeshBezierIfEmpty) so interpolation still has a partner,
+            // but that fill must not drag an authored neighbour toward identity
+            // — doing so snaps the drawn layer for one frame (Vanilla's blink
+            // segment boundary).
+            bool meshBezierAuthored = false;
 
             // Easing curves (slot+168, +208, +228, +248, +268, +296)
             CurveData ccc, acc, zcc, scc, occ, cc;

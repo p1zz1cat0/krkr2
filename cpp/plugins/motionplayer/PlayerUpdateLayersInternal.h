@@ -176,6 +176,7 @@ namespace {
         slot.blendMode = s.blendMode;
         slot.packedColors = s.packedColors;
         slot.meshBezierPoints = s.meshBezierPoints;
+        slot.meshBezierAuthored = s.meshBezierAuthored;
         slot.ccc.x = s.ccc.x;
         slot.ccc.y = s.ccc.y;
         slot.acc.x = s.acc.x;
