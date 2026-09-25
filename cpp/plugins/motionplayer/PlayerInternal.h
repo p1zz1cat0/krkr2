@@ -630,9 +630,6 @@ namespace motion {
             // mask 0x02000000: normalized 4x4 Bezier control points
             // stored as 16 interleaved x/y pairs under content.mesh.bp.
             std::vector<double> meshBezierPoints;
-            // See ClipSlot::meshBezierAuthored: distinguishes an authored patch
-            // from the unit-grid fill used for frames that author none.
-            bool meshBezierAuthored = false;
             BezierCurve ccc; // mask 0x800: color curve control
             BezierCurve acc; // mask 0x1000: angle curve control
             BezierCurve zcc; // mask 0x2000: zoom curve control
@@ -1211,7 +1208,6 @@ namespace motion {
                         points = psbDictionaryList(mesh, "b");
                     }
                     if(points) {
-                        state.meshBezierAuthored = true;
                         state.meshBezierPoints.reserve(points->size());
                         for(size_t index = 0; index < points->size(); ++index) {
                             if(auto value = psbNumberValue((*points)[index])) {
@@ -1499,22 +1495,8 @@ namespace motion {
             if(state.height != slotB.height)
                 state.height = lerp(state.height, slotB.height, t);
 
-            // A slot whose frame authored no mesh patch holds the unit grid so
-            // interpolation has a partner, but lerping toward that fill drags an
-            // authored neighbour to identity for one frame — the drawn layer
-            // snaps (Vanilla's blink: the eyelid jumps ~25px at the segment
-            // boundary). Interpolate only between authored patches and otherwise
-            // hold the authored side; when neither side authored one, keep the
-            // previous behaviour.
-            if(!state.meshBezierAuthored && slotB.meshBezierAuthored) {
-                state.meshBezierPoints = slotB.meshBezierPoints;
-            } else if(state.meshBezierAuthored &&
-                      !slotB.meshBezierAuthored) {
-                // Keep slot A's authored patch.
-            } else {
-                detail::lerpMeshBezierPoints(state.meshBezierPoints,
-                                             slotB.meshBezierPoints, t);
-            }
+            detail::lerpMeshBezierPoints(state.meshBezierPoints,
+                                         slotB.meshBezierPoints, t);
 
             // FlipX/FlipY: not interpolated, use slot A value
             // (sub_699AE4 copies directly from clip slot, no lerp)

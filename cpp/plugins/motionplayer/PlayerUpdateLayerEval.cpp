@@ -32,7 +32,6 @@ namespace motion::internal {
             state.blendMode = slot.blendMode;
             state.packedColors = slot.packedColors;
             state.meshBezierPoints = slot.meshBezierPoints;
-            state.meshBezierAuthored = slot.meshBezierAuthored;
             state.ccc.x = slot.ccc.x;
             state.ccc.y = slot.ccc.y;
             state.acc.x = slot.acc.x;
@@ -268,34 +267,6 @@ namespace motion::internal {
             ParsedFrame parsed =
                 parseFrame(std::const_pointer_cast<PSB::PSBDictionary>(frame),
                            node.nodeType);
-            // A frame that authors no mesh patch (content.mesh.bp/b absent, filled
-            // with the unit grid above) must not anchor the patch channel at
-            // identity. Vanilla's blink authors patches at the neighbouring keys,
-            // so the unit fill made the eyelid snap to its undeformed pose for the
-            // whole segment that starts at such a key. Carry the nearest authored
-            // patch instead. A track that never authors one keeps the unit fill.
-            // The backward walk is bounded: authored keys sit within a key or two
-            // of the null ones, and an unbounded walk would re-parse frames on
-            // every populated slot.
-            if(!parsed.slot.meshBezierAuthored) {
-                for(int probe = frameIndex - 1;
-                    probe >= 0 && probe >= frameIndex - 8; --probe) {
-                    auto probeFrame =
-                        resolveFrameDictionaryLike(frames, probe, rootLayerList);
-                    if(!probeFrame) {
-                        continue;
-                    }
-                    ParsedFrame probeParsed = parseFrame(
-                        std::const_pointer_cast<PSB::PSBDictionary>(probeFrame),
-                        node.nodeType);
-                    if(probeParsed.slot.meshBezierAuthored) {
-                        parsed.slot.meshBezierPoints =
-                            probeParsed.slot.meshBezierPoints;
-                        parsed.slot.meshBezierAuthored = true;
-                        break;
-                    }
-                }
-            }
             FrameContentState state;
             state.debugEvaluated = true;
             state.debugActiveIndex = frameIndex;
