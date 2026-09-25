@@ -540,6 +540,11 @@ namespace {
             // visible=true and opacity=255 to the new layer.
             SetVisible(true);
             SetOpacity(255);
+            // Native replays the GL queue at composite time, so its MainImage
+            // stays transparent and never wins a hit test. Ours paints E-mote
+            // into MainImage; with the default threshold (16) this visible
+            // child swallowed story clicks landing on the character.
+            SetHitThreshold(256);
             return TJS_S_OK;
         }
 

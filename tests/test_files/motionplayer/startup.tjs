@@ -277,6 +277,41 @@ twin.draw(twinAdaptor);
 check(twin.countPlayingTimelines() >= 1,
     "A06 twin keeps its own playing timelines after draw");
 
+// Story clicks must pass through a drawn character: NEKOPARA keeps the
+// character layer at hitThreshold 256 and advances text from the layer
+// below, so the SLA's private render child must not claim opaque pixels.
+var clickWindow = new Window();
+var clickRoot = new Layer(clickWindow, null);
+clickRoot.setImageSize(1280, 720);
+clickRoot.setSize(1280, 720);
+clickRoot.hitThreshold = 0;
+clickRoot.visible = true;
+var clickTarget = new Layer(clickWindow, clickRoot);
+clickTarget.setImageSize(1280, 720);
+clickTarget.setSize(1280, 720);
+clickTarget.type = ltBinder;
+clickTarget.hitThreshold = 256;
+clickTarget.visible = true;
+var clickAdaptor = new Motion.SeparateLayerAdaptor(clickTarget);
+clickAdaptor.targetLayer = clickTarget;
+var clickPlayer = new Motion.EmotePlayer(manager);
+clickPlayer.motionKey = Storages.getPlacedPath(
+    "../emote/e-mote3.0バニラパジャマa.psb");
+clickPlayer.chara = data.metadata.base.chara;
+clickPlayer.play(data.metadata.base.motion, Motion.PlayFlagForce);
+clickPlayer.setCoord(640, 700);
+clickPlayer.setScale(0.6);
+clickPlayer.progress(0);
+clickPlayer.draw(clickAdaptor);
+var clickStolen = 0;
+for (var y = 10; y < 720; y += 10) {
+    for (var x = 10; x < 1280; x += 10) {
+        if (clickRoot.getLayerAt(x, y) !== clickRoot) clickStolen++;
+    }
+}
+pluginAssertEqual("story clicks on a drawn character reach the layer below",
+    0, clickStolen);
+
 // A09: NEKOPARA's MotionAffineSourceLayer.createPlayer copies a character
 // with unserialize(src.serialize()) on every KAG layer transfer. The copy
 // must carry the script-space base, not the live diff sway offset, or it
