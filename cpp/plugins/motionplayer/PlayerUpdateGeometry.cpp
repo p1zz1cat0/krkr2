@@ -191,7 +191,8 @@ namespace motion {
             // even when it has no patch of its own.
             if(parentIdx > 0 && parentIdx < static_cast<int>(nodes.size())) {
                 vn.meshAncestorIndex =
-                    (parentNode.hasMeshData || parentNode.meshCombineEnabled)
+                    (parentNode.hasMeshData || parentNode.meshCombineEnabled ||
+                     parentNode.patchMeshAlive)
                     ? parentIdx
                     : parentNode.meshAncestorIndex;
             } else {
@@ -200,6 +201,12 @@ namespace motion {
             vn.hasMeshData = !vn.activeSlot().done && vn.accumulated.active &&
                 vn.meshType != 0 && vn.meshControlPoints.size() == 32 &&
                 (vn.meshFlags & 0x8) != 0;
+            // Patch lifetime latch (see MotionNode.h). Cleared only when the node
+            // stops carrying a patch or goes inactive, not when one frame's
+            // slot/flags clear hasMeshData.
+            vn.patchMeshAlive = vn.hasMeshData ||
+                (vn.patchMeshAlive && vn.accumulated.active &&
+                 vn.meshControlPoints.size() == 32);
             vn.meshCombineEnabled = vn.meshAncestorIndex >= 0 &&
                 (vn.inheritFlags & 0x02000000) == 0;
 
@@ -350,7 +357,8 @@ namespace motion {
                             : vn.meshAncestorIndex;
                         while(!ownMesh && divisionSource >= 0 &&
                               divisionSource < static_cast<int>(nodes.size()) &&
-                              !nodes[divisionSource].hasMeshData) {
+                              !nodes[divisionSource].hasMeshData &&
+                              !nodes[divisionSource].patchMeshAlive) {
                             divisionSource =
                                 nodes[divisionSource].meshAncestorIndex;
                         }
@@ -413,7 +421,7 @@ namespace motion {
                         double cascadeOrgX = orgX;
                         double cascadeOrgY = orgY;
                         auto applyAncestor = [&](const detail::MotionNode &a) {
-                            if(!a.hasMeshData ||
+                            if((!a.hasMeshData && !a.patchMeshAlive) ||
                                a.meshWorldControlPoints.size() != 32) {
                                 return;
                             }

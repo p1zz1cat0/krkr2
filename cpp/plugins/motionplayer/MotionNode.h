@@ -80,6 +80,17 @@ namespace motion::detail {
         float meshInvOffX = 0, meshInvOffY = 0; // node+2128, node+2132
         // Computed mesh flags (sub_6BC4F0 at 0x6BC6E4..0x6BC818)
         bool hasMeshData = false; // node+1962: has active mesh data
+        // Derived, not native: an inherited Bezier patch stays alive for the
+        // patch's lifetime, not per frame. Native StepFrameMeshChain keeps child
+        // surfaces tessellated for the whole patch, and flipping a surface
+        // between the affine quad and the tessellated patch on the frame its
+        // slot/flags clear (meshFlags bit 0x8, slot done, meshType) shows up as a
+        // blink-boundary flash — the same failure Aether records at
+        // PlayerUpdateLayers.cpp:5341-5346. Vanilla's auto blink jumps at the
+        // tick-15 segment switch (mabuta icon1/type2/non-unit mesh.bp ->
+        // icon2/type3/mesh.bp null, shirome + add_mask icon swap in the same
+        // tick), which is exactly such a boundary.
+        bool patchMeshAlive = false;
         bool stencilCompositeMaskReferenced =
             false; // node+1961: post-build mask-layer reference
         // Resolved node indices from a type-12
