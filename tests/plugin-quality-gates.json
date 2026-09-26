@@ -7,11 +7,14 @@
     {"path": "cpp/plugins/layerExRaster/**", "classification": "third-party", "reason": "Upstream layerExRaster compatibility source"},
     {"path": "cpp/plugins/layerExSave/LodePNG/**", "classification": "third-party", "reason": "Vendored LodePNG 20161127 (zlib license) from upstream layerExSave"},
     {"path": "cpp/plugins/layerExSave/origin/**", "classification": "third-party", "reason": "Ignored upstream layerExSave source snapshot; current CMake builds the maintained sibling sources"},
+    {"path": "cpp/plugins/DrawDeviceD3D/origin/**", "classification": "third-party", "reason": "Ignored reference source snapshots; current CMake builds only the maintained DrawDeviceD3D files"},
     {"path": "cpp/plugins/psbfile/**", "classification": "third-party", "reason": "Upstream FreeMote PSB implementation"},
     {"path": "cpp/plugins/varfile/**", "classification": "third-party", "reason": "Upstream compatibility plugin"},
     {"path": "cpp/plugins/wutcwf/**", "classification": "third-party", "reason": "Upstream compatibility plugin"}
   ],
   "plugins": [
+    {"name": "drawdeviceD3D", "dll": "drawdeviceD3D.dll", "sourceRoots": ["cpp/plugins/DrawDeviceD3D"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/drawdeviceD3D", "marker": "PLUGIN_SMOKE_PASS plugin=drawdeviceD3D.dll", "timeoutSeconds": 30, "anchor": "TVPDrawDeviceD3DPluginAnchor", "smokeKind": "gui"},
+    {"name": "drawdeviceD3DZ", "dll": "drawdeviceD3DZ.dll", "sourceRoots": ["cpp/plugins/DrawDeviceD3D"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/drawdeviceD3DZ", "marker": "PLUGIN_SMOKE_PASS plugin=drawdeviceD3DZ.dll", "timeoutSeconds": 30, "anchor": "TVPDrawDeviceD3DZAliasPluginAnchor", "smokeKind": "gui"},
     {"name": "extNagano", "dll": "extNagano.dll", "sourceRoots": ["cpp/plugins/extNagano", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "extNagano-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/extNagano", "marker": "PLUGIN_SMOKE_PASS plugin=extNagano.dll", "timeoutSeconds": 30, "anchor": "TVPExtNaganoPluginAnchor", "smokeKind": "gui"},
     {"name": "Extrans", "dll": "extrans.dll", "sourceRoots": ["cpp/plugins/Extrans", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "extrans-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/extrans-transitions", "marker": "PLUGIN_SMOKE_PASS plugin=extrans.dll", "timeoutSeconds": 45, "anchor": "TVPExtransPluginAnchor", "smokeKind": "gui"},
     {"name": "alphamovie", "dll": "AlphaMovie.dll", "sourceRoots": ["cpp/plugins/alphamovie", "cpp/plugins/common"], "platforms": ["linux", "macos"], "buildTarget": "alphamovie-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/alphamovie", "marker": "PLUGIN_SMOKE_PASS plugin=AlphaMovie.dll", "timeoutSeconds": 30, "anchor": "TVPAlphaMoviePluginAnchor"},

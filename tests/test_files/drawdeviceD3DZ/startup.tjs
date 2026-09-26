@@ -1,0 +1,14 @@
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+// The alias is loaded first in a fresh process so this checks its callback,
+// rather than succeeding through a class registered by the primary name.
+Plugins.link("drawdeviceD3DZ.dll");
+var device = new DrawDeviceD3D(16, 12);
+pluginAssertEqual("alias constructor width", 16, device.width);
+var snapshot = new D3D(4, 3);
+pluginAssertEqual("alias D3D constructor height", 3, snapshot.height);
+Plugins.link("drawdeviceD3D.dll");
+Plugins.link("drawdeviceD3DZ.dll");
+
+pluginSmokePass("drawdeviceD3DZ.dll");
+System.exit(0);

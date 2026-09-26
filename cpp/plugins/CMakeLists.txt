@@ -43,6 +43,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     alphamovie/AlphaMovie.cpp
     wuvorbis/WuVorbisShim.cpp
     windowMessageChannel/windowMessageChannel.cpp
+    DrawDeviceD3D/DrawDeviceD3D.cpp
+    DrawDeviceD3D/DrawDeviceD3DZAlias.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

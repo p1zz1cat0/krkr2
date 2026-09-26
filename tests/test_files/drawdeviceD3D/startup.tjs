@@ -1,0 +1,44 @@
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+Plugins.link("drawdeviceD3D.dll");
+Plugins.link("drawdeviceD3DZ.dll");
+Plugins.link("drawdeviceD3D.dll");
+
+var device = new DrawDeviceD3D(32, 24);
+pluginAssertEqual("width", 32, device.width);
+pluginAssertEqual("height", 24, device.height);
+pluginAssertEqual("initial primary managers", 0, device.primaryLayers.count);
+var offscreen = new D3D(8, 8);
+pluginAssertEqual("offscreen width", 8, offscreen.width);
+
+var window = new Window();
+window.drawDevice = device;
+var primary = new Layer(window, null);
+primary.setImageSize(32, 24);
+primary.fillRect(0, 0, 32, 24, 0xff123456);
+pluginAssertEqual("manager attached", 1, device.primaryLayers.count);
+pluginAssertTrue("primary identity", device.primaryLayers[0] === primary);
+pluginAssertTrue("window primary", window.primaryLayer === primary);
+device.layerManagerIndex = 0;
+device.update(0);
+window.visible = true;
+
+var badIndex = false;
+try {
+    device.layerManagerIndex = 1;
+} catch (e) {
+    badIndex = true;
+}
+pluginAssertTrue("invalid manager rejected", badIndex);
+
+var badSize = false;
+try {
+    device.setSize(0, 24);
+} catch (e) {
+    badSize = true;
+}
+pluginAssertTrue("invalid size rejected", badSize);
+pluginAssertEqual("size preserved after failure", 32, device.width);
+
+pluginSmokePass("drawdeviceD3D.dll");
+System.exit(0);
