@@ -7,6 +7,11 @@ var device = new DrawDeviceD3D(16, 12);
 pluginAssertEqual("alias constructor width", 16, device.width);
 var snapshot = new D3D(4, 3);
 pluginAssertEqual("alias D3D constructor height", 3, snapshot.height);
+var layer = new D3DLayer(snapshot);
+pluginAssertEqual("alias layer plane", D3DLayer.DrawPlaneBoth,
+                  layer.drawPlane);
+var image = new D3DImage(snapshot);
+pluginAssertEqual("alias empty image width", 0, image.width);
 Plugins.link("drawdeviceD3D.dll");
 Plugins.link("drawdeviceD3DZ.dll");
 

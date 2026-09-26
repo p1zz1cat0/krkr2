@@ -40,5 +40,97 @@ try {
 pluginAssertTrue("invalid size rejected", badSize);
 pluginAssertEqual("size preserved after failure", 32, device.width);
 
+// Exercise the actual image snapshot -> affine picture -> capture pixels path.
+var sceneDevice = new D3D(12, 10);
+var sourceWindow = new Window();
+var source = new Layer(sourceWindow, null);
+source.setImageSize(4, 3);
+source.fillRect(0, 0, 4, 3, 0xff102030);
+source.setMainPixel(1, 1, 0xffd04020);
+var image = new D3DImage(sceneDevice);
+image.load(source);
+pluginAssertEqual("image width", 4, image.width);
+pluginAssertEqual("image height", 3, image.height);
+var expectedPixel = source.getMainPixel(1, 1);
+source.setMainPixel(1, 1, 0xff2040d0);
+var scene = new D3DLayer(sceneDevice);
+pluginAssertEqual("draw plane constant", 0, D3DLayer.DrawPlaneBoth);
+scene.frontIndex = 7;
+pluginAssertEqual("front index", 7, scene.frontIndex);
+var picture = new D3DPicture(scene, image);
+picture.assignImageRange(1, 1, 1, 1, 0, 0);
+picture.blendMode = 1; // ltOpaque: verify the snapshot without alpha rounding.
+scene.setMatrix(1, 0, 0, 0, 0, 1, 0, 0,
+                0, 0, 1, 0, 3, 4, 0, 1);
+var captured = new Layer(sourceWindow, source);
+captured.setImageSize(12, 10);
+sceneDevice.capture(captured, 0);
+pluginAssertEqual("image load is a snapshot", expectedPixel,
+                  captured.getMainPixel(3, 4));
+pluginAssertEqual("affine offset leaves origin clear", 0,
+                  captured.getMainPixel(0, 0));
+
+class UpdatingD3DLayer extends D3DLayer {
+    function UpdatingD3DLayer(device) {
+        super.D3DLayer(device);
+    }
+    function onUpdate(diff) {
+        frontIndex += diff;
+    }
+}
+var updating = new UpdatingD3DLayer(sceneDevice);
+sceneDevice.update(2);
+pluginAssertEqual("script layer receives elapsed update", 2,
+                  updating.frontIndex);
+
+var invalidRange = false;
+try {
+    picture.assignImageRange(4, 0, 1, 1, 0, 0);
+} catch (e) {
+    invalidRange = true;
+}
+pluginAssertTrue("picture range rejected", invalidRange);
+var crossDevice = false;
+try {
+    new D3DPicture(scene, new D3DImage(device));
+} catch (e) {
+    crossDevice = true;
+}
+pluginAssertTrue("cross-device picture rejected", crossDevice);
+
+picture.opacity = 0;
+sceneDevice.capture(captured, 0);
+pluginAssertEqual("zero opacity clears the next frame", 0,
+                  captured.getMainPixel(3, 4));
+picture.opacity = 255;
+picture.setCoord(2, 0);
+sceneDevice.capture(captured, 0);
+pluginAssertEqual("picture coordinate moves the pixel", expectedPixel,
+                  captured.getMainPixel(5, 4));
+pluginAssertEqual("previous coordinate is clear", 0,
+                  captured.getMainPixel(3, 4));
+
+var failedLoad = false;
+try {
+    image.load(null);
+} catch (e) {
+    failedLoad = true;
+}
+pluginAssertTrue("invalid image load rejected", failedLoad);
+sceneDevice.capture(captured, 0);
+pluginAssertEqual("failed image load preserves snapshot", expectedPixel,
+                  captured.getMainPixel(5, 4));
+
+primary.fillRect(0, 0, 32, 24, 0x00000000);
+var attachedImage = new D3DImage(device);
+attachedImage.load(source);
+var attachedScene = new D3DLayer(device);
+var attachedPicture = new D3DPicture(attachedScene, attachedImage);
+attachedPicture.blendMode = 1;
+attachedPicture.assignImageRange(1, 1, 1, 1, 6, 7);
+device.capture(captured, 0);
+pluginAssertEqual("attached manager leaves independent picture visible",
+                  source.getMainPixel(1, 1), captured.getMainPixel(6, 7));
+
 pluginSmokePass("drawdeviceD3D.dll");
 System.exit(0);
