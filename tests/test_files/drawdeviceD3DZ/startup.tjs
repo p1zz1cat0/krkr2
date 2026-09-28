@@ -89,7 +89,8 @@ pluginAssertTrue("universal without a rule Layer is explicit", missingRule);
 var rule = new Layer(sourceWindow, source);
 rule.setImageSize(1, 1);
 transition.rule = rule;
-transition.vague = 64;
+// KAG passes tag attributes as strings; the script only fills 64 itself.
+transition.vague = "64";
 var mismatchedRule = false;
 try {
     transitionDevice.startTransition(transition);

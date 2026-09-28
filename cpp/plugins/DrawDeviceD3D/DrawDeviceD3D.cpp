@@ -570,9 +570,11 @@ void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
                reinterpret_cast<iTJSNativeInstance **>(&ruleLayer))) ||
            !ruleLayer)
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D universal transition requires a rule Layer"));
+        // KAG tag attributes arrive as strings ("128"); convert like the
+        // core handler's GetAsNumber does.
         if(TJS_FAILED(parameters->PropGet(0, TJS_W("vague"), nullptr,
                                           &vagueValue, parameters)) ||
-           vagueValue.Type() != tvtInteger || vagueValue.AsInteger() < 0 ||
+           vagueValue.Type() == tvtVoid || vagueValue.AsInteger() < 0 ||
            vagueValue.AsInteger() > 0xffff)
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D universal transition requires vague in 0..65535"));
         vague = static_cast<tjs_int>(vagueValue.AsInteger());
