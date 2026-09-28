@@ -73,7 +73,10 @@ var manager = new Motion.ResourceManager(new Window(), 20 * 1024 * 1024);
 // same key NEKOPARA uses. Without the seed the string/name tables are garbage
 // and load() fails with "PSBArray bad length type size".
 Motion.ResourceManager.setEmotePSBDecryptSeed(742877301);
-var data = manager.load("../emote/e-mote3.0バニラパジャマa.psb");
+// NEKOPARA After's motion.tjs prefixes every module with "lzfs://./". No lzfs
+// media is registered, so the first (uncached) load must open the plain path.
+var data = manager.load("lzfs://./../emote/e-mote3.0バニラパジャマa.psb");
+check(typeof data == "Object", "lzfs-prefixed load opens the plain storage");
 
 // R03: load() is a read-through cache. The game builds a fresh
 // Motion.ResourceManager per KAG layer transfer; a repeat load of the same

@@ -209,7 +209,10 @@ tTJSVariant motion::ResourceManager::load(ttstr path) const {
     }
 
     const auto loadStart = std::chrono::steady_clock::now();
-    const auto loaded = detail::loadPSBVariant(path, _decryptSeed);
+    // No lzfs storage media is registered; open the plain path the prefix
+    // wraps, as sdl3-ref does (NEKOPARA After loads every E-mote this way).
+    const auto loaded =
+        detail::loadPSBVariant(trimMotionPath(path), _decryptSeed);
     const double loadMs = std::chrono::duration<double, std::milli>(
                               std::chrono::steady_clock::now() - loadStart)
                               .count();
