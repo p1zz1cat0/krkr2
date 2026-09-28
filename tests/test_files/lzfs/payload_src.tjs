@@ -1,0 +1,194 @@
+// lzfs smoke payload：解压后由 Scripts.execStorage 执行。
+decodedRan = true;
+// filler 001 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 001 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 002 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 002 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 003 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 003 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 004 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 004 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 005 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 005 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 006 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 006 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 007 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 007 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 008 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 008 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 009 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 009 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 010 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 010 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 011 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 011 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 012 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 012 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 013 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 013 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 014 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 014 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 015 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 015 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 016 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 016 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 017 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 017 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 018 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 018 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 019 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 019 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 020 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 020 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 021 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 021 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 022 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 022 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 023 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 023 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 024 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 024 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 025 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 025 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 026 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 026 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 027 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 027 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 028 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 028 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 029 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 029 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 030 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 030 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 031 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 031 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 032 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 032 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 033 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 033 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 034 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 034 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 035 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 035 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 036 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 036 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 037 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 037 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 038 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 038 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 039 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 039 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 040 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 040 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 041 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 041 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 042 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 042 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 043 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 043 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 044 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 044 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 045 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 045 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 046 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 046 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 047 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 047 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 048 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 048 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 049 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 049 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 050 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 050 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 051 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 051 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 052 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 052 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 053 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 053 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 054 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 054 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 055 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 055 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 056 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 056 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 057 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 057 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 058 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 058 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 059 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 059 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 060 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 060 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 061 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 061 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 062 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 062 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 063 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 063 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 064 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 064 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 065 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 065 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 066 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 066 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 067 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 067 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 068 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 068 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 069 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 069 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 070 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 070 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 071 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 071 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 072 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 072 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 073 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 073 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 074 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 074 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 075 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 075 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 076 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 076 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 077 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 077 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 078 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 078 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 079 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 079 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 080 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 080 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 081 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 081 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 082 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 082 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 083 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 083 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 084 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 084 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 085 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 085 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 086 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 086 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 087 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 087 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 088 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 088 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 089 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 089 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 090 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 090 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 091 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 091 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 092 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 092 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 093 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 093 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 094 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 094 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 095 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 095 0123456789 0123456789 0123456789 0123456789 01234567
+// filler 096 aaaaaaaa bbbbbbbb cccccccc dddddddd eeeeeeee ffffffff
+// filler 096 0123456789 0123456789 0123456789 0123456789 01234567

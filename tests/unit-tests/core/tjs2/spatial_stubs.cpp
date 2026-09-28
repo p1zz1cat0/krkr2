@@ -51,3 +51,4 @@ extern "C" void TVPVarFilePluginAnchor() {}
 extern "C" void TVPWin32DialogPluginAnchor() {}
 extern "C" void TVPWindowExPluginAnchor() {}
 extern "C" void TVPWutcwfPluginAnchor() {}
+extern "C" void TVPLzfsPluginAnchor() {}

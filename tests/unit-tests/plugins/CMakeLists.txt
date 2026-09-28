@@ -15,6 +15,7 @@ set(SOURCES
         motionplayer-physics.cpp
         motionplayer-param.cpp
         motionplayer-source-dialect.cpp
+        lzfs-dll.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")
@@ -52,6 +53,11 @@ foreach(name ${ALL_TARGETS})
         # layerExSave-dll 的 PNG 编码器直接使用 zlib（deflate/CRC/uncompress）
         find_package(ZLIB REQUIRED)
         target_link_libraries(${name} PRIVATE ZLIB::ZLIB)
+        # lzfs-dll 用官方 LZ4F 生成样本并调用插件的解码核心。
+        if(name STREQUAL "lzfs-dll")
+            find_package(lz4 CONFIG REQUIRED)
+            target_link_libraries(${name} PRIVATE lz4::lz4)
+        endif()
     endif()
     target_include_directories(${name}
         PRIVATE

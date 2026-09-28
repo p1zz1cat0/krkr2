@@ -64,6 +64,7 @@ extern "C" void TVPFftGraphPluginAnchor();
 extern "C" void TVPKAGParserExPluginAnchor();
 extern "C" void TVPDrawDeviceD3DPluginAnchor();
 extern "C" void TVPDrawDeviceD3DZAliasPluginAnchor();
+extern "C" void TVPLzfsPluginAnchor();
 // 诊断插件（smoke 用）只链进 app 目标；core 单元测试不链 krkr2plugin，
 // 兜底实现放在 InternalPluginAnchors.cpp（不能放本文件，否则弱定义会被本地
 // 解析、链接器不再去 krkr2plugin 取真实现）。
@@ -161,6 +162,7 @@ void TVPLoadInternalPlugins() {
     TVPKAGParserExPluginAnchor();
     TVPDrawDeviceD3DPluginAnchor();
     TVPDrawDeviceD3DZAliasPluginAnchor();
+    TVPLzfsPluginAnchor();
     TVPWindowMessageChannelPluginAnchor();
 
     ncbAutoRegister::AllRegist();

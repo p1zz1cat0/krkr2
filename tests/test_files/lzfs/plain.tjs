@@ -1,0 +1,2 @@
+// 普通（非 LZ4）文件：经 lzfs:// 应原样透传。
+plainRan = true;

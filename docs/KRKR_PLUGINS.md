@@ -67,7 +67,7 @@ it retains staging output in a temporary build directory and must never replace
 | layerExMovie.dll       | https://github.com/krkrz/krkrz/tree/last_hodgepodge_repository/src/plugins/win32/layerExMovie           |
 | layerExRaster.dll      | https://github.com/wtnbgo/layerExRaster                                                                 |
 | layerExShimmer.dll     | http://keepcreating.g2.xrea.com/krkrplugins/ShimmerPlugin/layerExShimmer.zip                            |
-| lzfs.dll               | nan                                                                                                     |
+| lzfs.dll               | in-tree: cpp/plugins/lzfs (clean-room LZ4F media; spec from Kirakira reverse notes)                    |
 | minizip.dll            | https://github.com/wtnbgo/minizip                                                                       |
 | motionplayer.dll       | nan                                                                                                     |
 | multiimage.dll         | nan                                                                                                     |

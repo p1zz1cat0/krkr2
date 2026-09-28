@@ -45,6 +45,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     windowMessageChannel/windowMessageChannel.cpp
     DrawDeviceD3D/DrawDeviceD3D.cpp
     DrawDeviceD3D/DrawDeviceD3DZAlias.cpp
+    lzfs/lzfs.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -116,3 +117,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE spdlog::spdlog)
 # 并提供 ZLIB::ZLIB 导入目标。
 find_package(ZLIB REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
+
+# lzfs 的 LZ4 frame 解码用 vcpkg 的官方 LZ4F（与真 lzfs.dll 同族库）。
+find_package(lz4 CONFIG REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE lz4::lz4)

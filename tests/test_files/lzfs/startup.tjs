@@ -1,0 +1,63 @@
+// lzfs.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+// 覆盖：media 只在 Plugins.link 后存在；lzfs:// 下 LZ4 frame 透明解压、
+// 其余原样透传；同一文件不带 scheme 读取时仍是原始压缩字节。
+//
+// 注意：本引擎里"结果被丢弃"的 native 调用不会把异常传播进 try/catch，
+// 因此下面每个预期抛异常的调用都显式接收返回值。
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+// 链接前：没有 "lzfs" media，任何 lzfs:// 名字都不可解析。
+var unlinkedUsable = false;
+try { unlinkedUsable = Storages.isExistentStorage("lzfs://./payload_lz4.tjs"); } catch (e) {
+}
+check(!unlinkedUsable, "lzfs:// is not usable before Plugins.link");
+
+// 模块链接（link 返回 void，注册结果由 media 行为验证）。
+Plugins.link("lzfs.dll");
+
+// media 存在性委托内层存储：存在的文件 true，缺失的 false。
+check(Storages.isExistentStorage("lzfs://./payload_lz4.tjs"),
+      "lzfs:// resolves an existing file");
+check(!Storages.isExistentStorage("lzfs://./missing.tjs"),
+      "lzfs:// reports a missing file as absent");
+
+// LZ4 frame 文件经 lzfs:// 读出解压后的脚本并执行。
+var decodedRan = false;
+var decodedThrew = "";
+try { var decodedValue = Scripts.execStorage("lzfs://./payload_lz4.tjs"); } catch (e) {
+    decodedThrew = e.message;
+}
+check(decodedThrew == "", "LZ4 payload executes through lzfs:// (" + decodedThrew + ")");
+check(decodedRan, "decoded payload ran its statements");
+
+// 非 LZ4 文件经 lzfs:// 原样透传。
+var plainRan = false;
+var plainThrew = "";
+try { var plainValue = Scripts.execStorage("lzfs://./plain.tjs"); } catch (e) {
+    plainThrew = e.message;
+}
+check(plainThrew == "", "non-LZ4 file passes through lzfs:// (" + plainThrew + ")");
+check(plainRan, "non-LZ4 payload ran its statements");
+
+// 同一 LZ4 文件不带 scheme 读取时仍是原始压缩字节：执行必然失败。
+// 这正是"解压只发生在 lzfs:// 通道"的证明。
+var rawRejected = false;
+try { var rawValue = Scripts.execStorage("./payload_lz4.tjs"); } catch (e) {
+    rawRejected = true;
+}
+check(rawRejected, "raw LZ4 bytes are not valid TJS without the scheme");
+
+// 截断的 LZ4 frame：判"不是 LZ4"并 raw 透传（不挂死、也不当作打开失败）。
+// 透传内容是二进制，执行失败属预期，异常在这里被吞掉；能走到最后的
+// marker 即证明不挂死。
+check(Storages.isExistentStorage("lzfs://./truncated_lz4.tjs"),
+      "truncated frame still resolves through lzfs://");
+try { var truncatedValue = Scripts.execStorage("lzfs://./truncated_lz4.tjs"); } catch (e) {
+}
+
+pluginSmokePass("lzfs.dll");
+System.exit(0);
