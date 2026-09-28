@@ -42,6 +42,8 @@ public:
     void setSize(tjs_int width, tjs_int height) {
         if(width <= 0 || height <= 0)
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D size must be positive"));
+        if(transitionActive_)
+            stopTransition();
         width_ = width;
         height_ = height;
         SetLockedSize(width, height);
@@ -84,6 +86,41 @@ public:
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D elapsed time must be nonnegative"));
         updateLayers(elapsed);
         Update();
+        if(Window)
+            Window->RequestUpdate();
+    }
+
+    bool checkEnable(tTJSString name) const {
+        // Report only modules owned by this device. The E-mote bridge is not
+        // connected yet, even when the separate emoteplayer plugin is linked.
+        (void)name;
+        return false;
+    }
+
+    void setScreenRect(tjs_int x, tjs_int y, tjs_int width, tjs_int height) {
+        screenRect_ = {x, y, width, height};
+    }
+
+    void setPrimarySize(tjs_int width, tjs_int height) {
+        setSize(width, height);
+    }
+
+    tjs_real getTransState() const { return transState_; }
+    void setTransState(tjs_real value) {
+        if(!std::isfinite(value))
+            TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D transState must be finite"));
+        transState_ = value;
+        if(Window)
+            Window->RequestUpdate();
+    }
+
+    void startTransition(iTJSDispatch2 *parameters);
+    void stopTransition() {
+        transitionSource_.reset();
+        if(transitionActive_)
+            showBackPlane_ = !showBackPlane_;
+        transitionActive_ = false;
+        transState_ = 1.0;
         if(Window)
             Window->RequestUpdate();
     }
@@ -140,6 +177,11 @@ private:
     iTVPBaseBitmap *compose();
     tjs_int width_ = 0;
     tjs_int height_ = 0;
+    std::array<tjs_int, 4> screenRect_{};
+    tjs_real transState_ = 1.0;
+    bool transitionActive_ = false;
+    bool showBackPlane_ = false;
+    std::unique_ptr<tTVPBaseTexture> transitionSource_;
     std::unique_ptr<tTVPBaseTexture> composite_;
     std::vector<D3DLayer *> layers_;
 };
@@ -413,7 +455,7 @@ void DrawDeviceD3D::updateLayers(tjs_real elapsed) {
 
 iTVPBaseBitmap *DrawDeviceD3D::compose() {
     auto *manager = GetLayerManagerAt(PrimaryLayerManagerIndex);
-    if(layers_.empty())
+    if(layers_.empty() && !transitionActive_)
         return manager ? manager->GetDrawBuffer() : nullptr;
 
     if(!composite_ || composite_->GetWidth() != static_cast<tjs_uint>(width_) ||
@@ -426,10 +468,15 @@ iTVPBaseBitmap *DrawDeviceD3D::compose() {
                      [](const D3DLayer *left, const D3DLayer *right) {
                          return left->getFrontIndex() < right->getFrontIndex();
                      });
+    const bool drawBackPlane = transitionActive_ ? !showBackPlane_ : showBackPlane_;
     for(auto *layer : ordered) {
         if(layer->getDrawPlane() != D3DLayer::DrawPlaneBack)
             layer->draw(*composite_);
     }
+    if(drawBackPlane)
+        for(auto *layer : ordered)
+            if(layer->getDrawPlane() == D3DLayer::DrawPlaneBack)
+                layer->draw(*composite_);
 
     auto *concreteManager = dynamic_cast<tTVPLayerManager *>(manager);
     if(concreteManager) {
@@ -448,7 +495,48 @@ iTVPBaseBitmap *DrawDeviceD3D::compose() {
         composite_->Blt(0, 0, buffer,
                         tTVPRect(0, 0, buffer->GetWidth(), buffer->GetHeight()),
                         ltAlpha, 255, false);
+    if(transitionActive_ && transitionSource_) {
+        const auto opacity = static_cast<tjs_int>(
+            std::lround(std::clamp(transState_, 0.0, 1.0) * 255.0));
+        if(opacity > 0)
+            composite_->Blt(0, 0, transitionSource_.get(),
+                            tTVPRect(0, 0, transitionSource_->GetWidth(),
+                                     transitionSource_->GetHeight()), bmCopy,
+                            opacity, false);
+        if(transState_ <= 0)
+            stopTransition();
+    }
     return composite_.get();
+}
+
+void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
+    if(!parameters)
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition requires parameters"));
+    tTJSVariant method;
+    if(TJS_FAILED(parameters->PropGet(0, TJS_W("method"), nullptr,
+                                      &method, parameters)) ||
+       method.Type() != tvtString ||
+       ttstr(method.AsString()) != ttstr(TJS_W("crossfade")))
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D supports only crossfade transitions"));
+    auto *frame = compose();
+    if(!frame || !frame->GetTexture())
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition has no frame"));
+    auto next = std::make_unique<tTVPBaseTexture>(frame->GetWidth(),
+                                                   frame->GetHeight());
+    auto *snapshot = TVPGetRenderManager()->CreateTexture2D(
+        frame->GetWidth(), frame->GetHeight(), frame->GetTexture());
+    if(!snapshot)
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition could not copy frame"));
+    try {
+        next->AssignTexture(snapshot);
+    } catch(...) {
+        snapshot->Release();
+        throw;
+    }
+    snapshot->Release();
+    transitionSource_ = std::move(next);
+    transitionActive_ = true;
+    transState_ = 1.0;
 }
 
 void DrawDeviceD3D::capture(iTJSDispatch2 *layerObject, tjs_int index) {
@@ -498,6 +586,12 @@ NCB_REGISTER_CLASS(DrawDeviceD3D) {
     NCB_PROPERTY(layerManagerIndex, getLayerManagerIndex, setLayerManagerIndex);
     NCB_PROPERTY_RO(primaryLayers, getPrimaryLayers);
     NCB_METHOD(update);
+    NCB_METHOD(checkEnable);
+    NCB_METHOD(setScreenRect);
+    NCB_METHOD(setPrimarySize);
+    NCB_PROPERTY(transState, getTransState, setTransState);
+    NCB_METHOD(startTransition);
+    NCB_METHOD(stopTransition);
     NCB_METHOD(capture);
 }
 
@@ -510,6 +604,12 @@ NCB_REGISTER_CLASS(D3D) {
     NCB_PROPERTY(layerManagerIndex, getLayerManagerIndex, setLayerManagerIndex);
     NCB_PROPERTY_RO(primaryLayers, getPrimaryLayers);
     NCB_METHOD(update);
+    NCB_METHOD(checkEnable);
+    NCB_METHOD(setScreenRect);
+    NCB_METHOD(setPrimarySize);
+    NCB_PROPERTY(transState, getTransState, setTransState);
+    NCB_METHOD(startTransition);
+    NCB_METHOD(stopTransition);
     NCB_METHOD(capture);
 }
 

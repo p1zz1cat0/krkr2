@@ -5,8 +5,18 @@ Scripts.execStorage("../common/plugin_assert.tjs");
 Plugins.link("drawdeviceD3DZ.dll");
 var device = new DrawDeviceD3D(16, 12);
 pluginAssertEqual("alias constructor width", 16, device.width);
+pluginAssertEqual("unconnected emote module is disabled", false,
+                  device.checkEnable("emote"));
+pluginAssertEqual("unknown module is disabled", false,
+                  device.checkEnable("unknown"));
+device.setScreenRect(0, 0, 1920, 1080);
+device.setPrimarySize(20, 15);
+pluginAssertEqual("primary size changes device width", 20, device.width);
+pluginAssertEqual("primary size changes device height", 15, device.height);
 var snapshot = new D3D(4, 3);
 pluginAssertEqual("alias D3D constructor height", 3, snapshot.height);
+pluginAssertEqual("offscreen device reports module availability", false,
+                  snapshot.checkEnable("emote"));
 var layer = new D3DLayer(snapshot);
 pluginAssertEqual("alias layer plane", D3DLayer.DrawPlaneBoth,
                   layer.drawPlane);
@@ -14,6 +24,57 @@ var image = new D3DImage(snapshot);
 pluginAssertEqual("alias empty image width", 0, image.width);
 Plugins.link("drawdeviceD3D.dll");
 Plugins.link("drawdeviceD3DZ.dll");
+
+var transitionDevice = new D3D(2, 2);
+var sourceWindow = new Window();
+var source = new Layer(sourceWindow, null);
+source.setImageSize(1, 1);
+source.setMainPixel(0, 0, 0xfff00000);
+var oldImage = new D3DImage(transitionDevice);
+oldImage.load(source);
+source.setMainPixel(0, 0, 0xff0000f0);
+var newImage = new D3DImage(transitionDevice);
+newImage.load(source);
+var front = new D3DLayer(transitionDevice);
+front.drawPlane = D3DLayer.DrawPlaneFront;
+var oldPicture = new D3DPicture(front, oldImage);
+oldPicture.blendMode = 1;
+oldPicture.assignImageRange(0, 0, 1, 1, 0, 0);
+var back = new D3DLayer(transitionDevice);
+back.drawPlane = D3DLayer.DrawPlaneBack;
+var newPicture = new D3DPicture(back, newImage);
+newPicture.blendMode = 1;
+newPicture.assignImageRange(0, 0, 1, 1, 0, 0);
+var output = new Layer(sourceWindow, source);
+output.setImageSize(2, 2);
+transitionDevice.capture(output, 0);
+pluginAssertEqual("transition starts on front plane", 0x00f00000,
+                  output.getMainPixel(0, 0));
+var transition = new Dictionary();
+transition.method = "crossfade";
+transition.time = 500;
+transitionDevice.startTransition(transition);
+transitionDevice.transState = 0.5;
+transitionDevice.capture(output, 0);
+var middle = output.getMainPixel(0, 0);
+pluginAssertTrue("crossfade middle differs from old and new frames",
+                 middle != 0x00f00000 && middle != 0x000000f0);
+transitionDevice.transState = 0;
+transitionDevice.capture(output, 0);
+pluginAssertEqual("transition finishes on back plane", 0x000000f0,
+                  output.getMainPixel(0, 0));
+transitionDevice.stopTransition();
+transition.method = "universal";
+var unsupportedTransition = false;
+try {
+    transitionDevice.startTransition(transition);
+} catch (e) {
+    unsupportedTransition = true;
+}
+pluginAssertTrue("unsupported transition is explicit", unsupportedTransition);
+transitionDevice.capture(output, 0);
+pluginAssertEqual("failed transition preserves visible plane", 0x000000f0,
+                  output.getMainPixel(0, 0));
 
 pluginSmokePass("drawdeviceD3DZ.dll");
 System.exit(0);
