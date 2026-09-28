@@ -64,7 +64,7 @@ transitionDevice.capture(output, 0);
 pluginAssertEqual("transition finishes on back plane", 0x000000f0,
                   output.getMainPixel(0, 0));
 transitionDevice.stopTransition();
-transition.method = "universal";
+transition.method = "vanish";
 var unsupportedTransition = false;
 try {
     transitionDevice.startTransition(transition);
@@ -74,6 +74,58 @@ try {
 pluginAssertTrue("unsupported transition is explicit", unsupportedTransition);
 transitionDevice.capture(output, 0);
 pluginAssertEqual("failed transition preserves visible plane", 0x000000f0,
+                  output.getMainPixel(0, 0));
+
+// Universal: KAGWindow.beginTransition passes rule as a loaded Layer and
+// vague as an integer. Dark rule pixels switch first, as in the core handler.
+transition.method = "universal";
+var missingRule = false;
+try {
+    transitionDevice.startTransition(transition);
+} catch (e) {
+    missingRule = true;
+}
+pluginAssertTrue("universal without a rule Layer is explicit", missingRule);
+var rule = new Layer(sourceWindow, source);
+rule.setImageSize(1, 1);
+transition.rule = rule;
+transition.vague = 64;
+var mismatchedRule = false;
+try {
+    transitionDevice.startTransition(transition);
+} catch (e) {
+    mismatchedRule = true;
+}
+pluginAssertTrue("rule smaller than the device is explicit", mismatchedRule);
+transitionDevice.capture(output, 0);
+pluginAssertEqual("rejected universal preserves visible plane", 0x000000f0,
+                  output.getMainPixel(0, 0));
+
+rule.setImageSize(2, 2);
+rule.fillRect(0, 0, 2, 2, 0xffffffff);
+transitionDevice.startTransition(transition);
+transitionDevice.transState = 0.5;
+transitionDevice.capture(output, 0);
+pluginAssertEqual("white rule pixel still shows the old frame at half time",
+                  0x000000f0, output.getMainPixel(0, 0));
+transitionDevice.transState = 0;
+transitionDevice.capture(output, 0);
+pluginAssertEqual("universal finishes on the front plane", 0x00f00000,
+                  output.getMainPixel(0, 0));
+
+rule.fillRect(0, 0, 2, 2, 0xff000000);
+transitionDevice.startTransition(transition);
+transitionDevice.transState = 1;
+transitionDevice.capture(output, 0);
+pluginAssertEqual("universal starts on the old frame", 0x00f00000,
+                  output.getMainPixel(0, 0));
+transitionDevice.transState = 0.5;
+transitionDevice.capture(output, 0);
+pluginAssertEqual("black rule pixel already shows the new frame at half time",
+                  0x000000f0, output.getMainPixel(0, 0));
+transitionDevice.transState = 0;
+transitionDevice.capture(output, 0);
+pluginAssertEqual("universal finishes on the back plane", 0x000000f0,
                   output.getMainPixel(0, 0));
 
 pluginSmokePass("drawdeviceD3DZ.dll");

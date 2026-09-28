@@ -9,6 +9,7 @@
 #include "TVPWindow.h"
 #include "WindowIntf.h"
 #include "tjsArray.h"
+#include "tvpgl.h"
 
 #include <algorithm>
 #include <array>
@@ -117,6 +118,7 @@ public:
     void startTransition(iTJSDispatch2 *parameters);
     void stopTransition() {
         transitionSource_.reset();
+        transitionRule_.reset();
         if(transitionActive_)
             showBackPlane_ = !showBackPlane_;
         transitionActive_ = false;
@@ -182,6 +184,13 @@ private:
     bool transitionActive_ = false;
     bool showBackPlane_ = false;
     std::unique_ptr<tTVPBaseTexture> transitionSource_;
+    // Set only for universal transitions: 8bpp rule, as the core loads it.
+    struct TextureRelease {
+        void operator()(iTVPTexture2D *texture) const { texture->Release(); }
+    };
+    std::unique_ptr<iTVPTexture2D, TextureRelease> transitionRule_;
+    tjs_int transitionVague_ = 0;
+    std::unique_ptr<tTVPBaseTexture> transitionFrame_;
     std::unique_ptr<tTVPBaseTexture> composite_;
     std::vector<D3DLayer *> layers_;
 };
@@ -495,18 +504,46 @@ iTVPBaseBitmap *DrawDeviceD3D::compose() {
         composite_->Blt(0, 0, buffer,
                         tTVPRect(0, 0, buffer->GetWidth(), buffer->GetHeight()),
                         ltAlpha, 255, false);
-    if(transitionActive_ && transitionSource_) {
-        const auto opacity = static_cast<tjs_int>(
-            std::lround(std::clamp(transState_, 0.0, 1.0) * 255.0));
+    if(!transitionActive_ || !transitionSource_)
+        return composite_.get();
+    if(transState_ <= 0) {
+        stopTransition();
+        return composite_.get();
+    }
+    const tjs_real remaining = std::clamp(transState_, 0.0, 1.0);
+    if(!transitionRule_) {
+        const auto opacity = static_cast<tjs_int>(std::lround(remaining * 255.0));
         if(opacity > 0)
             composite_->Blt(0, 0, transitionSource_.get(),
                             tTVPRect(0, 0, transitionSource_->GetWidth(),
                                      transitionSource_->GetHeight()), bmCopy,
                             opacity, false);
-        if(transState_ <= 0)
-            stopTransition();
+        return composite_.get();
     }
-    return composite_.get();
+
+    // Same method and phase range (0 = old frame, 255 + vague = new frame)
+    // as the core universal transition handler.
+    static iTVPRenderMethod *method =
+        TVPGetRenderManager()->GetRenderMethod("UnivTransBlend");
+    static const int phaseId = method->EnumParameterID("phase");
+    static const int vagueId = method->EnumParameterID("vague");
+    if(!transitionFrame_ ||
+       transitionFrame_->GetWidth() != static_cast<tjs_uint>(width_) ||
+       transitionFrame_->GetHeight() != static_cast<tjs_uint>(height_))
+        transitionFrame_ = std::make_unique<tTVPBaseTexture>(width_, height_);
+    method->SetParameterInt(vagueId, transitionVague_);
+    method->SetParameterInt(
+        phaseId, static_cast<int>(std::lround((1.0 - remaining) *
+                                              (255 + transitionVague_))));
+    const tTVPRect full(0, 0, width_, height_);
+    tRenderTexRectArray::Element sources[] = {
+        tRenderTexRectArray::Element(transitionSource_->GetTexture(), full),
+        tRenderTexRectArray::Element(composite_->GetTexture(), full),
+        tRenderTexRectArray::Element(transitionRule_.get(), full)};
+    TVPGetRenderManager()->OperateRect(
+        method, transitionFrame_->GetTextureForRender(false, &full), nullptr,
+        full, tRenderTexRectArray(sources));
+    return transitionFrame_.get();
 }
 
 void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
@@ -515,9 +552,55 @@ void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
     tTJSVariant method;
     if(TJS_FAILED(parameters->PropGet(0, TJS_W("method"), nullptr,
                                       &method, parameters)) ||
-       method.Type() != tvtString ||
-       ttstr(method.AsString()) != ttstr(TJS_W("crossfade")))
-        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D supports only crossfade transitions"));
+       method.Type() != tvtString)
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition requires a method"));
+    const ttstr methodName = method.AsStringNoAddRef();
+    std::unique_ptr<iTVPTexture2D, TextureRelease> rule;
+    tjs_int vague = 0;
+    if(methodName == TJS_W("universal")) {
+        // KAGWindow.beginTransition passes the rule image already loaded
+        // into a Layer, plus vague (it substitutes 64 when omitted).
+        tTJSVariant ruleValue, vagueValue;
+        tTJSNI_BaseLayer *ruleLayer = nullptr;
+        if(TJS_FAILED(parameters->PropGet(0, TJS_W("rule"), nullptr,
+                                          &ruleValue, parameters)) ||
+           ruleValue.Type() != tvtObject || !ruleValue.AsObjectNoAddRef() ||
+           TJS_FAILED(ruleValue.AsObjectNoAddRef()->NativeInstanceSupport(
+               TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
+               reinterpret_cast<iTJSNativeInstance **>(&ruleLayer))) ||
+           !ruleLayer)
+            TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D universal transition requires a rule Layer"));
+        if(TJS_FAILED(parameters->PropGet(0, TJS_W("vague"), nullptr,
+                                          &vagueValue, parameters)) ||
+           vagueValue.Type() != tvtInteger || vagueValue.AsInteger() < 0 ||
+           vagueValue.AsInteger() > 0xffff)
+            TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D universal transition requires vague in 0..65535"));
+        vague = static_cast<tjs_int>(vagueValue.AsInteger());
+        auto *image = ruleLayer->GetMainImage();
+        if(!image || !image->Is32BPP() ||
+           image->GetWidth() != static_cast<tjs_uint>(width_) ||
+           image->GetHeight() != static_cast<tjs_uint>(height_))
+            TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D universal rule image must match the device size"));
+        // A refcounted 8bpp bitmap, as the core rule loader produces: the
+        // pixel-pointer CreateTexture2D overload only references its input.
+        auto *gray = new tTVPBitmap(width_, height_, 8);
+        try {
+            for(tjs_int y = 0; y < height_; ++y)
+                TVPBLConvert32BitTo8Bit(
+                    static_cast<tjs_uint8 *>(gray->GetScanLine(y)),
+                    static_cast<const tjs_uint32 *>(image->GetScanLine(y)),
+                    width_);
+            rule.reset(TVPGetRenderManager()->CreateTexture2D(gray));
+        } catch(...) {
+            gray->Release();
+            throw;
+        }
+        gray->Release();
+        if(!rule)
+            TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition could not create the rule"));
+    } else if(methodName != TJS_W("crossfade")) {
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D supports only crossfade and universal transitions"));
+    }
     auto *frame = compose();
     if(!frame || !frame->GetTexture())
         TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition has no frame"));
@@ -535,6 +618,8 @@ void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
     }
     snapshot->Release();
     transitionSource_ = std::move(next);
+    transitionRule_ = std::move(rule);
+    transitionVague_ = vague;
     transitionActive_ = true;
     transState_ = 1.0;
 }
