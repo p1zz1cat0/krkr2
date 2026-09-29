@@ -10,6 +10,8 @@
 #include "WindowIntf.h"
 #include "tjsArray.h"
 #include "tvpgl.h"
+#include "../motionplayer/D3DAdaptor.h"
+#include "../motionplayer/EmotePlayerMembers.h"
 
 #include <algorithm>
 #include <array>
@@ -23,6 +25,7 @@ namespace {
 
 class D3DLayer;
 class D3DPicture;
+class DeviceEmotePlayer;
 
 // The window owns this native device through its TJS drawDevice object.
 // LayerManager owns its DrawBuffer; this device selects and presents it.
@@ -91,12 +94,9 @@ public:
             Window->RequestUpdate();
     }
 
-    bool checkEnable(tTJSString name) const {
-        // Report only modules owned by this device. The E-mote bridge is not
-        // connected yet, even when the separate emoteplayer plugin is linked.
-        (void)name;
-        return false;
-    }
+    // The original reports its own E-mote module; KAGWindow.initD3D then
+    // probes maskMode/getModule behind typeof guards.
+    bool checkEnable(tTJSString name) const { return name == TJS_W("emote"); }
 
     void setScreenRect(tjs_int x, tjs_int y, tjs_int width, tjs_int height) {
         screenRect_ = {x, y, width, height};
@@ -278,6 +278,11 @@ public:
         pictures_.erase(std::remove(pictures_.begin(), pictures_.end(), picture),
                         pictures_.end());
     }
+    void addEmote(DeviceEmotePlayer *player) { emotes_.push_back(player); }
+    void removeEmote(DeviceEmotePlayer *player) {
+        emotes_.erase(std::remove(emotes_.begin(), emotes_.end(), player),
+                      emotes_.end());
+    }
 
     tjs_int getDrawPlane() const { return drawPlane_; }
     void setDrawPlane(tjs_int value) {
@@ -335,6 +340,7 @@ private:
         1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1
     };
     std::vector<D3DPicture *> pictures_;
+    std::vector<DeviceEmotePlayer *> emotes_;
 };
 
 class D3DPicture {
@@ -444,9 +450,145 @@ private:
     tjs_int opacity_ = 255;
 };
 
+// The E-mote player drawdeviceD3D.dll registers as D3DEmotePlayer: built on
+// a D3DLayer, loading by storage name and advancing by 60 fps frames. It
+// reuses motionplayer's EmotePlayer and renders each frame into its own
+// canvas with the model origin at the canvas center; the owning D3DLayer then
+// places that canvas with its matrix around the screen center, the original's
+// coordinate model (setCoord stays 0,0; stand positions are layer matrices).
+class DeviceEmotePlayer : public motion::EmotePlayer {
+public:
+    static tjs_error factory(DeviceEmotePlayer **result, tjs_int numparams,
+                             tTJSVariant **param, iTJSDispatch2 *) {
+        if(numparams != 1 || !param[0])
+            return TJS_E_BADPARAMCOUNT;
+        *result = new DeviceEmotePlayer(*param[0]);
+        return TJS_S_OK;
+    }
+
+    explicit DeviceEmotePlayer(const tTJSVariant &layerObject)
+        : motion::EmotePlayer(motion::ResourceManager{}),
+          layerObject_(layerObject) {
+        auto *layer = resolveLayer();
+        if(!layer || !layer->device())
+            TVPThrowExceptionMessage(TJS_W("D3DEmotePlayer requires a D3DLayer"));
+        setUseD3D(true);
+        layer->addEmote(this);
+    }
+    ~DeviceEmotePlayer() {
+        if(auto *layer = resolveLayer())
+            layer->removeEmote(this);
+    }
+
+    // Unlike Motion.EmotePlayer, the original takes a storage name, throws
+    // when it cannot be loaded, and selects the base pose itself: After's D3D
+    // scripts never set chara/play/initPhysics, which its non-D3D
+    // AffineSourceMotion.createPlayer does after Motion.EmotePlayer.load.
+    void load(ttstr storage) {
+        const tTJSVariant module = resources_.load(storage);
+        if(module.Type() != tvtObject)
+            TVPThrowExceptionMessage(TJS_W("D3DEmotePlayer cannot load %1"), storage);
+        motion::EmotePlayer::load(module);
+        tTJSVariant metadata, base, value;
+        if(member(module, TJS_W("metadata"), metadata) &&
+           member(metadata, TJS_W("base"), base)) {
+            if(member(base, TJS_W("chara"), value))
+                setChara(value);
+            if(member(base, TJS_W("motion"), value))
+                play(value, motion::PlayFlagForce);
+        }
+        initPhysics(metadata);
+    }
+
+    // clone(D3DLayer) returns a player drawn by that layer, sharing the model.
+    tTJSVariant clone(tTJSVariant layerObject) {
+        auto copy = std::make_unique<DeviceEmotePlayer>(layerObject);
+        copyStateTo(*copy);
+        iTJSDispatch2 *adaptor =
+            ncbInstanceAdaptor<DeviceEmotePlayer>::CreateAdaptor(copy.get());
+        if(!adaptor)
+            TVPThrowExceptionMessage(TJS_W("D3DEmotePlayer.clone failed"));
+        copy.release();
+        tTJSVariant result(adaptor, adaptor);
+        adaptor->Release();
+        return result;
+    }
+
+    // Scripts pass elapsed 60 fps frames (ms * 0.06); EmotePlayer takes ms.
+    void progressFrames(tjs_real frames) {
+        motion::EmotePlayer::progress(frames * 1000.0 / 60.0);
+    }
+
+    void composite(tTVPBaseTexture &target, const std::array<tjs_real, 16> &matrix,
+                   tjs_int screenWidth, tjs_int screenHeight) {
+        if(!getVisible())
+            return;
+        // ponytail: fixed canvas of screen width x twice its height keeps a
+        // model raised by the layer matrix intact; size it from the model's
+        // bounds if close-ups need more resolution or wider poses clip.
+        const tjs_int canvasWidth = screenWidth;
+        const tjs_int canvasHeight = screenHeight * 2;
+        if(canvas_.getWidth() != canvasWidth || canvas_.getHeight() != canvasHeight) {
+            canvas_.setSize(canvasWidth, canvasHeight);
+            tTJSVariant values[6] = { 1.0, 0.0, 0.0, 1.0, canvasWidth / 2.0,
+                                      canvasHeight / 2.0 };
+            tTJSVariant *params[6] = { &values[0], &values[1], &values[2],
+                                       &values[3], &values[4], &values[5] };
+            setDrawAffineTranslateMatrixCompat(nullptr, 6, params, this);
+        }
+        if(!getPlayer().renderToD3DAdaptor(&canvas_))
+            return;
+        auto *texture = canvas_.targetTexture();
+        if(!texture)
+            return;
+        if(!canvasView_ || viewedTexture_ != texture) {
+            auto view = std::make_unique<tTVPBaseTexture>(canvasWidth, canvasHeight);
+            view->AssignTexture(texture);
+            canvasView_ = std::move(view);
+            viewedTexture_ = texture;
+        }
+        // screen = M * (canvas - canvasCenter) + translation + screenCenter
+        t2DAffineMatrix transform = { matrix[0], matrix[1], matrix[4], matrix[5], 0, 0 };
+        const tjs_real cx = canvasWidth / 2.0, cy = canvasHeight / 2.0;
+        transform.tx = matrix[12] + screenWidth / 2.0 - (transform.a * cx + transform.c * cy);
+        transform.ty = matrix[13] + screenHeight / 2.0 - (transform.b * cx + transform.d * cy);
+        target.AffineBlt(tTVPRect(0, 0, target.GetWidth(), target.GetHeight()),
+                         canvasView_.get(), tTVPRect(0, 0, canvasWidth, canvasHeight),
+                         transform, bmAlphaOnAlpha, 255, nullptr, false,
+                         getSmoothing() ? stLinear : stNearest);
+    }
+
+private:
+    static bool member(const tTJSVariant &object, const tjs_char *name,
+                       tTJSVariant &value) {
+        value.Clear();
+        auto *dispatch = object.Type() == tvtObject ? object.AsObjectNoAddRef() : nullptr;
+        return dispatch &&
+            TJS_SUCCEEDED(dispatch->PropGet(0, name, nullptr, &value, dispatch)) &&
+            value.Type() != tvtVoid;
+    }
+
+    D3DLayer *resolveLayer() const {
+        return layerObject_.Type() == tvtObject
+            ? ncbInstanceAdaptor<D3DLayer>::GetNativeInstance(
+                  layerObject_.AsObjectNoAddRef())
+            : nullptr;
+    }
+
+    tTJSVariant layerObject_;
+    motion::ResourceManager resources_;
+    motion::D3DAdaptor canvas_;
+    std::unique_ptr<tTVPBaseTexture> canvasView_;
+    iTVPTexture2D *viewedTexture_ = nullptr; // owned by canvas_
+};
+
 void D3DLayer::draw(tTVPBaseTexture &target) const {
     for(auto *picture : pictures_)
         picture->draw(target, matrix_);
+    if(!device_)
+        return;
+    for(auto *emote : emotes_)
+        emote->composite(target, matrix_, device_->getWidth(), device_->getHeight());
 }
 
 DrawDeviceD3D::~DrawDeviceD3D() {
@@ -716,6 +858,14 @@ NCB_REGISTER_CLASS(D3DImage) {
     NCB_METHOD(load);
     NCB_PROPERTY_RO(width, getWidth);
     NCB_PROPERTY_RO(height, getHeight);
+}
+
+NCB_REGISTER_CLASS_DIFFER(D3DEmotePlayer, DeviceEmotePlayer) {
+    Factory(&Class::factory);
+    EMOTE_PLAYER_SHARED_MEMBERS
+    NCB_METHOD(load);
+    NCB_METHOD(clone);
+    Method(TJS_W("progress"), &Class::progressFrames);
 }
 
 NCB_REGISTER_CLASS(D3DPicture) {

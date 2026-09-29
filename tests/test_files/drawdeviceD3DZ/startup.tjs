@@ -5,7 +5,7 @@ Scripts.execStorage("../common/plugin_assert.tjs");
 Plugins.link("drawdeviceD3DZ.dll");
 var device = new DrawDeviceD3D(16, 12);
 pluginAssertEqual("alias constructor width", 16, device.width);
-pluginAssertEqual("unconnected emote module is disabled", false,
+pluginAssertEqual("device reports its E-mote module", true,
                   device.checkEnable("emote"));
 pluginAssertEqual("unknown module is disabled", false,
                   device.checkEnable("unknown"));
@@ -15,7 +15,7 @@ pluginAssertEqual("primary size changes device width", 20, device.width);
 pluginAssertEqual("primary size changes device height", 15, device.height);
 var snapshot = new D3D(4, 3);
 pluginAssertEqual("alias D3D constructor height", 3, snapshot.height);
-pluginAssertEqual("offscreen device reports module availability", false,
+pluginAssertEqual("offscreen device reports its E-mote module", true,
                   snapshot.checkEnable("emote"));
 var layer = new D3DLayer(snapshot);
 pluginAssertEqual("alias layer plane", D3DLayer.DrawPlaneBoth,
