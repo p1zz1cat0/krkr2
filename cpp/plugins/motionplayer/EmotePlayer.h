@@ -139,25 +139,25 @@ namespace motion {
         void setRotate(double rot, double transition = 0.0, double ease = 0.0);
         static tjs_error setRotCompat(tTJSVariant *result, tjs_int numparams,
                                       tTJSVariant **param,
-                                      iTJSDispatch2 *objthis);
+                                      EmotePlayer *self);
         double getRot();
 
         void setCoord(double x, double y, double transition = 0.0,
                       double ease = 0.0);
         static tjs_error setCoordCompat(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis);
+                                        EmotePlayer *self);
         void setScale(double s, double transition = 0.0, double ease = 0.0);
         static tjs_error setScaleCompat(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis);
+                                        EmotePlayer *self);
         double getScale();
         void setMirror(bool mirror);
         void setColor(tjs_int color, double transition = 0.0,
                       double ease = 0.0);
         static tjs_error setColorCompat(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis);
+                                        EmotePlayer *self);
         tjs_int getColor();
 
         tjs_int countVariables();
@@ -171,11 +171,11 @@ namespace motion {
         static tjs_error setTimelineBlendRatioCompat(tTJSVariant *result,
                                                      tjs_int numparams,
                                                      tTJSVariant **param,
-                                                     iTJSDispatch2 *objthis);
+                                                     EmotePlayer *self);
         static tjs_error setVariableCompat(tTJSVariant *result,
                                            tjs_int numparams,
                                            tTJSVariant **param,
-                                           iTJSDispatch2 *objthis);
+                                           EmotePlayer *self);
         double getVariable(ttstr label);
         tTJSVariant getVariableFrameList(ttstr label);
 
@@ -183,11 +183,11 @@ namespace motion {
                        double powerMin = 0.0, double powerMax = 0.0);
         static tjs_error startWindCompat(tTJSVariant *result, tjs_int numparams,
                                          tTJSVariant **param,
-                                         iTJSDispatch2 *objthis);
+                                         EmotePlayer *self);
         void stopWind();
         static tjs_error stopWindCompat(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis);
+                                        EmotePlayer *self);
 
         tjs_int countMainTimelines();
         ttstr getMainTimelineLabelAt(tjs_int idx);
@@ -219,7 +219,7 @@ namespace motion {
         void draw(tTJSVariant target);
         static tjs_error setDrawAffineTranslateMatrixCompat(
             tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
-            iTJSDispatch2 *objthis);
+            EmotePlayer *self);
 
         void skip();
         void skipToSync();
@@ -228,7 +228,7 @@ namespace motion {
         void progress(double dt);
         static tjs_error progressCompat(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis);
+                                        EmotePlayer *self);
 
         void setOuterForce(double x, double y);
         void setOuterForce(ttstr label, double x, double y,
@@ -236,13 +236,13 @@ namespace motion {
         static tjs_error setOuterForceCompat(tTJSVariant *result,
                                              tjs_int numparams,
                                              tTJSVariant **param,
-                                             iTJSDispatch2 *objthis);
+                                             EmotePlayer *self);
         tTJSVariant getOuterForce();
         bool contains(double x, double y);
         bool contains(ttstr label, double x, double y);
         static tjs_error containsCompat(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis);
+                                        EmotePlayer *self);
 
         // Runtime status and clock properties.
         // playing/allplaying delegate to Player; tickCount exposes accumulated
@@ -272,6 +272,11 @@ namespace motion {
         // Access to internal Player for delegation from NCB methods
         Player &getPlayer() { return _player; }
         const Player &getPlayer() const { return _player; }
+
+    protected:
+        // Copies wrapper state and the Player's serialized state into a
+        // freshly constructed player; clone() and D3DEmotePlayer::clone share it.
+        void copyStateTo(EmotePlayer &target);
 
     private:
         // Aligned to libkrkr2.so: EmoteObject(40b) owns ResourceManager +

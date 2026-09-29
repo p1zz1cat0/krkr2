@@ -253,6 +253,9 @@ namespace motion {
         // sets before entering Player_drawD3D @ 0x6D5B90.
         void setUseD3D(bool v) { _d3dDrawMode = v; }
         bool getUseD3D() const { return _d3dDrawMode; }
+        // Renders the current frame into a native adaptor owned by the caller
+        // (DrawDeviceD3D's D3DEmotePlayer); script draw() routes here too.
+        bool renderToD3DAdaptor(D3DAdaptor *adaptor);
 
         // Aligned to libkrkr2.so +1052: ttstr, not bool
         void setMeshline(ttstr v) { _meshline = v; }
@@ -585,7 +588,6 @@ namespace motion {
         bool renderToCanvasLike_0x6C7440(tTJSVariant *target,
                                          bool willCallUpdateLayerAfterDraw);
         bool renderToSeparateLayerAdaptor(iTJSDispatch2 *slaObject);
-        bool renderToD3DAdaptor(D3DAdaptor *adaptor);
         bool renderViaSharedD3DAdaptor(iTJSDispatch2 *targetLayerObject);
         iTJSDispatch2 *
         resolveSeparateLayerRenderTarget(SeparateLayerAdaptor *sla,

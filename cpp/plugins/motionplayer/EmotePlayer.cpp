@@ -304,6 +304,20 @@ namespace motion {
         typedef ncbInstanceAdaptor<EmotePlayer> AdaptorT;
 
         auto *copy = new EmotePlayer(ResourceManager{});
+        copyStateTo(*copy);
+
+        tTJSVariant result;
+        if(iTJSDispatch2 *adaptor = AdaptorT::CreateAdaptor(copy)) {
+            result = tTJSVariant(adaptor, adaptor);
+            adaptor->Release();
+        } else {
+            delete copy;
+        }
+        return result;
+    }
+
+    void EmotePlayer::copyStateTo(EmotePlayer &target) {
+        auto *copy = &target;
         // Copy EmotePlayer-specific state
         copy->_module = _module;
         copy->_storageKey = _storageKey;
@@ -363,15 +377,6 @@ namespace motion {
         copy->_player.setEmoteColor(static_cast<tjs_uint32>(copy->_color),
                                     0.0, 0.0);
         copy->_player.setMirror(copy->_mirrorChanged);
-
-        tTJSVariant result;
-        if(iTJSDispatch2 *adaptor = AdaptorT::CreateAdaptor(copy)) {
-            result = tTJSVariant(adaptor, adaptor);
-            adaptor->Release();
-        } else {
-            delete copy;
-        }
-        return result;
     }
 
     void EmotePlayer::show() {
@@ -523,9 +528,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setRotCompat(tTJSVariant *, tjs_int numparams,
                                         tTJSVariant **param,
-                                        iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                        EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -555,9 +558,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setCoordCompat(tTJSVariant *, tjs_int numparams,
                                           tTJSVariant **param,
-                                          iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                          EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -585,9 +586,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setScaleCompat(tTJSVariant *, tjs_int numparams,
                                           tTJSVariant **param,
-                                          iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                          EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -625,9 +624,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setColorCompat(tTJSVariant *, tjs_int numparams,
                                           tTJSVariant **param,
-                                          iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                          EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -656,9 +653,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setVariableCompat(tTJSVariant *, tjs_int numparams,
                                              tTJSVariant **param,
-                                             iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                             EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -710,9 +705,7 @@ namespace motion {
 
     tjs_error EmotePlayer::startWindCompat(tTJSVariant *, tjs_int numparams,
                                            tTJSVariant **param,
-                                           iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                           EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -734,9 +727,7 @@ namespace motion {
 
     tjs_error EmotePlayer::stopWindCompat(tTJSVariant *, tjs_int,
                                           tTJSVariant **,
-                                          iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                          EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -821,9 +812,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setTimelineBlendRatioCompat(
         tTJSVariant *, tjs_int numparams, tTJSVariant **param,
-        iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+        EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -1227,9 +1216,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setDrawAffineTranslateMatrixCompat(
         tTJSVariant *result, tjs_int numparams, tTJSVariant **param,
-        iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+        EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -1275,9 +1262,7 @@ namespace motion {
 
     tjs_error EmotePlayer::progressCompat(tTJSVariant *, tjs_int numparams,
                                           tTJSVariant **param,
-                                          iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                          EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -1303,9 +1288,7 @@ namespace motion {
 
     tjs_error EmotePlayer::setOuterForceCompat(tTJSVariant *, tjs_int numparams,
                                                tTJSVariant **param,
-                                               iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                               EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
@@ -1374,9 +1357,7 @@ namespace motion {
     tjs_error EmotePlayer::containsCompat(tTJSVariant *result,
                                           tjs_int numparams,
                                           tTJSVariant **param,
-                                          iTJSDispatch2 *objthis) {
-        auto *self =
-            ncbInstanceAdaptor<EmotePlayer>::GetNativeInstance(objthis, true);
+                                          EmotePlayer *self) {
         if(!self) {
             return TJS_E_INVALIDOBJECT;
         }
