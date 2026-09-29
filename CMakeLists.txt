@@ -124,6 +124,7 @@ if(MACOS)
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtWindowPresentation.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/WindowPresentationComponentTest.mm
             ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRing.mm
             ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRingComponentTest.mm
             PROPERTIES COMPILE_FLAGS "-fobjc-arc"
@@ -209,6 +210,14 @@ if(ENABLE_TESTS AND NOT (IOS OR ANDROID))
         target_include_directories(surface-layout-component-test PRIVATE
                 ${YOGHOURT_SPATIAL_PRESENTER_DIR})
         add_test(NAME surface-layout-component COMMAND surface-layout-component-test)
+
+        add_executable(window-presentation-component-test
+                ${YOGHOURT_SPATIAL_PRESENTER_DIR}/WindowPresentationComponentTest.mm
+                ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtWindowPresentation.mm)
+        target_include_directories(window-presentation-component-test PRIVATE
+                ${YOGHOURT_SPATIAL_PRESENTER_DIR})
+        target_link_libraries(window-presentation-component-test PRIVATE "-framework AppKit")
+        add_test(NAME window-presentation-component COMMAND window-presentation-component-test)
     endif()
     add_subdirectory(tests)
 endif()
