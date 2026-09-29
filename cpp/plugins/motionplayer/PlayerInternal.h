@@ -370,9 +370,8 @@ namespace motion {
                 return &runtime.parameterEntries[static_cast<size_t>(
                     node.parameterizeIndex)];
             }
-            if(node.parameterizeIndex >= 0) {
-                throw std::out_of_range("parameter id out of range.");
-            }
+            if(node.parameterizeIndex >= 0)
+                return nullptr;
             if(runtime.defaultParameterEntryPtr != nullptr) {
                 return runtime.defaultParameterEntryPtr;
             }

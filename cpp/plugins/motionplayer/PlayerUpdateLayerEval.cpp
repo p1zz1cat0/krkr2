@@ -970,6 +970,17 @@ namespace motion {
                 parent.clipW, parent.clipH, parent.originX, parent.originY);
             _runtime->perNodeEvalData[i].evalLim = nodeLim;
 
+            // REF getTickByIdx returns -1 for an absent parameter axis;
+            // parameterized nodes then have isNeedDraw=false. Do not select
+            // their frameList using the ordinary player time instead.
+            if(node.parameterizeIndex >= 0 && node.parameterEntry == nullptr) {
+                node.accumulated = parent.accumulated;
+                node.accumulated.visible = false;
+                node.accumulated.active = false;
+                node.accumulated.dirty = true;
+                continue;
+            }
+
             if(detail::logoChainTraceEnabled(_runtime->activeMotion)) {
                 const auto &parentNode = nodes[parentIdx];
                 detail::logoChainTraceLogf(

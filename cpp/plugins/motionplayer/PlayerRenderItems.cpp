@@ -218,7 +218,8 @@ namespace motion {
             auto &node = _runtime->nodes[ni];
             const bool emoteLike = detail::isEmoteLikeMotion(*_runtime);
             if(node.nodeType == 3) {
-                if(emoteLike && !shouldMergeEmoteBoundedChild(node)) {
+                if(emoteLike && (!node.accumulated.visible ||
+                                 !shouldMergeEmoteBoundedChild(node))) {
                     continue;
                 }
                 if(auto *child = node.getChildPlayer()) {
@@ -681,7 +682,8 @@ namespace motion {
                 : orderIndex;
             const auto &node = nodes[i];
             const bool mergedBoundedChild =
-                !_preview && shouldMergeEmoteBoundedChild(node);
+                !_preview && node.accumulated.visible &&
+                shouldMergeEmoteBoundedChild(node);
             // Motion sub-players are progressed even when their wrapper node
             // is inactive (PlayerUpdateChildMotion's shared label_18 path).
             // E-mote head/face wrappers commonly use that shape, so merge the

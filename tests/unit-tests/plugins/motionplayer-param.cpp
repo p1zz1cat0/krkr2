@@ -16,6 +16,7 @@
 #include <unordered_map>
 
 #include "motionplayer/EmoteCompatInternal.h"
+#include "motionplayer/NodeTree.h"
 #include "motionplayer/PlayerInternal.h"
 #include "motionplayer/RuntimeSupport.h"
 
@@ -103,6 +104,79 @@ TEST_CASE("parameterizedClipTime handles reversed ranges symmetrically") {
     const auto motion = clip(61.0);
     REQUIRE(motion::detail::parameterizedClipTime(motion, descending, 25.0) ==
             motion::detail::parameterizedClipTime(motion, ascending, 25.0));
+}
+
+TEST_CASE("an out-of-range authored parameter hides only its node") {
+    const auto layerWithAxis = [](int axis) {
+        auto layer = std::make_shared<PSB::PSBDictionary>();
+        layer->emplace("type", std::make_shared<PSB::PSBNumber>(0));
+        layer->emplace("parameterize", std::make_shared<PSB::PSBNumber>(axis));
+        auto frame = std::make_shared<PSB::PSBDictionary>();
+        frame->emplace("time", std::make_shared<PSB::PSBNumber>(0));
+        frame->emplace("type", std::make_shared<PSB::PSBNumber>(0));
+        auto content = std::make_shared<PSB::PSBDictionary>();
+        content->emplace("src", std::make_shared<PSB::PSBString>("fixture-icon"));
+        frame->emplace("content", content);
+        auto frames = std::make_shared<PSB::PSBList>(1);
+        frames->push_back(frame);
+        layer->emplace("frameList", frames);
+        return layer;
+    };
+
+    auto snapshot = std::make_shared<motion::detail::MotionSnapshot>();
+    snapshot->path = "out-of-range-axis.psb";
+    snapshot->root = std::make_shared<PSB::PSBDictionary>();
+    snapshot->layerList = {layerWithAxis(0), layerWithAxis(7)};
+
+    motion::Player player;
+    player.loadFromSnapshot(snapshot);
+    // The public runtime accessor is read-only; this fixture supplies the
+    // authored parameter table before exercising the real frame pipeline.
+    auto &runtime = const_cast<motion::detail::PlayerRuntime &>(*player.runtime());
+    runtime.parameterEntries.push_back(entry(0.0, 10.0, 10.0));
+    motion::detail::buildNodeTree(runtime, *snapshot, "");
+    REQUIRE(runtime.nodes.size() == 3);
+    CHECK(runtime.nodes[1].parameterEntry == &runtime.parameterEntries[0]);
+    CHECK(runtime.nodes[2].parameterEntry == nullptr);
+    CHECK(motion::internal::resolveNodeParameterEntry(runtime,
+                                                       runtime.nodes[2]) ==
+          nullptr);
+
+    player.frameProgress(0.0);
+    CHECK(runtime.nodes[1].accumulated.visible);
+    CHECK(runtime.nodes[1].drawFlag);
+    CHECK_FALSE(runtime.nodes[2].accumulated.visible);
+    CHECK_FALSE(runtime.nodes[2].drawFlag);
+}
+
+TEST_CASE("an invalid clip default axis does not bind a different parameter") {
+    auto layer = std::make_shared<PSB::PSBDictionary>();
+    layer->emplace("type", std::make_shared<PSB::PSBNumber>(0));
+    auto motionObject = std::make_shared<PSB::PSBDictionary>();
+    motionObject->emplace("parameterize", std::make_shared<PSB::PSBNumber>(7));
+
+    auto snapshot = std::make_shared<motion::detail::MotionSnapshot>();
+    snapshot->path = "invalid-default-axis.psb";
+    snapshot->root = std::make_shared<PSB::PSBDictionary>();
+    snapshot->moduleValue = snapshot->root->toTJSVal();
+    motion::detail::MotionClip authoredClip;
+    authoredClip.label = "clip";
+    authoredClip.motionObject = motionObject;
+    authoredClip.layerList.push_back(layer);
+    snapshot->clipList.push_back(std::move(authoredClip));
+    snapshot->clipIndexByLabel.emplace("clip", 0);
+
+    motion::detail::registerModuleSnapshot(snapshot->moduleValue, snapshot);
+    motion::Player player;
+    player.loadFromSnapshot(snapshot);
+    REQUIRE_NOTHROW(player.onFindMotion(ttstr("clip"), motion::PlayFlagForce));
+    const auto *runtime = player.runtime();
+    REQUIRE(runtime->nodes.size() == 2);
+    CHECK(runtime->nodes[1].parameterizeIndex >= 0);
+    CHECK(runtime->nodes[1].parameterEntry == nullptr);
+    player.frameProgress(0.0);
+    CHECK_FALSE(runtime->nodes[1].accumulated.visible);
+    motion::detail::unregisterModuleSnapshot(snapshot->moduleValue);
 }
 
 TEST_CASE("effectiveNodeLim uses a sized parent rect and passes through otherwise") {

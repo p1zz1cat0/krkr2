@@ -667,14 +667,16 @@ namespace motion {
                                 numeric->getValue<tjs_int64>());
                             break;
                     }
-                    if(index < 0 ||
-                       static_cast<size_t>(index) >=
-                           _runtime->parameterEntries.size()) {
-                        throw std::out_of_range("parameter id out of range.");
+                    // Preserve an invalid authored axis so the node lookup
+                    // stays empty instead of binding the root clip's axis.
+                    _runtime->defaultParameterEntryIndex = index >= 0
+                        ? index
+                        : static_cast<int>(_runtime->parameterEntries.size());
+                    if(static_cast<size_t>(_runtime->defaultParameterEntryIndex) <
+                       _runtime->parameterEntries.size()) {
+                        _runtime->defaultParameterEntryPtr =
+                            &_runtime->parameterEntries[static_cast<size_t>(index)];
                     }
-                    _runtime->defaultParameterEntryIndex = index;
-                    _runtime->defaultParameterEntryPtr =
-                        &_runtime->parameterEntries[static_cast<size_t>(index)];
                 }
             }
         }
@@ -817,6 +819,8 @@ namespace motion {
                 node.parameterEntry =
                     &_runtime->parameterEntries[static_cast<size_t>(
                         defaultIndex)];
+            } else {
+                node.parameterEntry = nullptr;
             }
         }
     }

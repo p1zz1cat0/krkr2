@@ -18,6 +18,12 @@ namespace motion {
             auto &mn = nodes[i];
             if(mn.nodeType != 3)
                 continue;
+            // An unresolved parameter axis hides its node in phase 2. E-mote
+            // child progress must also stop at an invisible wrapper; otherwise
+            // a hidden self-referencing submotion can recursively re-enter the
+            // same clip without producing a drawable frame.
+            if(emoteLike && !mn.accumulated.visible)
+                continue;
 
             // Match AetherKiri 31060275: the child play trigger comes from
             // the owning layer's raw priorDraw value, falling back to the
