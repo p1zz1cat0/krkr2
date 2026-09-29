@@ -337,10 +337,9 @@ namespace motion::detail {
         runtime.nodes.front().index = 0;
         runtime.nodes.front().parentIndex = -1;
 
-        // Determine which layer set to use: current clip content first, then
-        // fall back to snapshot root-level layers. This matches libkrkr2.so
-        // using player+528 as the active motion/clip content object before
-        // reading its "layer" property in Player_buildNodeTree (0x6B51F0).
+        // A resolved clip owns its layer list even when that list is empty.
+        // Falling back to the PSB root in that case expands the entire
+        // character tree for a clip with no authored layers.
         const std::vector<std::shared_ptr<const PSB::PSBDictionary>>
             *layerList = nullptr;
         const MotionClip *layerClip = nullptr;
@@ -350,16 +349,14 @@ namespace motion::detail {
             if(it != snapshot.clipIndexByLabel.end()) {
                 const int idx = it->second;
                 if(idx >= 0 &&
-                   idx < static_cast<int>(snapshot.clipList.size()) &&
-                   !snapshot.clipList[static_cast<size_t>(idx)]
-                        .layerList.empty()) {
+                   idx < static_cast<int>(snapshot.clipList.size())) {
                     layerClip = &snapshot.clipList[static_cast<size_t>(idx)];
                     layerList = &layerClip->layerList;
                 }
             }
         }
 
-        if(!layerList || layerList->empty()) {
+        if(!layerList) {
             layerList = &snapshot.layerList;
         }
 

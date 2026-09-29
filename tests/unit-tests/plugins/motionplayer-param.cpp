@@ -149,6 +149,26 @@ TEST_CASE("an out-of-range authored parameter hides only its node") {
     CHECK_FALSE(runtime.nodes[2].drawFlag);
 }
 
+TEST_CASE("a named clip with no layers does not expand the PSB root") {
+    auto rootLayer = std::make_shared<PSB::PSBDictionary>();
+    rootLayer->emplace("type", std::make_shared<PSB::PSBNumber>(0));
+
+    motion::detail::MotionSnapshot snapshot;
+    snapshot.layerList.push_back(rootLayer);
+    motion::detail::MotionClip emptyClip;
+    emptyClip.label = "empty";
+    snapshot.clipList.push_back(std::move(emptyClip));
+    snapshot.clipIndexByLabel.emplace("empty", 0);
+
+    motion::detail::PlayerRuntime clipRuntime;
+    motion::detail::buildNodeTree(clipRuntime, snapshot, "empty");
+    CHECK(clipRuntime.nodes.size() == 1);
+
+    motion::detail::PlayerRuntime rootRuntime;
+    motion::detail::buildNodeTree(rootRuntime, snapshot, "");
+    CHECK(rootRuntime.nodes.size() == 2);
+}
+
 TEST_CASE("an invalid clip default axis does not bind a different parameter") {
     auto layer = std::make_shared<PSB::PSBDictionary>();
     layer->emplace("type", std::make_shared<PSB::PSBNumber>(0));
