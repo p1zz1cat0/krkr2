@@ -31,7 +31,10 @@ class DeviceEmotePlayer;
 // LayerManager owns its DrawBuffer; this device selects and presents it.
 class DrawDeviceD3D : public tTVPDrawDevice {
 public:
-    DrawDeviceD3D(tjs_int width, tjs_int height) { setSize(width, height); }
+    DrawDeviceD3D(tjs_int width, tjs_int height) {
+        setSize(width, height);
+        screenRect_ = {0, 0, width, height};
+    }
     ~DrawDeviceD3D() override;
 
     tjs_int64 getInterface() const {
@@ -85,6 +88,11 @@ public:
         return result;
     }
 
+    // A new Array of this device's D3DLayer script objects (script subclasses
+    // included) in creation order, as the original returns on every read.
+    // KAGWindow.checkLayerTouch sorts it by .absolute and calls checkTouch.
+    tTJSVariant getChildren() const;
+
     void update(tjs_real elapsed) {
         if(elapsed < 0)
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D elapsed time must be nonnegative"));
@@ -97,6 +105,26 @@ public:
     // The original reports its own E-mote module; KAGWindow.initD3D then
     // probes maskMode/getModule behind typeof guards.
     bool checkEnable(tTJSString name) const { return name == TJS_W("emote"); }
+
+    // Defaults and access match the original DLL (oracle): primary size is
+    // read-only, screen rect starts at the constructed size. clearColor,
+    // stretchType, bicubicParam and forceRenderTexture are stored for scripts
+    // only (After never changes them from the defaults).
+    tjs_int getPrimaryWidth() const { return width_; }
+    tjs_int getPrimaryHeight() const { return height_; }
+    void ignorePrimarySizeWrite(tjs_int) {} // the original accepts and drops writes
+    tjs_int getScreenLeft() const { return screenRect_[0]; }
+    tjs_int getScreenTop() const { return screenRect_[1]; }
+    tjs_int getScreenWidth() const { return screenRect_[2]; }
+    tjs_int getScreenHeight() const { return screenRect_[3]; }
+    tjs_int64 getClearColor() const { return clearColor_; }
+    void setClearColor(tjs_int64 value) { clearColor_ = static_cast<tjs_uint32>(value); }
+    tjs_int getStretchType() const { return stretchType_; }
+    void setStretchType(tjs_int value) { stretchType_ = value; }
+    tjs_real getBicubicParam() const { return bicubicParam_; }
+    void setBicubicParam(tjs_real value) { bicubicParam_ = value; }
+    tjs_int getForceRenderTexture() const { return forceRenderTexture_; }
+    void setForceRenderTexture(tjs_int value) { forceRenderTexture_ = value; }
 
     void setScreenRect(tjs_int x, tjs_int y, tjs_int width, tjs_int height) {
         screenRect_ = {x, y, width, height};
@@ -180,6 +208,10 @@ private:
     tjs_int width_ = 0;
     tjs_int height_ = 0;
     std::array<tjs_int, 4> screenRect_{};
+    tjs_uint32 clearColor_ = 0;
+    tjs_int stretchType_ = 2;
+    tjs_real bicubicParam_ = -0.5;
+    tjs_int forceRenderTexture_ = 0;
     tjs_real transState_ = 1.0;
     bool transitionActive_ = false;
     bool showBackPlane_ = false;
@@ -273,6 +305,7 @@ public:
     }
     void detachDevice() { device_ = nullptr; }
     DrawDeviceD3D *device() const { return device_; }
+    iTJSDispatch2 *scriptObject() const { return scriptObject_; }
     void addPicture(D3DPicture *picture) { pictures_.push_back(picture); }
     void removePicture(D3DPicture *picture) {
         pictures_.erase(std::remove(pictures_.begin(), pictures_.end(), picture),
@@ -582,6 +615,21 @@ private:
     iTVPTexture2D *viewedTexture_ = nullptr; // owned by canvas_
 };
 
+tTJSVariant DrawDeviceD3D::getChildren() const {
+    iTJSDispatch2 *array = TJSCreateArrayObject();
+    tjs_int index = 0;
+    for(auto *layer : layers_) {
+        auto *object = layer->scriptObject();
+        if(!object)
+            continue;
+        tTJSVariant value(object, object);
+        array->PropSetByNum(TJS_MEMBERENSURE, index++, &value, array);
+    }
+    tTJSVariant result(array, array);
+    array->Release();
+    return result;
+}
+
 void D3DLayer::draw(tTVPBaseTexture &target) const {
     for(auto *picture : pictures_)
         picture->draw(target, matrix_);
@@ -814,6 +862,17 @@ NCB_REGISTER_CLASS(DrawDeviceD3D) {
     NCB_METHOD(setSize);
     NCB_PROPERTY(layerManagerIndex, getLayerManagerIndex, setLayerManagerIndex);
     NCB_PROPERTY_RO(primaryLayers, getPrimaryLayers);
+    NCB_PROPERTY_RO(children, getChildren);
+    NCB_PROPERTY(primaryWidth, getPrimaryWidth, ignorePrimarySizeWrite);
+    NCB_PROPERTY(primaryHeight, getPrimaryHeight, ignorePrimarySizeWrite);
+    NCB_PROPERTY_RO(screenLeft, getScreenLeft);
+    NCB_PROPERTY_RO(screenTop, getScreenTop);
+    NCB_PROPERTY_RO(screenWidth, getScreenWidth);
+    NCB_PROPERTY_RO(screenHeight, getScreenHeight);
+    NCB_PROPERTY(clearColor, getClearColor, setClearColor);
+    NCB_PROPERTY(stretchType, getStretchType, setStretchType);
+    NCB_PROPERTY(bicubicParam, getBicubicParam, setBicubicParam);
+    NCB_PROPERTY(forceRenderTexture, getForceRenderTexture, setForceRenderTexture);
     NCB_METHOD(update);
     NCB_METHOD(checkEnable);
     NCB_METHOD(setScreenRect);
@@ -832,6 +891,17 @@ NCB_REGISTER_CLASS(D3D) {
     NCB_METHOD(setSize);
     NCB_PROPERTY(layerManagerIndex, getLayerManagerIndex, setLayerManagerIndex);
     NCB_PROPERTY_RO(primaryLayers, getPrimaryLayers);
+    NCB_PROPERTY_RO(children, getChildren);
+    NCB_PROPERTY(primaryWidth, getPrimaryWidth, ignorePrimarySizeWrite);
+    NCB_PROPERTY(primaryHeight, getPrimaryHeight, ignorePrimarySizeWrite);
+    NCB_PROPERTY_RO(screenLeft, getScreenLeft);
+    NCB_PROPERTY_RO(screenTop, getScreenTop);
+    NCB_PROPERTY_RO(screenWidth, getScreenWidth);
+    NCB_PROPERTY_RO(screenHeight, getScreenHeight);
+    NCB_PROPERTY(clearColor, getClearColor, setClearColor);
+    NCB_PROPERTY(stretchType, getStretchType, setStretchType);
+    NCB_PROPERTY(bicubicParam, getBicubicParam, setBicubicParam);
+    NCB_PROPERTY(forceRenderTexture, getForceRenderTexture, setForceRenderTexture);
     NCB_METHOD(update);
     NCB_METHOD(checkEnable);
     NCB_METHOD(setScreenRect);

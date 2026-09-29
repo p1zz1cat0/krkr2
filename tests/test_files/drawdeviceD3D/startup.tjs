@@ -132,6 +132,43 @@ device.capture(captured, 0);
 pluginAssertEqual("attached manager leaves independent picture visible",
                   source.getMainPixel(1, 1), captured.getMainPixel(6, 7));
 
+// Device properties with the original DLL's defaults and access (oracle).
+var propDevice = new D3D(12, 10);
+pluginAssertEqual("primaryWidth is the device width", 12, propDevice.primaryWidth);
+propDevice.primaryWidth = 99;
+pluginAssertEqual("primaryWidth writes are ignored", 12, propDevice.primaryWidth);
+pluginAssertEqual("screen rect starts at the device size", 10, propDevice.screenHeight);
+propDevice.setScreenRect(1, 2, 30, 40);
+pluginAssertEqual("setScreenRect updates screenLeft", 1, propDevice.screenLeft);
+pluginAssertEqual("setScreenRect updates screenWidth", 30, propDevice.screenWidth);
+pluginAssertEqual("stretchType default", 2, propDevice.stretchType);
+pluginAssertEqual("bicubicParam default", -0.5, propDevice.bicubicParam);
+pluginAssertEqual("forceRenderTexture default", 0, propDevice.forceRenderTexture);
+propDevice.clearColor = 0xff112233;
+pluginAssertEqual("clearColor keeps the unsigned color", 0xff112233, propDevice.clearColor);
+
+// children: a fresh Array of the device's D3DLayer script objects (script
+// subclasses included) in creation order, as the original DLL returns it;
+// KAGWindow.checkLayerTouch reads it on every touch-mode mouse move.
+var childDevice = new D3D(8, 8);
+pluginAssertEqual("no layers, no children", 0, childDevice.children.count);
+class TouchLayer extends D3DLayer {
+    var absolute = 7;
+    function TouchLayer(device) { super.D3DLayer(device); }
+}
+var childA = new D3DLayer(childDevice);
+var childB = new TouchLayer(childDevice);
+var childImage = new D3DImage(childDevice);
+var children = childDevice.children;
+pluginAssertEqual("children lists layers only", 2, children.count);
+pluginAssertTrue("children keep creation order and identity",
+                 children[0] === childA && children[1] === childB);
+pluginAssertEqual("script subclass members survive", 7, children[1].absolute);
+pluginAssertTrue("each read is a new Array", childDevice.children !== children);
+invalidate childA;
+pluginAssertTrue("invalidated layers leave children",
+                 childDevice.children.count == 1 && childDevice.children[0] === childB);
+
 // D3DEmotePlayer: registered by this module on a D3DLayer (NEKOPARA After,
 // original DLL traced on the oracle). load takes a storage name, clone takes
 // the target D3DLayer, progress takes 60 fps frames, and the model origin is
