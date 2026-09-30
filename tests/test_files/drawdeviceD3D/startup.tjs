@@ -169,65 +169,8 @@ invalidate childA;
 pluginAssertTrue("invalidated layers leave children",
                  childDevice.children.count == 1 && childDevice.children[0] === childB);
 
-// D3DEmotePlayer: registered by this module on a D3DLayer (NEKOPARA After,
-// original DLL traced on the oracle). load takes a storage name, clone takes
-// the target D3DLayer, progress takes 60 fps frames, and the model origin is
-// placed at the screen center moved by the layer matrix.
-Plugins.link("motionplayer.dll");
-Motion.ResourceManager.setEmotePSBDecryptSeed(742877301);
-var emoteDevice = new D3D(320, 240);
-pluginAssertTrue("device reports its E-mote module", emoteDevice.checkEnable("emote"));
-var emoteLayer = new D3DLayer(emoteDevice);
-var emote = new D3DEmotePlayer(emoteLayer);
-pluginAssertTrue("player is a D3DEmotePlayer", emote instanceof "D3DEmotePlayer");
-var missingEmote = false;
-try { emote.load("../emote/no-such.psb"); } catch (e) { missingEmote = true; }
-pluginAssertTrue("loading a missing storage throws", missingEmote);
-emote.load("../emote/e-mote3.0バニラパジャマa.psb");
-pluginAssertTrue("load selects timelines", emote.countMainTimelines() > 0);
-emote.show();
-emote.smoothing = 1;
-emote.setScale(0.1, 0, 0);
-emote.setCoord(0, 0, 0, 0);
-emote.progress(1);
-var emoteWindow = new Window();
-var emoteCapture = new Layer(emoteWindow, null);
-function emoteBounds() {
-    emoteDevice.capture(emoteCapture, 0);
-    var b = [99999, 99999, -1, -1];
-    for (var y = 0; y < emoteCapture.imageHeight; y++)
-        for (var x = 0; x < emoteCapture.imageWidth; x++)
-            if (emoteCapture.getMaskPixel(x, y) > 16) {
-                if (x < b[0]) b[0] = x;
-                if (y < b[1]) b[1] = y;
-                if (x > b[2]) b[2] = x;
-                if (y > b[3]) b[3] = y;
-            }
-    return b;
-}
-var centered = emoteBounds();
-pluginAssertTrue("model is drawn", centered[2] >= centered[0]);
-pluginAssertTrue("model straddles the horizontal screen center",
-                 centered[0] < 160 && centered[2] > 160);
-emoteLayer.setMatrix(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 40, 30, 0, 1);
-var moved = emoteBounds();
-pluginAssertEqual("layer matrix moves the model right", centered[0] + 40, moved[0]);
-pluginAssertEqual("layer matrix moves the model down", centered[1] + 30, moved[1]);
-emoteLayer.setMatrix(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
-emote.visible = false;
-pluginAssertEqual("hidden player draws nothing", -1, emoteBounds()[2]);
-emote.visible = true;
-var cloneLayer = new D3DLayer(emoteDevice);
-var emoteClone = emote.clone(cloneLayer);
-pluginAssertTrue("clone is a D3DEmotePlayer", emoteClone instanceof "D3DEmotePlayer");
-pluginAssertEqual("clone shares the model", emote.countMainTimelines(),
-                  emoteClone.countMainTimelines());
-emote.setVariable("face_eye_UD", 30, 0, 0);
-pluginAssertEqual("raw-callback setVariable reaches the subclass", 30,
-                  emote.getVariable("face_eye_UD"));
-var timeline = emote.getMainTimelineLabelAt(0);
-emote.playTimeline(timeline, 1);
-pluginAssertTrue("timeline plays", emote.isTimelinePlaying(timeline));
+// Verify nested E-mote rendering with only the draw-device modules linked.
+Scripts.execStorage("emote_fixture.tjs");
 
 pluginSmokePass("drawdeviceD3D.dll");
 System.exit(0);

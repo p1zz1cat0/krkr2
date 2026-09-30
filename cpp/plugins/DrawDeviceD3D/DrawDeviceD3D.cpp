@@ -854,6 +854,15 @@ static tjs_error D3DLayerFactory(D3DLayer **result, tjs_int numparams,
     return TJS_S_OK;
 }
 
+static void RegisterDrawDeviceD3DDependencies() {
+    // Nested E-mote motions create ncbind Player adaptors; their class must
+    // exist even when the script only links the draw-device module.
+    if(!ncbAutoRegister::LoadModule(TJS_W("motionplayer.dll")))
+        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D requires motionplayer.dll"));
+}
+
+NCB_PRE_REGIST_CALLBACK(RegisterDrawDeviceD3DDependencies);
+
 NCB_REGISTER_CLASS(DrawDeviceD3D) {
     NCB_CONSTRUCTOR((tjs_int, tjs_int));
     NCB_PROPERTY_RO(interface, getInterface);

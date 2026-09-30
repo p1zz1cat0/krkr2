@@ -129,5 +129,8 @@ transitionDevice.capture(output, 0);
 pluginAssertEqual("universal finishes on the back plane", 0x000000f0,
                   output.getMainPixel(0, 0));
 
+// The alias must register the same nested-player dependency in a fresh process.
+Scripts.execStorage("../drawdeviceD3D/emote_fixture.tjs");
+
 pluginSmokePass("drawdeviceD3DZ.dll");
 System.exit(0);
