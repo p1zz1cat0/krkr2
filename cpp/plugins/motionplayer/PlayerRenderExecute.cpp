@@ -883,8 +883,9 @@ namespace motion {
                    maskCommandIndex == gi) {
                     // Distinguish the two failure directions. A mask input
                     // naming a real drawable node that this frame turns off
-                    // is an EMPTY mask: the group's content must disappear
-                    // (closed eyes must not keep drawing the iris). Only a
+                    // contributes an empty mask. Union groups can still use
+                    // another resolved aperture; if all inputs are off,
+                    // closed eyes must not keep drawing the iris. Only a
                     // structurally unresolvable reference — a type-3 wrapper
                     // that owns no render item of its own — stays permissive,
                     // because dropping a whole body region is far worse than
@@ -897,7 +898,7 @@ namespace motion {
                            static_cast<int>(maskOwner->nodes.size()) &&
                        maskOwner->nodes[static_cast<size_t>(input.first)]
                                .nodeType != 3) {
-                        command.emptyAuthoredMask = true;
+                        command.hasDisabledAuthoredMaskInput = true;
                     }
                     ++maskBindFailCount;
                     continue;
@@ -1020,7 +1021,7 @@ namespace motion {
             // pass-through group: its children must be consumed (and then
             // dropped), not promoted to standalone unclipped draws.
             return command.groupOnly && command.item != nullptr &&
-                !command.emptyAuthoredMask &&
+                !command.hasEmptyAuthoredMask() &&
                 !command.hasOwnSource && command.item->sourceKey.empty() &&
                 !command.childCommandIndices.empty() &&
                 command.stencilMaskCommandIndices.empty() &&
@@ -1128,7 +1129,7 @@ namespace motion {
                         joinIdx(command.stencilMaskCommandIndices),
                         joinIdx(command.stencilModifierCommandIndices),
                         joinIdx(command.childCommandIndices),
-                        command.emptyAuthoredMask ? 1 : 0,
+                        command.hasEmptyAuthoredMask() ? 1 : 0,
                         command.alphaMaskOnly ? 1 : 0,
                         command.implicitVisibleStencilGroup ? 1 : 0);
                 }
@@ -2136,7 +2137,7 @@ namespace motion {
             const auto isPassThroughGroup =
                 [](const auto &command) {
                 return command.groupOnly && command.item != nullptr &&
-                    !command.emptyAuthoredMask &&
+                    !command.hasEmptyAuthoredMask() &&
                     !command.hasOwnSource &&
                     command.item->sourceKey.empty() &&
                     command.childCommandIndices.size() > 0 &&
@@ -2169,7 +2170,7 @@ namespace motion {
                 ++commandIndex) {
                 const auto &command = _runtime->renderCommands[commandIndex];
                 if(!command.item || command.alphaMaskOnly ||
-                   command.emptyAuthoredMask ||
+                   command.hasEmptyAuthoredMask() ||
                    isPassThroughGroup(command) ||
                    (command.hasRenderParent &&
                     consumedByParent[commandIndex])) {

@@ -46,6 +46,40 @@ namespace {
     }
 } // namespace
 
+TEST_CASE("authored mask union keeps a visible aperture when an optional mask is hidden") {
+    motion::detail::PlayerRuntime::ScopedRenderCommand command;
+    command.itemFlags = 5;
+    command.hasDisabledAuthoredMaskInput = true;
+    command.stencilMaskCommandIndices = {62};
+    REQUIRE_FALSE(command.hasEmptyAuthoredMask());
+
+    // A blink removes the remaining eye-white command. Reopening it must
+    // restore the aperture without a sticky empty-mask result.
+    command.stencilMaskCommandIndices.clear();
+    REQUIRE(command.hasEmptyAuthoredMask());
+    command.stencilMaskCommandIndices = {63};
+    REQUIRE_FALSE(command.hasEmptyAuthoredMask());
+}
+
+TEST_CASE("authored mask emptiness distinguishes intersections and unresolved references") {
+    motion::detail::PlayerRuntime::ScopedRenderCommand command;
+    command.hasDisabledAuthoredMaskInput = true;
+    command.stencilMaskCommandIndices = {62};
+    for(const int flags : {0, 1, 2, 3}) {
+        command.itemFlags = flags;
+        REQUIRE(command.hasEmptyAuthoredMask());
+    }
+    for(const int flags : {4, 5, 6, 7}) {
+        command.itemFlags = flags;
+        REQUIRE_FALSE(command.hasEmptyAuthoredMask());
+    }
+
+    // Structural references with no drawable binding remain permissive.
+    command.hasDisabledAuthoredMaskInput = false;
+    command.stencilMaskCommandIndices.clear();
+    REQUIRE_FALSE(command.hasEmptyAuthoredMask());
+}
+
 TEST_CASE("parameterizedClipTime uses the parameter division as tick axis") {
     // REF transToTick: division × (raw − rangeBegin)/(rangeEnd − rangeBegin).
     const auto parameter = entry(-10.0, 50.0, 60.0);
