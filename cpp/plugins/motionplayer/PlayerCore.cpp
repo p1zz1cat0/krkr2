@@ -355,6 +355,19 @@ namespace motion {
         }
     }
 
+    bool Player::loadCloneMotion(const Player &source) {
+        const auto snapshot = source._runtime->activeMotion;
+        if(!snapshot) {
+            return false;
+        }
+        loadFromSnapshot(snapshot);
+        if(source._runtime->activeClip) {
+            _chara = source._chara;
+            playMotionLike_0x6B2284(source._motionKey, PlayFlagForce);
+        }
+        return true;
+    }
+
     void
     Player::addEmoteFile(std::shared_ptr<detail::MotionSnapshot> snapshot) {
         if(!_runtime || !_runtime->activeMotion || !snapshot) {

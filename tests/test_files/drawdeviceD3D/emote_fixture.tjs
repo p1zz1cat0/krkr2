@@ -57,3 +57,22 @@ var timeline = emote.getMainTimelineLabelAt(0);
 emote.playTimeline(timeline, 1);
 pluginAssertTrue("timeline plays", emote.isTimelinePlaying(timeline));
 
+// KAG transfers clone a player, release its original, then clone that copy
+// again. The remaining player owns its model even after the loader dies.
+invalidate emote;
+emoteClone.progress(1);
+var survivingCloneBounds = emoteBounds();
+pluginAssertTrue("clone draws after its original is released",
+                 survivingCloneBounds[2] >= survivingCloneBounds[0]);
+var nextCloneLayer = new D3DLayer(emoteDevice);
+var nextClone = emoteClone.clone(nextCloneLayer);
+pluginAssertEqual("second-generation clone retains timelines",
+                  emoteClone.countMainTimelines(), nextClone.countMainTimelines());
+invalidate emoteClone;
+nextClone.progress(1);
+var nextCloneBounds = emoteBounds();
+pluginAssertTrue("second-generation clone draws after both ancestors are released",
+                 nextCloneBounds[2] >= nextCloneBounds[0]);
+invalidate nextClone;
+pluginAssertEqual("releasing the last clone leaves an empty capture", -1,
+                  emoteBounds()[2]);

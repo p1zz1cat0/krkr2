@@ -337,6 +337,37 @@ TEST_CASE("loading a snapshot resets motion-local playback state") {
     CHECK_FALSE(player.getSyncActive());
 }
 
+TEST_CASE("clone motion outlives its source without a loader registration") {
+    std::weak_ptr<motion::detail::MotionSnapshot> lifetime;
+    {
+        auto source = std::make_unique<motion::Player>();
+        auto snapshot = std::make_shared<motion::detail::MotionSnapshot>();
+        snapshot->path = "clone-owned.psb";
+        snapshot->root = std::make_shared<PSB::PSBDictionary>();
+        snapshot->moduleValue = snapshot->root->toTJSVal();
+        REQUIRE_FALSE(motion::detail::lookupModuleSnapshot(snapshot->moduleValue));
+        lifetime = snapshot;
+        source->loadFromSnapshot(snapshot);
+        snapshot.reset();
+
+        auto firstClone = std::make_unique<motion::Player>();
+        REQUIRE(firstClone->loadCloneMotion(*source));
+        source.reset();
+        motion::Player secondClone;
+        REQUIRE(secondClone.loadCloneMotion(*firstClone));
+        firstClone.reset();
+        CHECK(secondClone.runtime()->activeMotion == lifetime.lock());
+        // Sharing a loaded, unselected motion must not start playback.
+        CHECK(secondClone.runtime()->activeClip == nullptr);
+        CHECK(secondClone.countPlayingTimelines() == 0);
+    }
+    CHECK(lifetime.expired());
+
+    motion::Player emptySource, emptyClone;
+    CHECK_FALSE(emptyClone.loadCloneMotion(emptySource));
+    CHECK_FALSE(emptyClone.hasActiveMotion());
+}
+
 TEST_CASE("snapshot composition stays private to each Player") {
     auto primary = std::make_shared<motion::detail::MotionSnapshot>();
     primary->path = "shared-primary.psb";

@@ -297,6 +297,11 @@ namespace motion {
         // Aligned to libkrkr2.so: EmoteObject_init (sub_67DBAC) sets Player's
         // activeMotion directly from loaded PSB data without file I/O.
         void loadFromSnapshot(std::shared_ptr<detail::MotionSnapshot> snapshot);
+        // For a fresh native clone: share the source's owned snapshot and
+        // build its selected clip before unserialize restores playback state.
+        // Returns false if the source has no active motion. Does not start an
+        // unselected source or depend on the loader's snapshot registration.
+        bool loadCloneMotion(const Player &source);
         // 参考 sdl3 emotefile::addEmoteFile（不编译）：MultiCache 复合链接
         void addEmoteFile(std::shared_ptr<detail::MotionSnapshot> snapshot);
         // 参考 sdl3 set_motionKey（不编译）：仅绑定已缓存 PSB 模块

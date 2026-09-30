@@ -349,11 +349,7 @@ namespace motion {
         copy->_mirrorChanged = _mirrorChanged;
         copy->_color = _color;
 
-        // Load the same snapshot into the cloned Player
-        auto snapshot = detail::lookupModuleSnapshot(_module);
-        if(snapshot) {
-            copy->_player.loadFromSnapshot(snapshot);
-        }
+        const bool hasMotion = copy->_player.loadCloneMotion(_player);
         copy->_player.setUseD3D(copy->_useD3D);
         copy->_player.setHairScale(copy->_hairScale);
         copy->_player.setPartsScale(copy->_partsScale);
@@ -364,7 +360,7 @@ namespace motion {
         // Clone transfers Player state fields (variables, timeline playback,
         // currentTime, blendRatio, tick, speed, and outline) to the copy.
         // Transition and ease animators remain transient.
-        if(snapshot) {
+        if(hasMotion) {
             copy->_player.unserialize(_player.serialize());
         }
         // wrapper 变换在状态转移后推入（与 unserialize 同序）。
