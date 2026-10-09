@@ -132,6 +132,7 @@ for configuration in debug release; do
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" \
       -DYOGHOURT_SURFACE_RELAY_DIR="$relay_dir" \
+      -DVCPKG_INSTALLED_DIR="$work_root_build/krkr2-vcpkg-installed" \
       -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
   # plugin-tests keeps the macOS ctest stage on the same unit-test set the

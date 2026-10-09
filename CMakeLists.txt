@@ -22,6 +22,12 @@ project(${APP_NAME})
 
 option(ENABLE_TESTS "enable tests execute build(exclude android)" ON)
 option(BUILD_TOOLS "build tools execute build(exclude android ios)" ON)
+# Batch core module sources into unity translation units. Plugins stay out:
+# registration units define NCB_MODULE_NAME per file and motionplayer has many
+# file-local helpers with shared names. Unity files live in the build tree, so
+# ccache hits do not carry across build directories: enable it only for the
+# build that ships.
+option(KRKR2_UNITY_BUILD "Batch core modules into unity translation units" OFF)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
