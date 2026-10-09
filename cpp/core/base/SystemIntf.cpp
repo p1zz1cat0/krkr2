@@ -27,8 +27,6 @@
 
 #include <fmt/format.h>
 
-extern bool TVPStartupSuccess;
-
 //---------------------------------------------------------------------------
 // TVPFireOnApplicationActivateEvent
 //---------------------------------------------------------------------------
@@ -109,11 +107,7 @@ tTJSNC_System::tTJSNC_System() : inherited(TJS_W("System")) {
     //----------------------------------------------------------------------
     TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ terminate) {
         int code = numparams > 0 ? param[0]->AsInteger() : 0;
-        if(!TVPStartupSuccess) {
-            ;
-        } else {
-            TVPTerminateAsync(code);
-        }
+        TVPTerminateAsync(code);
 
         return TJS_S_OK;
     }
@@ -121,13 +115,13 @@ tTJSNC_System::tTJSNC_System() : inherited(TJS_W("System")) {
     //----------------------------------------------------------------------
     TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ exit) {
         // this method does not return
-
+        // The startup script runs on the main thread before TVPStartupSuccess
+        // is set; gating this call on that flag dropped the exit request and
+        // left the process alive once the script had created a window.
+        // TVPSystemUninit()/TVPExitApplication() here are the same teardown
+        // System.terminate() reaches through the event loop.
         int code = numparams > 0 ? param[0]->AsInteger() : 0;
-        if(!TVPStartupSuccess) {
-            ;
-        } else {
-            TVPTerminateSync(code);
-        }
+        TVPTerminateSync(code);
 
         return TJS_S_OK;
     }
