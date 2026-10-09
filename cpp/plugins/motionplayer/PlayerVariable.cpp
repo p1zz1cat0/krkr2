@@ -16,14 +16,12 @@ namespace {
     }
 
     struct ParameterLabelParts {
-        std::string full;
         std::string suffix;
     };
 
     ParameterLabelParts
     splitParameterLabelLike_0x6D0BF4(const std::string &label) {
         ParameterLabelParts parts;
-        parts.full = label;
         const auto scopePos = label.rfind("::");
         if(scopePos != std::string::npos) {
             parts.suffix = label.substr(scopePos + 2);
@@ -34,14 +32,6 @@ namespace {
             parts.suffix = label.substr(slashPos + 1);
         }
         return parts;
-    }
-
-    bool parameterIdMatchesLabelLike_0x6D0BF4(
-        const motion::detail::MotionParameterEntry &entry,
-        const ParameterLabelParts &parts) {
-        return !entry.id.empty() &&
-            (entry.id == parts.full ||
-             (!parts.suffix.empty() && entry.id == parts.suffix));
     }
 
     double normalizeParameterValueLike_0x6B1718(
@@ -57,21 +47,6 @@ namespace {
         const double hi = std::max(entry.rangeBegin, entry.rangeEnd);
         value = std::clamp(value, lo, hi);
         return (value - entry.rangeBegin) * entry.rangeScale;
-    }
-
-    void bindParameterEntriesLike_0x6C4668(
-        std::vector<motion::detail::MotionParameterEntry> &entries,
-        const ParameterLabelParts &parts, int mode, double rawValue) {
-        // Parameterization uses transToTick: division × normalized raw range.
-        // Selector and discrete parameters use their preserved discretization.
-        for(auto &entry : entries) {
-            if(!parameterIdMatchesLabelLike_0x6D0BF4(entry, parts)) {
-                continue;
-            }
-            entry.value =
-                normalizeParameterValueLike_0x6B1718(entry, rawValue);
-            entry.mode = mode;
-        }
     }
 
     std::optional<double> parameterPsbNumberLike_0x6B1718(
@@ -241,30 +216,38 @@ namespace motion {
         }
 
         _runtime->parameterEntryById.clear();
+        _runtime->parameterIndicesById.clear();
         for(size_t i = 0; i < _runtime->parameterEntries.size(); ++i) {
-            const auto &entry = _runtime->parameterEntries[i];
+            auto &entry = _runtime->parameterEntries[i];
+            entry.idSuffix = splitParameterLabelLike_0x6D0BF4(entry.id).suffix;
             if(!entry.id.empty()) {
                 _runtime->parameterEntryById[entry.id] = i;
+                _runtime->parameterIndicesById[entry.id].push_back(i);
             }
         }
     }
 
     double
     Player::initialParameterRawValueLike_0x6B1ABC(const std::string &id) const {
+        const auto parts = splitParameterLabelLike_0x6D0BF4(id);
+        return initialParameterRawValueLike_0x6B1ABC(id, parts.suffix);
+    }
+
+    double Player::initialParameterRawValueLike_0x6B1ABC(
+        const std::string &id, const std::string &suffix) const {
         if(id.empty()) {
             return 0.0;
         }
 
-        const auto parts = splitParameterLabelLike_0x6D0BF4(id);
         const auto findValue =
-            [&parts](const std::unordered_map<std::string, double> &values,
+            [&id, &suffix](const std::unordered_map<std::string, double> &values,
                      double &out) -> bool {
-            if(const auto it = values.find(parts.full); it != values.end()) {
+            if(const auto it = values.find(id); it != values.end()) {
                 out = it->second;
                 return true;
             }
-            if(!parts.suffix.empty()) {
-                if(const auto it = values.find(parts.suffix);
+            if(!suffix.empty()) {
+                if(const auto it = values.find(suffix);
                    it != values.end()) {
                     out = it->second;
                     return true;
@@ -340,13 +323,32 @@ namespace motion {
 
     void Player::bindParameterValueLike_0x6C4668(const std::string &label,
                                                  int mode, double value) {
+        const auto parts = splitParameterLabelLike_0x6D0BF4(label);
+        bindParsedParameterValue(label, parts.suffix, mode, value);
+    }
+
+    void Player::bindParsedParameterValue(const std::string &label,
+                                         const std::string &suffix, int mode,
+                                         double value) {
         if(!_runtime || label.empty()) {
             return;
         }
 
-        const auto parts = splitParameterLabelLike_0x6D0BF4(label);
-        bindParameterEntriesLike_0x6C4668(_runtime->parameterEntries, parts,
-                                          mode, value);
+        const auto bind = [&](const std::string &id) {
+            const auto found = _runtime->parameterIndicesById.find(id);
+            if(found == _runtime->parameterIndicesById.end()) {
+                return;
+            }
+            for(const auto index : found->second) {
+                auto &entry = _runtime->parameterEntries[index];
+                entry.value = normalizeParameterValueLike_0x6B1718(entry, value);
+                entry.mode = mode;
+            }
+        };
+        bind(label);
+        if(!suffix.empty()) {
+            bind(suffix);
+        }
 
         const auto propagateInherited = [&](Player *child) {
             if(!child || !child->_runtime) {
@@ -366,7 +368,7 @@ namespace motion {
             if(node.nodeType == 3) {
                 if(auto *child = node.getChildPlayer()) {
                     propagateInherited(child);
-                    child->bindParameterValueLike_0x6C4668(label, mode, value);
+                    child->bindParsedParameterValue(label, suffix, mode, value);
                     if(child->_runtime) {
                         child->syncParameterEntriesFromVariablesLike_sdl3();
                     }
@@ -375,8 +377,7 @@ namespace motion {
                 for(int i = 0; i < node.getParticleCount(); ++i) {
                     if(auto *child = node.getParticleChild(i)) {
                         propagateInherited(child);
-                        child->bindParameterValueLike_0x6C4668(label, mode,
-                                                               value);
+                        child->bindParsedParameterValue(label, suffix, mode, value);
                         if(child->_runtime) {
                             child->syncParameterEntriesFromVariablesLike_sdl3();
                         }
@@ -394,7 +395,8 @@ namespace motion {
             if(entry.id.empty()) {
                 continue;
             }
-            const double raw = initialParameterRawValueLike_0x6B1ABC(entry.id);
+            const double raw = initialParameterRawValueLike_0x6B1ABC(
+                entry.id, entry.idSuffix);
             // All parameterization uses the single transToTick domain, including
             // direct-controller frame values.
             entry.value = normalizeParameterValueLike_0x6B1718(entry, raw);

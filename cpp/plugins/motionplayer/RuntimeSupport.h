@@ -111,6 +111,7 @@ namespace motion::detail {
     // (0x6B365C) via sub_6B1718 / sub_6B202C.
     struct MotionParameterEntry {
         std::string id;
+        std::string idSuffix;
         bool discretization = false;
         double rangeBegin = 0.0;
         double rangeEnd = 0.0;
@@ -422,6 +423,7 @@ namespace motion::detail {
         std::vector<MotionEvent> pendingEvents;
         std::vector<MotionParameterEntry> parameterEntries;
         std::unordered_map<std::string, size_t> parameterEntryById;
+        std::unordered_map<std::string, std::vector<size_t>> parameterIndicesById;
         MotionParameterEntry defaultParameterEntry;
         MotionParameterEntry *defaultParameterEntryPtr = nullptr;
         int defaultParameterEntryIndex = -1;

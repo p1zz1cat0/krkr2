@@ -633,6 +633,7 @@ namespace motion {
         resetNodeTreeForBuildLike_0x6B56F8();
         _runtime->parameterEntries.clear();
         _runtime->parameterEntryById.clear();
+        _runtime->parameterIndicesById.clear();
         _runtime->defaultParameterEntry = {};
         _runtime->defaultParameterEntry.rangeScale = 1.0;
         _runtime->defaultParameterEntry.mode = 0;
@@ -736,6 +737,7 @@ namespace motion {
         if(motionChanged || clipChanged) {
             _runtime->parameterEntries.clear();
             _runtime->parameterEntryById.clear();
+            _runtime->parameterIndicesById.clear();
             _runtime->cachedParameterMotionPath = _runtime->activeMotion
                 ? _runtime->activeMotion->path
                 : std::string{};

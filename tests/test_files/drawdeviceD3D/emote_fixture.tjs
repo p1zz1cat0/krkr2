@@ -37,6 +37,17 @@ var centered = emoteBounds();
 pluginAssertTrue("model is drawn", centered[2] >= centered[0]);
 pluginAssertTrue("model straddles the horizontal screen center",
                  centered[0] < 160 && centered[2] > 160);
+var repeated = emoteBounds();
+pluginAssertEqual("repeated capture keeps the model bounds", centered[0], repeated[0]);
+pluginAssertEqual("repeated capture keeps the model extent", centered[2], repeated[2]);
+emoteDevice.setSize(640, 480);
+var enlarged = emoteBounds();
+pluginAssertEqual("resizing moves the model to the new center", centered[0] + 160,
+                  enlarged[0]);
+emoteDevice.setSize(320, 240);
+var restored = emoteBounds();
+pluginAssertEqual("shrinking restores the model position", centered[0], restored[0]);
+pluginAssertEqual("shrinking restores the model extent", centered[2], restored[2]);
 emoteLayer.setMatrix(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 40, 30, 0, 1);
 var moved = emoteBounds();
 pluginAssertEqual("layer matrix moves the model right", centered[0] + 40, moved[0]);

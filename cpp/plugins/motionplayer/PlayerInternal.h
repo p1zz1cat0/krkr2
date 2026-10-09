@@ -279,6 +279,7 @@ namespace motion {
             detail::resetNodeTreeKeepRootLike_0x6B56F8(runtime);
             runtime.parameterEntries.clear();
             runtime.parameterEntryById.clear();
+            runtime.parameterIndicesById.clear();
             runtime.defaultParameterEntry = {};
             runtime.defaultParameterEntryPtr = nullptr;
             runtime.defaultParameterEntryIndex = -1;

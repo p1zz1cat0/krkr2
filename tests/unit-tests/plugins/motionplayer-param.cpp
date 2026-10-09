@@ -61,6 +61,82 @@ TEST_CASE("authored mask union keeps a visible aperture when an optional mask is
     REQUIRE_FALSE(command.hasEmptyAuthoredMask());
 }
 
+TEST_CASE("parameter bindings retain duplicate ids and scoped suffix matches") {
+    auto parameter = [](const char *id, int end) {
+        auto dic = std::make_shared<PSB::PSBDictionary>();
+        dic->emplace("id", std::make_shared<PSB::PSBString>(id));
+        dic->emplace("rangeBegin", std::make_shared<PSB::PSBNumber>(0));
+        dic->emplace("rangeEnd", std::make_shared<PSB::PSBNumber>(end));
+        dic->emplace("division", std::make_shared<PSB::PSBNumber>(end));
+        return dic;
+    };
+    auto snapshot = std::make_shared<motion::detail::MotionSnapshot>();
+    snapshot->path = "indexed-parameters.psb";
+    snapshot->root = std::make_shared<PSB::PSBDictionary>();
+    snapshot->moduleValue = snapshot->root->toTJSVal();
+    auto addClip = [&](const char *label, auto list) {
+        auto object = std::make_shared<PSB::PSBDictionary>();
+        object->emplace("parameter", list);
+        motion::detail::MotionClip clip;
+        clip.label = label;
+        clip.motionObject = object;
+        snapshot->clipIndexByLabel.emplace(label, snapshot->clipList.size());
+        snapshot->clipList.push_back(std::move(clip));
+    };
+    auto first = std::make_shared<PSB::PSBList>(0);
+    first->push_back(parameter("face::eye", 10));
+    first->push_back(parameter("eye", 20));
+    first->push_back(parameter("eye", 30));
+    first->push_back(parameter("other/eye", 40));
+    addClip("first", first);
+    auto second = std::make_shared<PSB::PSBList>(0);
+    second->push_back(parameter("mouth", 10));
+    addClip("second", second);
+
+    motion::detail::registerModuleSnapshot(snapshot->moduleValue, snapshot);
+    struct UnregisterSnapshot {
+        tTJSVariant module;
+        ~UnregisterSnapshot() { motion::detail::unregisterModuleSnapshot(module); }
+    } unregister{snapshot->moduleValue};
+
+    motion::Player player;
+    player.loadFromSnapshot(snapshot);
+    player.onFindMotion(ttstr("first"), motion::PlayFlagForce);
+    player.setVariable(ttstr("face::eye"), 15);
+    const auto *runtime = player.runtime();
+    REQUIRE(runtime->parameterEntries.size() == 4);
+    CHECK(runtime->parameterEntries[0].value == 10);
+    CHECK(runtime->parameterEntries[1].value == 15);
+    CHECK(runtime->parameterEntries[2].value == 15);
+    CHECK(runtime->parameterEntries[3].value == 0);
+    CHECK(runtime->parameterIndicesById.at("eye").size() == 2);
+    CHECK(runtime->parameterEntries[3].idSuffix == "eye");
+    player.setVariable(ttstr("other/eye"), 25);
+    CHECK(runtime->parameterEntries[0].value == 10);
+    CHECK(runtime->parameterEntries[1].value == 20);
+    CHECK(runtime->parameterEntries[2].value == 25);
+    CHECK(runtime->parameterEntries[3].value == 25);
+
+    player.onFindMotion(ttstr("second"), motion::PlayFlagForce);
+    REQUIRE(runtime->parameterEntries.size() == 1);
+    CHECK(runtime->parameterIndicesById.count("eye") == 0);
+    player.setVariable(ttstr("face::eye"), 3);
+    CHECK(runtime->parameterEntries[0].value == 0);
+    player.setVariable(ttstr("mouth"), 7);
+    CHECK(runtime->parameterEntries[0].value == 7);
+
+    motion::Player clone;
+    REQUIRE(clone.loadCloneMotion(player));
+    clone.setVariable(ttstr("mouth"), 4);
+    REQUIRE(clone.runtime()->parameterEntries.size() == 1);
+    CHECK(clone.runtime()->parameterEntries[0].value == 4);
+    CHECK(runtime->parameterEntries[0].value == 7);
+    auto empty = std::make_shared<motion::detail::MotionSnapshot>();
+    empty->path = "empty-parameters.psb";
+    player.loadFromSnapshot(empty);
+    CHECK(runtime->parameterIndicesById.empty());
+}
+
 TEST_CASE("authored mask emptiness distinguishes intersections and unresolved references") {
     motion::detail::PlayerRuntime::ScopedRenderCommand command;
     command.hasDisabledAuthoredMaskInput = true;

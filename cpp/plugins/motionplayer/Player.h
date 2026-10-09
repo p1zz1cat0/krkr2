@@ -583,8 +583,13 @@ namespace motion {
         void finalizeParameterTableLike_0x6B1ECC();
         double
         initialParameterRawValueLike_0x6B1ABC(const std::string &id) const;
+        double initialParameterRawValueLike_0x6B1ABC(
+            const std::string &id, const std::string &suffix) const;
         void bindParameterValueLike_0x6C4668(const std::string &label, int mode,
                                              double value);
+        void bindParsedParameterValue(const std::string &label,
+                                      const std::string &suffix, int mode,
+                                      double value);
         void writeEvalResultValueLike_0x6C4668(const std::string &label,
                                                double value);
         void writeEvalResultValueLike_0x6C4668(const std::string &label,
