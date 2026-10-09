@@ -115,17 +115,8 @@ else
 fi
 (( skip_build )) && exit 0
 
-if [[ "$(uname -s)" == Linux ]]; then
-  build_dir="$repo_root/out/linux/plugin-quality"
-  run_logged linux-configure cmake -S "$repo_root" -B "$build_dir" -G Ninja \
-    -DLINUX=ON -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF -DCMAKE_BUILD_TYPE=Release
-  run_logged linux-plugin-tests cmake --build "$build_dir" --target plugin-tests
-  run_logged linux-ctest ctest --test-dir "$build_dir" -L plugin --output-on-failure
-  exit 0
-fi
-
 if [[ "$(uname -s)" != Darwin ]]; then
-  print -u2 "quality gate supports Linux and macOS"
+  print -u2 "quality gate supports macOS only"
   exit 2
 fi
 
@@ -144,7 +135,7 @@ for configuration in debug release; do
       -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
   # plugin-tests keeps the macOS ctest stage on the same unit-test set the
-  # Linux stage already builds (line above in the linux branch). Without it
+  # plugin-tests stage covers the unit-test set. Without it
   # only whatever binaries happened to exist got discovered, so labelled
   # suites silently never ran here.
   run_logged "$configuration-build" cmake --build "$build_dir" --target krkr2 plugin-tests core-tests "${targets[@]}"

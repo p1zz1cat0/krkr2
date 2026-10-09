@@ -21,7 +21,7 @@
 
 | 模块 | 文档 | C++ 胶水 | Rust crate |
 |------|------|----------|------------|
-| **psbfile**（首个落地） | [modules/psbfile.md](modules/psbfile.md) | `cpp/plugins/psbfile/` | `rust/crates/krkr-psb` |
+| **psbfile**（首个落地） | [modules/psbfile.md](modules/psbfile.md) | `plugins/psbfile/` | `rust/crates/krkr-psb` |
 
 ---
 
@@ -34,7 +34,7 @@ rust/                         # ★ 全部 Rust 源码（无 C++）
 ├── crates/krkr-psb/
 └── tools/krkr-psb-export/
 bridge/include/krkr/          # C ABI 头（cbindgen + common.h）
-cpp/plugins/                  # C++ 胶水（TJS、包装类）
+plugins/                  # C++ 胶水（TJS、包装类）
 ```
 
 Cargo workspace 尚未初始化时，以本目录文档为准。
@@ -45,5 +45,5 @@ Cargo workspace 尚未初始化时，以本目录文档为准。
 
 | 资源 | 说明 |
 |------|------|
-| [motionplayer 文档索引](../../cpp/plugins/motionplayer/docs/README.md) | psbfile 主要消费者 |
+| [motionplayer 文档索引](../../plugins/motionplayer/docs/README.md) | psbfile 主要消费者 |
 | `vcpkg.json` | 全工程原生依赖清单 |

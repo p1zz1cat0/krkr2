@@ -30,7 +30,7 @@ PackinOne 的兼容入口。fixture 没有为 `resize`、`quality`、`loadCxImag
 六个方法，manual.tjs 的参数语义与 PackinOne fixture 逆向结果一致——
 两个入口共享同一套像素算法。
 
-因此本仓库新增 `cpp/plugins/layerExImage/`（模块名 `layerExImage.dll`），
+因此本仓库新增 `plugins/layerExImage/`（模块名 `layerExImage.dll`），
 与 PackinOne 共享 `common/LayerExImageOps.h` 中的算法实现。注册形态与
 上游不同：这里用普通函数注册（`NCB_ATTACH_FUNCTION`）而不是上游的类注册。
 原因：ncbind 的 `ncbAttachTJS2Class` 对同名 native class 重复注册会抛

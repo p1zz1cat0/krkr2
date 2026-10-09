@@ -113,7 +113,7 @@ size_t count = (tjs_int)*param[0]; auto p = new int[count];
     def test_cli_json_and_exit_codes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            plugins = root / "cpp" / "plugins"
+            plugins = root / "plugins"
             plugins.mkdir(parents=True)
             (plugins / "bad.cpp").write_text(
                 "void f(tTJSVariant **param){size_t count=(tjs_int)*param[0];new int[count];}",

@@ -33,12 +33,12 @@ krkr2/
 ├── bridge/
 │   ├── include/krkr/{common.h,psb.h,…}
 │   └── manifest.toml
-├── cpp/plugins/{psbfile,motionplayer,…}
+├── plugins/{psbfile,motionplayer,…}
 └── out/<platform>/<config>/
     └── rust-target/<triple>/<profile>/
 ```
 
-**不把 `.rs` 放在 `cpp/plugins/`。** 例如 `cpp/plugins/psbfile/` 只保留 TJS、ncbind 与 `PSBFile` 包装。
+**不把 `.rs` 放在 `plugins/`。** 例如 `plugins/psbfile/` 只保留 TJS、ncbind 与 `PSBFile` 包装。
 
 ---
 
@@ -66,7 +66,7 @@ flowchart TB
 | `rust/crates/*` | 可单测的解析与算法 | `tjs.h`、`ncbind` |
 | `rust/krkr-sys/*` | `build.rs` 链 vcpkg | 业务逻辑 |
 | `bridge/include` | 稳定 C 头 | 实现细节 |
-| `cpp/plugins/*` | 插件注册、类型转换 | 大块算法（迁走后删） |
+| `plugins/*` | 插件注册、类型转换 | 大块算法（迁走后删） |
 
 ---
 
@@ -74,7 +74,7 @@ flowchart TB
 
 1. 在 `rust/crates/` **新增 crate**
 2. 在 `bridge/manifest.toml` **登记一行**
-3. 在 `cpp/plugins/<name>/CMakeLists.txt` **链入 staticlib**
+3. 在 `plugins/<name>/CMakeLists.txt` **链入 staticlib**
 4. 在 `docs/rust/modules/` **新增模块文档**
 
 ```toml
@@ -82,7 +82,7 @@ flowchart TB
 name = "psb"
 crate = "krkr-psb"
 ffi_header = "bridge/include/krkr/psb.h"
-cpp_glue = "cpp/plugins/psbfile"
+cpp_glue = "plugins/psbfile"
 abi_version = 1
 ```
 

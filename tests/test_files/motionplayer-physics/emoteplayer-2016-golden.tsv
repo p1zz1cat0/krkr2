@@ -1,7 +1,7 @@
 # source_sha256=c29474887d7ef2533f3ff19e24f63a607a2e246373b9d0cf394f5d57a7a633c5
 # bust_ctor=0x100c39c0 bust_update=0x100c3ce0 legacy_y_bias=0
 # pend_ctor=0x100c8050 pend_update=0x100c86c0 vertical_reference=0
-# Generated only by cpp/plugins/motionplayer/research/emulate_control_helpers.py.
+# Generated only by plugins/motionplayer/research/emulate_control_helpers.py.
 # controller frame output0 output1 output2
 bust 0 0.8839972019195557 -0.0252272617071867 0
 bust 1 2.39621901512146 -0.06855747848749161 0

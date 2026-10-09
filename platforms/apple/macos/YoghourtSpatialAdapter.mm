@@ -597,7 +597,7 @@ extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(
     gSource.flippedY = flippedY;
 }
 
-// core 侧定义（cpp/core/visual/RenderManager.h）。这里前向声明以避免把
+// core 侧定义（core/visual/RenderManager.h）。这里前向声明以避免把
 // visual 的头文件引入平台适配层。
 const char *TVPGetActiveRenderManagerName();
 bool TVPGetOglAccurateRender();

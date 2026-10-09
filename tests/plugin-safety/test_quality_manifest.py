@@ -45,7 +45,7 @@ class PluginQualityManifestTests(unittest.TestCase):
         document = json.loads(MANIFEST.read_text(encoding="utf-8"))
         for exclusion in document.get("sourceExclusions", []):
             self.assertIn(exclusion["classification"], {"third-party", "windows-only"})
-            self.assertTrue(exclusion["path"].startswith("cpp/plugins/"))
+            self.assertTrue(exclusion["path"].startswith("plugins/"))
             self.assertGreaterEqual(len(exclusion["reason"].split()), 3)
 
 

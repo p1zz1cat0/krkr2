@@ -1,7 +1,7 @@
 # Core 模块解耦与 xp3 工具重构分析
 
 > **文档版本：** 2026-06-09  
-> **相关路径：** `cpp/core/`、`tools/xp3/`  
+> **相关路径：** `core/`、`tools/xp3/`  
 > **背景：** xp3 解包工具只需虚拟文件系统能力，但当前链接 `core_base_module` 会间接拉入整个引擎栈
 
 ---
@@ -292,14 +292,14 @@ target_link_libraries(xp3 PRIVATE
 **新建模块：**
 
 ```
-cpp/core/io/
+core/io/
 ├── BinaryStream.cpp/h
 ├── IFileBackend.h          # 抽象文件接口
 ├── StdFileBackend.cpp      # std::filesystem 实现
 ├── UtilStreams.cpp         # 精简版，去掉 Platform 依赖
 └── CMakeLists.txt
 
-cpp/core/archive/
+core/archive/
 ├── xp3/
 │   ├── XP3Archive.cpp/h    # 从 base 移出
 │   └── CMakeLists.txt
@@ -513,7 +513,7 @@ TVPRegisterArchiveCreator(tTVPXP3Archive::Create);
 - `ArchiveRegistry`：归档 creator 注册表（引擎 ZIP/7z/TAR/XP3；工具仅 XP3）
 - **`core_storage` 库** — `StorageIntf`、`UtilStreams`、`ArchiveRegistry`、`TVPInitToolStorage()`；`base` 链 `core_storage`，引擎归档由 `TVPInitEngineArchiveCreators()` 注册
 - **`archive_zip` / `archive_7z` / `archive_tar`** — 从 `base` 迁出；`storeFilename` 提取至 `core_storage/impl/ArchiveFilename.cpp`
-- **`core_storage_tool`** — 原 `storage_min` 迁至 `cpp/core/storage/tool/`，xp3 改链
+- **`core_storage_tool`** — 原 `storage_min` 迁至 `core/storage/tool/`，xp3 改链
 
 ### Phase 2 遗留
 
@@ -543,9 +543,9 @@ TVPRegisterArchiveCreator(tTVPXP3Archive::Create);
 
 | 改动 | 说明 |
 |------|------|
-| `cpp/core/common/TVPPlatform.h` | 用 `TargetConditionals.h` 替代 cocos 平台宏 |
+| `core/common/TVPPlatform.h` | 用 `TargetConditionals.h` 替代 cocos 平台宏 |
 | `StorageImpl.cpp` | 移除 `#include <cocos/cocos2d.h>`，`tTVPFileMedia::Open` 读路径优先走 `IFileBackend` |
-| `cpp/core/environ/CocosFileBackend.*` | 移动端经 `FileUtils` 读打包资源 |
+| `core/environ/CocosFileBackend.*` | 移动端经 `FileUtils` 读打包资源 |
 | `TVPInitEnvironFileBackends()` | 桌面：`LocalFileBackend`；移动：`MobileFileBackend`（CMake 条件编译） |
 | 移除 `ChainedFileBackend` | 不再用链式 rollback；移动端在 `MobileFileBackend` 内显式先 Cocos 后 Local |
 | `core_io` 类重命名 | `tTVPLocalFileStream` → `tTVPStdioFileStream`，避免与 `StorageImpl.h` 冲突 |
@@ -561,13 +561,13 @@ TVPRegisterArchiveCreator(tTVPXP3Archive::Create);
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| `core_io` | `cpp/core/io/` | `IFileBackend`、`StdFileBackend`、`tTVPLocalFileStream` |
-| `archive_xp3` | `cpp/core/archive/xp3/` | `XP3Archive.cpp/h` 从 `base` 迁出 |
-| `core_msg` | `cpp/core/msg/` | 消息字符串、`TVPFormatMessage`、版本信息（头文件仍在 `base/`） |
-| `core_storage_tool` | `cpp/core/storage/tool/` | 工具链专用存储层 + 运行时桩（原 `storage_min`） |
-| `archive_zip` | `cpp/core/archive/zip/` | ZIP 归档 |
-| `archive_7z` | `cpp/core/archive/7z/` | 7z 归档 |
-| `archive_tar` | `cpp/core/archive/tar/` | TAR 归档 |
+| `core_io` | `core/io/` | `IFileBackend`、`StdFileBackend`、`tTVPLocalFileStream` |
+| `archive_xp3` | `core/archive/xp3/` | `XP3Archive.cpp/h` 从 `base` 迁出 |
+| `core_msg` | `core/msg/` | 消息字符串、`TVPFormatMessage`、版本信息（头文件仍在 `base/`） |
+| `core_storage_tool` | `core/storage/tool/` | 工具链专用存储层 + 运行时桩（原 `storage_min`） |
+| `archive_zip` | `core/archive/zip/` | ZIP 归档 |
+| `archive_7z` | `core/archive/7z/` | 7z 归档 |
+| `archive_tar` | `core/archive/tar/` | TAR 归档 |
 | `xp3` 工具 | `tools/xp3/CMakeLists.txt` | 链接 `tjs2 + core_io + core_storage_tool`，不再链接 `core_base_module` |
 
 `core_base_module` 改为 `PUBLIC` 链接 `archive_xp3`，主程序行为不变。
@@ -585,10 +585,10 @@ TVPRegisterArchiveCreator(tTVPXP3Archive::Create);
 |------|------|
 | `tools/xp3/main.cpp` | xp3 解包工具入口 |
 | `tools/xp3/CMakeLists.txt` | 当前链接 core_base_module |
-| `cpp/core/base/CMakeLists.txt` | base 模块依赖定义 |
-| `cpp/core/base/XP3Archive.cpp` | XP3 归档实现 |
-| `cpp/core/storage/` | `core_storage`：`StorageIntf`、`UtilStreams`、`ArchiveRegistry`、`ToolStorageInit` |
-| `cpp/core/base/StorageIntf.h` | 存储/VFS 抽象接口（实现已编入 `core_storage`） |
-| `cpp/core/base/impl/StorageImpl.cpp` | 存储实现（含 cocos 耦合） |
-| `cpp/core/CMakeLists.txt` | krkr2core 聚合目标 |
-| `cpp/plugins/xp3filter/xp3filter.cpp` | XP3 解密/过滤插件 |
+| `core/base/CMakeLists.txt` | base 模块依赖定义 |
+| `core/base/XP3Archive.cpp` | XP3 归档实现 |
+| `core/storage/` | `core_storage`：`StorageIntf`、`UtilStreams`、`ArchiveRegistry`、`ToolStorageInit` |
+| `core/base/StorageIntf.h` | 存储/VFS 抽象接口（实现已编入 `core_storage`） |
+| `core/base/impl/StorageImpl.cpp` | 存储实现（含 cocos 耦合） |
+| `core/CMakeLists.txt` | krkr2core 聚合目标 |
+| `plugins/xp3filter/xp3filter.cpp` | XP3 解密/过滤插件 |

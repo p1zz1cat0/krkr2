@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-解析 cpp/core 下各模块 CMakeLists.txt 的 target_link_libraries，
+解析 core 下各模块 CMakeLists.txt 的 target_link_libraries，
 检测 core / archive / tjs2 目标之间的环依赖。
 
 用法:
@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_DIR = ROOT / "cpp" / "core"
+CORE_DIR = ROOT / "core"
 
 # 只关心这些前缀的目标（忽略 vcpkg / cocos 等外部库）
 TRACKED_PREFIXES = (
@@ -85,7 +85,7 @@ def collect_modules() -> dict[str, Path]:
         name = parse_project_name(text)
         if name:
             modules[name] = cmake
-    # krkr2core 在 cpp/core/CMakeLists.txt
+    # krkr2core 在 core/CMakeLists.txt
     core_cmake = CORE_DIR / "CMakeLists.txt"
     if core_cmake.exists():
         modules.setdefault("krkr2core", core_cmake)

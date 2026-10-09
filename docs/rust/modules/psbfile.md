@@ -4,7 +4,7 @@
 
 | 项 | 路径 |
 |----|------|
-| C++ 胶水 | `cpp/plugins/psbfile/` |
+| C++ 胶水 | `plugins/psbfile/` |
 | Rust crate | `rust/crates/krkr-psb` |
 | C 头 | `bridge/include/krkr/psb.h` |
 | 消费者 | `motionplayer` → `PSB::PSBFile` |
@@ -16,7 +16,7 @@
 ## 1. 架构位置
 
 ```text
-cpp/plugins/psbfile/
+plugins/psbfile/
         │  #include <krkr/psb.h>
         ▼
 bridge/include/krkr/psb.h

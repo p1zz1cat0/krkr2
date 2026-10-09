@@ -279,7 +279,7 @@ def source_paths(root: Path, selected: list[str]) -> list[Path]:
             else:
                 candidates.append(path)
     else:
-        candidates = list((root / "cpp" / "plugins").rglob("*"))
+        candidates = list((root / "plugins").rglob("*"))
     exclusions: list[str] = []
     config_path = root / "tests" / "plugin-quality-gates.json"
     if config_path.is_file():
@@ -315,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = args.root.resolve()
     try:
-        if not (root / "cpp" / "plugins").is_dir():
+        if not (root / "plugins").is_dir():
             raise ValueError(f"not a KrKr2 source root: {root}")
         findings: list[Finding] = []
         for path in source_paths(root, args.paths):

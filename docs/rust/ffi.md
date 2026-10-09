@@ -19,7 +19,7 @@ KrKr2：**C++ 宿主调用 Rust 静态库**，边界为 **稳定 C ABI**，构�
 ```text
 CMake ──► Corrosion ──► libkrkr_*.a
               └── build.rs (cbindgen) ──► bridge/include/krkr/*.h
-cpp/plugins/*/*.cpp ──► krkr_*() ──► rust/crates/*/src/ffi.rs
+plugins/*/*.cpp ──► krkr_*() ──► rust/crates/*/src/ffi.rs
 ```
 
 ---

@@ -152,17 +152,17 @@ It supports **Android, Windows, Linux, and MacOS**, allowing users to play KiriK
 - **clang-format@20**
 - **Linux**:
     ```bash
-    clang-format -i --verbose $(find ./cpp ./platforms ./tests ./tools -regex ".+\.\(cpp\|cc\|h\|hpp\|inc\)")
+    clang-format -i --verbose $(find ./core ./plugins ./external ./platforms ./tests ./tools -regex ".+\.\(cpp\|cc\|h\|hpp\|inc\)")
     ```
 
 - **MacOS**:
     ```bash
-    clang-format -i --verbose $(find ./cpp ./platforms ./tests ./tools -name "*.cpp" -o -name "*.cc" -o -name "*.h" -o -name "*.hpp" -o -name "*.inc")
+    clang-format -i --verbose $(find ./core ./plugins ./external ./platforms ./tests ./tools -name "*.cpp" -o -name "*.cc" -o -name "*.h" -o -name "*.hpp" -o -name "*.inc")
     ```
 
 - **Windows**:
     ```powershell
-    Get-ChildItem -Path ./cpp, ./platforms, ./tests, ./tools -Recurse -File | 
+    Get-ChildItem -Path ./core, ./plugins, ./external, ./platforms, ./tests, ./tools -Recurse -File | 
     Where-Object { $_.Name -match '\.(cpp|cc|h|hpp|inc)$' } | 
     ForEach-Object { clang-format -i --verbose $_.FullName }
     ```
