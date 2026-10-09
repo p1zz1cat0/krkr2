@@ -423,9 +423,20 @@ namespace motion {
             if(shouldMirrorEvalLabelLike_0x67C6B0(binding.varLr)) {
                 lrFinal = -lrFinal;
             }
+            // The projection is a display-side transform of the LR/UD pair, so
+            // it must not reach the script variable table: NEKOPARA After reads
+            // face_eye_LR/UD and head_LR/UD back with getVariable() and
+            // re-issues the pose it asked for, so a clamped read-back made the
+            // motion restart one frame after it started. The original DLL
+            // reports the requested value (VM oracle after-oracle-trace-pass2
+            // reads -28.95 approaching -30, never ±21.2132 = 30/sqrt(2)).
+            // Publish to the eval slot, the eval map and the parameter
+            // bindings only; _variableValues keeps the value the script set.
             g_emoteWriteSite = "clamp";
-            writeEvalResultValueLike_0x6C4668(binding.varLr, lrFinal);
-            writeEvalResultValueLike_0x6C4668(binding.varUd, udFinal);
+            publishEvalResultValueKeepingVariableLike_0x6C4668(binding.varLr, 0,
+                                                               lrFinal);
+            publishEvalResultValueKeepingVariableLike_0x6C4668(binding.varUd, 0,
+                                                               udFinal);
         }
     }
 

@@ -259,14 +259,18 @@ namespace motion {
         // Parameterized nodes in a motion tree read the file-level variable table.
         // The top-level wrapper's evaluated table is authoritative; propagation
         // supplies child-owned parameters when the wrapper has no label value.
+        // The evaluated value wins over the variable table: display-side
+        // transforms (the LR/UD clamp projection) publish into the eval map and
+        // deliberately keep the requested value in the variable table, so node
+        // parameterization must follow the eval map to stay projected.
         const Player *controllerOwner = this;
         while(controllerOwner->_parentPlayer) {
             controllerOwner = controllerOwner->_parentPlayer;
         }
         if(controllerOwner->_runtime) {
             double value = 0.0;
-            if(findValue(controllerOwner->_variableValues, value) ||
-               findValue(controllerOwner->_evalResultValues, value)) {
+            if(findValue(controllerOwner->_evalResultValues, value) ||
+               findValue(controllerOwner->_variableValues, value)) {
                 return value;
             }
         }
@@ -301,8 +305,8 @@ namespace motion {
             }
             for(const Player *player = this; player != controllerOwner;
                 player = player->_parentPlayer) {
-                if(findValue(player->_variableValues, value) ||
-                   findValue(player->_evalResultValues, value)) {
+                if(findValue(player->_evalResultValues, value) ||
+                   findValue(player->_variableValues, value)) {
                     return value;
                 }
             }
@@ -425,8 +429,16 @@ namespace motion {
         if(label.empty()) {
             return;
         }
-        ensureEvalResultSlotLike_0x686944(label) = value;
+        publishEvalResultValueKeepingVariableLike_0x6C4668(label, mode, value);
         _variableValues[label] = value;
+    }
+
+    void Player::publishEvalResultValueKeepingVariableLike_0x6C4668(
+        const std::string &label, int mode, double value) {
+        if(label.empty()) {
+            return;
+        }
+        ensureEvalResultSlotLike_0x686944(label) = value;
         _evalResultValues[label] = value;
         bindParameterValueLike_0x6C4668(label, mode, value);
     }
