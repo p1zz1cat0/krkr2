@@ -33,6 +33,9 @@ function makePattern() {
 }
 
 function assertSamePixels(name, a, b) {
+    // Read each image once before the full pixel comparison.
+    pluginAssertTrue(name + " readable source", a.mainImageBuffer != 0);
+    pluginAssertTrue(name + " readable output", b.mainImageBuffer != 0);
     pluginAssertEqual(name + " width", a.imageWidth, b.imageWidth);
     pluginAssertEqual(name + " height", a.imageHeight, b.imageHeight);
     for (var y = 0; y < a.imageHeight; y++)
