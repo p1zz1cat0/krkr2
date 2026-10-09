@@ -10,11 +10,20 @@
 #include "Extrans/ExtransMath.h"
 
 TEST_CASE("extrans wave locks official integer amplitude semantics") {
-    REQUIRE(extrans::ValidateWaveParameters(65, 50, 0.2));
-    CHECK_FALSE(extrans::ValidateWaveParameters(65, 50,
+    REQUIRE(extrans::ValidateWaveParameters(50, 0.2));
+    REQUIRE(extrans::ValidateWaveGeometry(65, 50));
+    CHECK_FALSE(extrans::ValidateWaveParameters(50,
         std::numeric_limits<double>::infinity()));
     CHECK_FALSE(extrans::ValidateWaveParameters(
-        65, std::numeric_limits<std::int32_t>::min(), 0.2));
+        std::numeric_limits<std::int32_t>::min(), 0.2));
+    CHECK_FALSE(extrans::ValidateWaveGeometry(
+        65, std::numeric_limits<std::int32_t>::max()));
+    CHECK(extrans::ValidateWaveParameters(
+        std::numeric_limits<std::int32_t>::max(), 0.2));
+    CHECK_THROWS(extrans::ComputeWaveFrame(0, 1000, 200, 50, 0.2, 3));
+    const auto largeOmega = extrans::ComputeWaveFrame(
+        500, 1000, 1, 50, std::numeric_limits<double>::max(), 1);
+    CHECK(std::isfinite(largeOmega.omega));
 
     const auto frame = extrans::ComputeWaveFrame(11, 1000, 200, 50, 0.2, 0);
     CHECK(frame.height == 1);
@@ -252,4 +261,101 @@ TEST_CASE("extrans ripple table encodes official direction and distance") {
                 extrans::kRippleDirectionPrecision);
     CHECK(tables.displacement.front() == 16);
     CHECK(tables.displacement.back() == 144);
+}
+
+TEST_CASE("extrans ripple tables match the pinned Aether reference") {
+    const std::array<std::uint64_t, 4> hashes{
+        0x8dc8061a1303fef1ULL, 0xe1d3cb250d984761ULL,
+        0x9e41e7aa26f65a41ULL, 0xa0635fbe3b2dda37ULL};
+    int index = 0;
+    for(int width : {16, 32, 64, 128}) {
+        const auto table = extrans::GenerateRippleTables(
+            {64, 48, 32, 24, width, 1.0f, 6.0f, 8});
+        std::uint64_t hash = 1469598103934665603ULL;
+        for(const auto *values : {&table.displacement, &table.drift}) {
+            for(auto value : *values) {
+                for(int byte = 0; byte < 2; ++byte) {
+                    hash ^= (value >> (byte * 8)) & 0xffu;
+                    hash *= 1099511628211ULL;
+                }
+            }
+        }
+        CHECK(hash == hashes[index++]);
+        for(auto value : table.drift) {
+            CHECK((value >> 8) < 8);
+            CHECK((value & 0xff) < 8);
+        }
+    }
+}
+
+TEST_CASE("extrans ripple rejects invalid frames and clamps elapsed time") {
+    extrans::RippleParameters p{9, 7, 4, 3, 16, 1.0f, 6.0f, 2};
+    CHECK_THROWS(extrans::ComputeRippleFrame(0, 0, p));
+    p.rippleWidth = 0;
+    CHECK_THROWS(extrans::ComputeRippleFrame(0, 1000, p));
+    p.rippleWidth = 16;
+    p.speed = std::numeric_limits<float>::quiet_NaN();
+    CHECK_THROWS(extrans::ComputeRippleFrame(0, 1000, p));
+    p.speed = 6.0f;
+    const auto end = extrans::ComputeRippleFrame(1000, 1000, p);
+    const auto late = extrans::ComputeRippleFrame(
+        std::numeric_limits<std::uint64_t>::max(), 1000, p);
+    CHECK(late.blendRatio == 255);
+    CHECK(late.phase == end.phase);
+    CHECK(late.drift == end.drift);
+    p.speed = std::numeric_limits<float>::max();
+    const auto huge = extrans::ComputeRippleFrame(
+        std::numeric_limits<std::uint64_t>::max(),
+        std::numeric_limits<std::uint64_t>::max(), p);
+    CHECK(huge.phase >= 0);
+    CHECK(huge.phase < p.rippleWidth);
+}
+
+TEST_CASE("extrans ripple covers odd quadrants and bounds direction codes") {
+    extrans::RippleParameters p{9, 7, 4, 3, 16, 1.0f, 6.0f, 2};
+    const auto odd = extrans::GenerateRippleTables(p);
+    CHECK(odd.mapWidth == 5);
+    CHECK(odd.mapHeight == 4);
+    REQUIRE(odd.displacement.size() == 20);
+    for(int y = 0; y < p.height; ++y) {
+        for(int x = 0; x < p.width; ++x) {
+            const int mx = x < p.centerX ? p.centerX - x - 1 : x - p.centerX;
+            const int my = y < p.centerY ? p.centerY - y - 1 : y - p.centerY;
+            CHECK(mx < odd.mapWidth);
+            CHECK(my < odd.mapHeight);
+        }
+    }
+    p.roundness = std::numeric_limits<float>::denorm_min();
+    const auto thin = extrans::GenerateRippleTables(p);
+    for(auto key : thin.displacement) {
+        CHECK(key % extrans::kRippleDirectionPrecision == 31);
+        CHECK(key / extrans::kRippleDirectionPrecision < p.rippleWidth);
+    }
+    p.roundness = std::numeric_limits<float>::max();
+    CHECK_FALSE(extrans::ValidateRippleParameters(p));
+    CHECK_THROWS(extrans::GenerateRippleTables(p));
+    CHECK_THROWS(extrans::ComputeRippleFrame(0, 1000, p));
+}
+
+TEST_CASE("extrans mosaic handles positive offsets and wide block inputs") {
+    CHECK(extrans::ComputeMosaicSampleCoordinate(0, 100, 7, 5) == 1);
+    CHECK(extrans::ComputeMosaicSampleCoordinate(4, 100, 7, 5) == 1);
+    CHECK(extrans::ComputeMosaicSampleCoordinate(5, 100, 7, 5) == 8);
+    CHECK(extrans::ComputeMosaicSampleCoordinate(0, 100, 7,
+        std::numeric_limits<std::int32_t>::max()) <= 3);
+    CHECK_THROWS(extrans::ComputeMosaicFrame(0, 1000, 137, 91, 1LL << 40));
+    CHECK_THROWS(extrans::ComputeMosaicFrame(0, 1000, 137, 91,
+        std::numeric_limits<std::int64_t>::min()));
+}
+
+TEST_CASE("extrans lookup packing preserves byte layout and sign magnitude") {
+    CHECK(extrans::PackUnsigned16Pair(0x1234, 0xabcd) == 0xabcd1234u);
+    CHECK(extrans::PackSigned24(0x123456) == 0x00123456u);
+    CHECK(extrans::PackSigned24(-0x123456) == 0xff123456u);
+    CHECK(extrans::PackSigned24(0) == 0u);
+    CHECK_THROWS(extrans::PackSigned24(0x1000000));
+    CHECK_THROWS(extrans::PackSigned24(std::numeric_limits<std::int32_t>::min()));
+    CHECK(extrans::ComputeTurnTilePhase(0,
+        std::numeric_limits<std::int32_t>::min(),
+        std::numeric_limits<std::int32_t>::max()) == 63);
 }

@@ -18,8 +18,8 @@ struct WaveFrame {
     std::int32_t blendRatio = 0;
 };
 
-bool ValidateWaveParameters(std::int32_t width, std::int32_t maxHeight,
-                            double maxOmega);
+bool ValidateWaveParameters(std::int32_t maxHeight, double maxOmega);
+bool ValidateWaveGeometry(std::int32_t width, std::int32_t maxHeight);
 WaveFrame ComputeWaveFrame(std::uint64_t currentTime, std::uint64_t duration,
                            std::int32_t imageHeight,
                            std::int32_t maxHeight, double maxOmega,
@@ -37,7 +37,7 @@ bool ValidateMosaicParameters(std::int32_t width, std::int32_t height,
 MosaicFrame ComputeMosaicFrame(std::uint64_t currentTime,
                                std::uint64_t duration, std::int32_t width,
                                std::int32_t height,
-                               std::int32_t maxBlockSize);
+                               std::int64_t maxBlockSize);
 std::int32_t ComputeMosaicSampleCoordinate(std::int32_t logicalCoordinate,
                                            std::int32_t imageSize,
                                            std::int32_t blockSize,

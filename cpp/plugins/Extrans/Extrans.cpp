@@ -17,6 +17,7 @@
 #include "RenderManager.h"
 #include "LayerBitmapIntf.h"
 #include "ExtransMath.h"
+#include "../common/LayerPixel.h"
 
 #include <algorithm>
 #include <array>
@@ -195,8 +196,8 @@ void main() {
         vec2(u_tex2Width, u_tex2Height);
     vec4 color = phase < 32.0 ? texture2D(tex0, sourceUV1)
                               : texture2D(tex1, sourceUV2);
-    float gloss = range.b / 256.0;
-    color.rgb = color.rgb + (vec3(1.0) - color.rgb) * gloss;
+    vec3 bytes = floor(color.rgb * 255.0 + 0.5);
+    color.rgb = (bytes + floor((vec3(255.0) - bytes) * range.b / 256.0)) / 255.0;
     gl_FragColor = color;
 }
 )GLSL";
@@ -429,6 +430,7 @@ protected:
     tTVPPointD Quad2[4];
     bool DrawQuad1 = false;
     bool DrawQuad2 = false;
+    bool RotateSwapSource2OnTop = false;
     tTVPBaseTexture *Mask = nullptr;
     extrans::MosaicFrame MosaicFrame;
     extrans::RippleParameters RippleParameters;
@@ -452,8 +454,6 @@ public:
                     tjs_uint64 time, ExEffect effect, tjs_int w, tjs_int h) :
         Options(options), DestLayerType(layertype), Time(time), Effect(effect),
         Width(w), Height(h) {
-        if(Options)
-            Options->AddRef();
         if(Time < 2)
             Time = 2;
         // Official parameter defaults per effect (SamplePlugin/extrans).
@@ -483,17 +483,17 @@ public:
                 RippleParameters.width = w;
                 RippleParameters.height = h;
                 RippleParameters.centerX =
-                    (tjs_int)ReadNumber(Options, TJS_W("centerx"), w / 2);
+                    ReadInt32(Options, TJS_W("centerx"), w / 2);
                 RippleParameters.centerY =
-                    (tjs_int)ReadNumber(Options, TJS_W("centery"), h / 2);
+                    ReadInt32(Options, TJS_W("centery"), h / 2);
                 RippleParameters.rippleWidth =
-                    (tjs_int)ReadNumber(Options, TJS_W("rwidth"), 128);
+                    ReadInt32(Options, TJS_W("rwidth"), 128);
                 RippleParameters.roundness =
                     (float)ReadReal(Options, TJS_W("roundness"), 1.0);
                 RippleParameters.speed =
                     (float)ReadReal(Options, TJS_W("speed"), 6.0);
                 RippleParameters.maxDrift =
-                    (tjs_int)ReadNumber(Options, TJS_W("maxdrift"), 24);
+                    ReadInt32(Options, TJS_W("maxdrift"), 24);
                 if(!extrans::ValidateRippleParameters(RippleParameters))
                     TVPThrowExceptionMessage(
                         TJS_W("invalid ripple options: center/rwidth/roundness/"
@@ -530,7 +530,8 @@ public:
         const tjs_int64 maxBlockSize =
             ReadNumber(Options, TJS_W("maxsize"), 30);
         if(Effect == ExEffect::Wave &&
-           (!extrans::ValidateWaveParameters(w, MaxH, MaxOmega) ||
+           (!extrans::ValidateWaveParameters(MaxH, MaxOmega) ||
+            !extrans::ValidateWaveGeometry(w, MaxH) ||
             std::fabs(MaxOmega) >
                 std::numeric_limits<double>::max() / std::max(1, h) ||
             WaveType < 0 || WaveType > 2))
@@ -562,6 +563,8 @@ public:
         }
         MaskPhaseID = MaskMethod->EnumParameterID("phase");
         MaskVagueID = MaskMethod->EnumParameterID("vague");
+        if(Options)
+            Options->AddRef();
     }
 
     virtual ~tExtransHandler() {
@@ -646,6 +649,8 @@ public:
                         CalcRotateZoomPos(p);
                         break;
                     case ExEffect::RotateSwap:
+                        RotateSwapSource2OnTop =
+                            static_cast<tjs_uint64>(curtime) >= Time / 2;
                         CalcRotateSwapPos(p);
                         break;
                     default:
@@ -673,9 +678,16 @@ public:
             MosaicFrame = extrans::ComputeMosaicFrame(
                 static_cast<tjs_uint64>(curtime), Time, Width, Height,
                 MaxBlockSize);
-        if(Effect == ExEffect::Ripple)
-            RippleFrame = extrans::ComputeRippleFrame(
-                (tjs_uint64)curtime, Time, RippleParameters);
+        if(Effect == ExEffect::Ripple) {
+            try {
+                RippleFrame = extrans::ComputeRippleFrame(
+                    static_cast<tjs_uint64>(curtime), Time, RippleParameters);
+            } catch(const std::exception &error) {
+                TVPAddImportantLog(ttstr(TJS_W("extrans ripple frame: ")) +
+                                   ttstr(error.what()));
+                TVPThrowExceptionMessage(TJS_W("invalid ripple frame result"));
+            }
+        }
         if(Effect == ExEffect::Turn)
             TurnGlobalPhase = extrans::ComputeTurnGlobalPhase(
                 (tjs_uint64)curtime, Time, Width, Height);
@@ -733,11 +745,6 @@ public:
     }
 
 private:
-    double Progress() const {
-        const double p = (double)Phase / (double)PhaseMax;
-        return Reverse ? 1.0 - p : p;
-    }
-
     void BeginMask(const tTVPDivisibleData *data) {
         MaskPixels.resize((size_t)data->Width * (size_t)data->Height);
     }
@@ -829,7 +836,7 @@ private:
                                                   RippleTables.mapWidth +
                                               mapX];
                 displacement[static_cast<std::size_t>(y) * Width + x] =
-                    0xff000000u | (key & 0xffu) | ((key >> 8) << 8);
+                    0xff000000u | key;
             }
         }
         RippleDisplacement = new tTVPBaseTexture(Width, Height, 32);
@@ -1251,14 +1258,16 @@ private:
                 const auto mapping = extrans::MapTurnPixel(
                     TurnGlobalPhase, logicalX, logicalY);
                 if(mapping.background) {
-                    destinationRow[data->DestLeft + localX] = TurnBGColor;
+                    destinationRow[data->DestLeft + localX] =
+                        layerPixel::fromArgb(TurnBGColor);
                     continue;
                 }
                 const tjs_int sourceX = mapping.sourceX;
                 const tjs_int sourceY = mapping.sourceY;
                 if(sourceX < 0 || sourceY < 0 || sourceX >= Width ||
                    sourceY >= Height) {
-                    destinationRow[data->DestLeft + localX] = TurnBGColor;
+                    destinationRow[data->DestLeft + localX] =
+                        layerPixel::fromArgb(TurnBGColor);
                     continue;
                 }
                 const auto *bytes = mapping.source2 ? source2 : source1;
@@ -1350,7 +1359,7 @@ private:
         tm = zm * zm;
         cx = extrans::TruncateRotateCoordinate(
             (-scx) * tm + scx +
-            std::sin(static_cast<float>(tm * 3.14159265368979)) * scx * 1.5f);
+            std::sin(tm * 3.14159265368979) * scx * 1.5);
         cy = extrans::TruncateRotateCoordinate((-scy) * tm + scy);
         rad = tm * twist;
         tm = 1.0 - tm;
@@ -1374,7 +1383,7 @@ private:
         tm = 1.0 - (1.0 - zm) * (1.0 - zm);
         cx = extrans::TruncateRotateCoordinate(
             (scx - (Width - 1)) * tm + (Width - 1) -
-            std::sin(static_cast<float>(tm * 3.14159265368979)) * scx * 1.5f);
+            std::sin(tm * 3.14159265368979) * scx * 1.5);
         cy = extrans::TruncateRotateCoordinate(
             (scy - (Height - 1)) * tm + (Height - 1));
         rad = (-1.0 + tm) * twist;
@@ -1440,8 +1449,7 @@ private:
                             destinationOffsetX, destinationOffsetY, clip);
         } else {
             // RotateSwap: first half src1 covers src2, second half reversed
-            const double p = Progress();
-            if(p < 0.5) {
+            if(!RotateSwapSource2OnTop) {
                 PerspectiveQuad(dest, s2, Quad2,
                                 data->Src2Left - data->Left,
                                 data->Src2Top - data->Top, Width, Height,

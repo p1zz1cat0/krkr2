@@ -45,42 +45,40 @@ try {
 }
 check(invalidWave != null, "invalid wave type rejected");
 
-destination.beginTransition("ripple", false, source, %[
-    time: 100,
-    centerx: 32,
-    centery: 32,
-    rwidth: 16,
-    roundness: 1.0,
-    speed: -6.0,
-    maxdrift: 0
-]);
-
 var effects = [
+    ["ripple", %[time: 100, rwidth: 16, maxdrift: 8, speed: 6.0]],
     ["wave", %[time: 100, maxh: 8, maxomega: 0.2, wavetype: 0]],
     ["mosaic", %[time: 100, maxsize: 8]],
     ["rotatezoom", %[time: 100, factor: 0.5, twist: 0.25]],
     ["rotatevanish", %[time: 100, twist: 0.25]],
-    ["rotateswap", %[time: 100, twist: 0.25, bgcolor: 0xff102030]],
+    ["rotateswap", %[time: 101, twist: 0.25, bgcolor: 0xff102030]],
     ["turn", %[time: 100, bgcolor: 0xff102030]]
 ];
 var effectIndex = 0;
 var frameCount = 0;
+var transitionCompleted = false;
+destination.onTransitionCompleted = function(dest, src) {
+    transitionCompleted = true;
+};
 var driveTransitions = function() {
     frameCount++;
-    if ((frameCount % 3) == 0) {
-        destination.stopTransition();
+    check(frameCount < 1000, "transitions complete before timeout");
+    if (transitionCompleted) {
+        transitionCompleted = false;
         if (effectIndex < effects.count) {
             destination.beginTransition(effects[effectIndex][0], false, source,
                 effects[effectIndex][1]);
             effectIndex++;
+        } else {
+            System.removeContinuousHandler(driveTransitions);
+            pluginSmokePass("extrans.dll");
+            testWindow.visible = false;
+            System.exit(0);
         }
-    }
-    if (effectIndex >= effects.count && (frameCount % 3) == 2) {
-        System.removeContinuousHandler(driveTransitions);
-        destination.stopTransition();
-        pluginSmokePass("extrans.dll");
-        testWindow.visible = false;
-        System.exit(0);
     }
 };
 System.addContinuousHandler(driveTransitions);
+destination.beginTransition("ripple", false, source, %[
+    time: 100, centerx: 32, centery: 32, rwidth: 16,
+    roundness: 1.0, speed: -6.0, maxdrift: 0
+]);

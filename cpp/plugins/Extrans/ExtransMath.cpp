@@ -113,9 +113,13 @@ std::int32_t RoundFixed(double value) {
 
 } // namespace
 
-bool ValidateWaveParameters(std::int32_t width, std::int32_t maxHeight,
-                            double maxOmega) {
-    if(width <= 0 || !std::isfinite(maxOmega))
+bool ValidateWaveParameters(std::int32_t maxHeight, double maxOmega) {
+    return maxHeight != std::numeric_limits<std::int32_t>::min() &&
+        std::isfinite(maxOmega);
+}
+
+bool ValidateWaveGeometry(std::int32_t width, std::int32_t maxHeight) {
+    if(width <= 0)
         return false;
     const std::int64_t magnitude = maxHeight < 0
         ? -static_cast<std::int64_t>(maxHeight)
@@ -130,7 +134,8 @@ WaveFrame ComputeWaveFrame(std::uint64_t currentTime, std::uint64_t duration,
                            std::int32_t maxHeight, double maxOmega,
                            std::int32_t waveType) {
     if(duration < 2 || imageHeight <= 0 ||
-       !ValidateWaveParameters(1, maxHeight, maxOmega) ||
+       !ValidateWaveParameters(maxHeight, maxOmega) ||
+       waveType < 0 || waveType > 2 ||
        std::fabs(maxOmega) >
            std::numeric_limits<double>::max() / imageHeight)
         throw std::invalid_argument("invalid wave parameters");
@@ -149,12 +154,12 @@ WaveFrame ComputeWaveFrame(std::uint64_t currentTime, std::uint64_t duration,
     switch(waveType) {
         case 1:
             frame.omega = maxOmega *
-                static_cast<double>(duration - currentTime) /
-                static_cast<double>(duration);
+                (static_cast<double>(duration - currentTime) /
+                 static_cast<double>(duration));
             break;
         case 2:
-            frame.omega = maxOmega * static_cast<double>(currentTime) /
-                static_cast<double>(duration);
+            frame.omega = maxOmega * (static_cast<double>(currentTime) /
+                                     static_cast<double>(duration));
             break;
         default:
             frame.omega = maxOmega * amplitude;
@@ -177,7 +182,7 @@ bool ValidateMosaicParameters(std::int32_t width, std::int32_t height,
 MosaicFrame ComputeMosaicFrame(std::uint64_t currentTime,
                                std::uint64_t duration, std::int32_t width,
                                std::int32_t height,
-                               std::int32_t maxBlockSize) {
+                               std::int64_t maxBlockSize) {
     if(duration < 2 ||
        !ValidateMosaicParameters(width, height, maxBlockSize))
         throw std::invalid_argument("invalid mosaic parameters");
@@ -214,8 +219,11 @@ std::int32_t ComputeMosaicSampleCoordinate(std::int32_t logicalCoordinate,
                                            std::int32_t offset) {
     if(logicalCoordinate < 0 || imageSize <= 0 || blockSize < 2)
         throw std::invalid_argument("invalid mosaic coordinate");
-    const std::int64_t block =
-        (static_cast<std::int64_t>(logicalCoordinate) - offset) / blockSize;
+    const std::int64_t relative =
+        static_cast<std::int64_t>(logicalCoordinate) - offset;
+    // Use floor division for grid cells before a positive offset.
+    const std::int64_t block = relative / blockSize -
+        (relative % blockSize < 0 ? 1 : 0);
     const std::int64_t center = block * blockSize + offset + blockSize / 2;
     return static_cast<std::int32_t>(
         std::clamp<std::int64_t>(center, 0, imageSize - 1));
@@ -264,7 +272,10 @@ std::int32_t ComputeTurnGlobalPhase(std::uint64_t currentTime,
 std::int32_t ComputeTurnTilePhase(std::int32_t globalPhase,
                                   std::int32_t tileX,
                                   std::int32_t tileY) {
-    return std::clamp(globalPhase - (tileX - tileY) * 2, 0, 63);
+    return static_cast<std::int32_t>(std::clamp<std::int64_t>(
+        static_cast<std::int64_t>(globalPhase) -
+            (static_cast<std::int64_t>(tileX) - tileY) * 2,
+        0, 63));
 }
 
 TurnPixelMapping MapTurnPixel(std::int32_t globalPhase,
@@ -336,7 +347,10 @@ bool ValidateRippleParameters(const RippleParameters &p) {
     if(p.maxDrift < 0 || p.maxDrift >= 128 || p.maxDrift >= p.width ||
        p.maxDrift >= p.height)
         return false;
-    return true;
+    // Keep the float distance calculation in the signed integer range.
+    return std::hypot(static_cast<double>(p.width) - 0.5,
+                      (static_cast<double>(p.height) - 0.5) * p.roundness) <=
+        static_cast<double>(std::numeric_limits<std::int32_t>::max()) - 256.0;
 }
 
 RippleTables GenerateRippleTables(const RippleParameters &p) {
@@ -344,8 +358,8 @@ RippleTables GenerateRippleTables(const RippleParameters &p) {
         throw std::invalid_argument("invalid ripple parameters");
 
     RippleTables table;
-    table.mapWidth = p.centerX < (p.width >> 1) ? p.width - p.centerX : p.centerX;
-    table.mapHeight = p.centerY < (p.height >> 1) ? p.height - p.centerY : p.centerY;
+    table.mapWidth = std::max(p.centerX, p.width - p.centerX);
+    table.mapHeight = std::max(p.centerY, p.height - p.centerY);
     const std::size_t mapCount =
         static_cast<std::size_t>(table.mapWidth) * table.mapHeight;
     if(table.mapWidth <= 0 || table.mapHeight <= 0 ||
@@ -359,11 +373,12 @@ RippleTables GenerateRippleTables(const RippleParameters &p) {
         const float factor = 1.0f / yy;
         for(std::int32_t x = 0; x < table.mapWidth; ++x) {
             const float xx = static_cast<float>(x) + 0.5f;
-            const std::int32_t direction = static_cast<std::int32_t>(
-                std::atan(xx * factor) *
-                ((1.0 / (kPi / 2.0)) * kRippleDirectionPrecision));
+            const std::int32_t direction = std::clamp(
+                TruncateToInt(std::atan(static_cast<double>(xx * factor)) *
+                    ((1.0 / (kPi / 2.0)) * kRippleDirectionPrecision)),
+                0, kRippleDirectionPrecision - 1);
             const std::int32_t distance =
-                static_cast<std::int32_t>(std::sqrt(xx * xx + yy * yy)) &
+                TruncateToInt(std::sqrt(static_cast<double>(xx * xx + yy * yy))) &
                 rippleMask;
             table.displacement[static_cast<std::size_t>(y) * table.mapWidth + x] =
                 static_cast<std::uint16_t>(distance * kRippleDirectionPrecision +
@@ -387,8 +402,8 @@ RippleTables GenerateRippleTables(const RippleParameters &p) {
                               static_cast<float>(kPi * -2.0);
         float s = (std::sin(radians) + std::sin(radians * 2.0f - 2.0f) * 0.2f) /
                   1.19f;
-        s *= s;
-        s = std::clamp(s, -1.0f, 1.0f);
+        // The reference waveform uses a non-negative squared amplitude.
+        s = std::clamp(s * s, 0.0f, 1.0f);
         rippleForm[w] = RoundFixed(s * 2048.0f);
     }
 
@@ -420,10 +435,8 @@ RippleTables GenerateRippleTables(const RippleParameters &p) {
                 const std::int32_t yd = static_cast<std::int32_t>(
                     static_cast<std::int64_t>(sine[direction]) * fixedDistance >>
                     11);
-                const auto xOffset = static_cast<std::uint8_t>(
-                    static_cast<std::int8_t>(xd >> 11));
-                const auto yOffset = static_cast<std::uint8_t>(
-                    static_cast<std::int8_t>(yd >> 11));
+                const auto xOffset = static_cast<std::uint16_t>(xd >> 11);
+                const auto yOffset = static_cast<std::uint16_t>(yd >> 11);
                 const std::size_t index =
                     (static_cast<std::size_t>(drift) * p.rippleWidth + w) *
                         kRippleDirectionPrecision +
@@ -439,9 +452,10 @@ RippleTables GenerateRippleTables(const RippleParameters &p) {
 RippleFrame ComputeRippleFrame(std::uint64_t currentTime,
                                std::uint64_t duration,
                                const RippleParameters &p) {
+    if(duration == 0 || !ValidateRippleParameters(p))
+        throw std::invalid_argument("invalid ripple frame parameters");
+    currentTime = std::min(currentTime, duration);
     RippleFrame frame;
-    if(duration == 0)
-        duration = 1;
     frame.blendRatio = static_cast<std::int32_t>(
         static_cast<unsigned __int128>(currentTime) * 255 / duration);
     frame.blendRatio = std::min(frame.blendRatio, 255);
@@ -449,7 +463,8 @@ RippleFrame ComputeRippleFrame(std::uint64_t currentTime,
     const double phaseValue =
         p.speed * ((1.0 / (kPi * 2.0)) * (1.0 / 1000.0)) *
         static_cast<double>(currentTime) * p.rippleWidth;
-    std::int32_t phase = TruncateToInt(phaseValue) % p.rippleWidth;
+    std::int32_t phase = TruncateToInt(
+        std::fmod(std::trunc(phaseValue), p.rippleWidth));
     if(phase < 0)
         phase = 0; // preserve the original's unusual negative-speed behavior
     frame.phase = p.rippleWidth - phase - 1;
@@ -458,19 +473,18 @@ RippleFrame ComputeRippleFrame(std::uint64_t currentTime,
         frame.drift = 0;
         return frame;
     }
+    const float amplitude = static_cast<float>(
+        std::sin(kPi * static_cast<double>(currentTime) / duration));
     frame.drift = TruncateToInt(
-        std::sin(kPi * static_cast<double>(currentTime) / duration) *
-        p.maxDrift * kRippleDriftPrecision);
+        amplitude * p.maxDrift * kRippleDriftPrecision);
     frame.drift = std::clamp(frame.drift, 0,
                              p.maxDrift * kRippleDriftPrecision - 1);
     return frame;
 }
 
 std::uint32_t PackUnsigned16Pair(std::uint16_t first, std::uint16_t second) {
-    return static_cast<std::uint32_t>(first & 0xffu) |
-           (static_cast<std::uint32_t>(first >> 8) << 8) |
-           (static_cast<std::uint32_t>(second & 0xffu) << 16) |
-           (static_cast<std::uint32_t>(second >> 8) << 24);
+    return static_cast<std::uint32_t>(first) |
+           (static_cast<std::uint32_t>(second) << 16);
 }
 
 std::uint32_t PackSigned24(std::int32_t value) {
@@ -479,8 +493,7 @@ std::uint32_t PackSigned24(std::int32_t value) {
         wide < 0 ? -wide : wide);
     if(magnitude > 0x00ffffffu)
         throw std::overflow_error("signed LUT value exceeds 24-bit magnitude");
-    return (magnitude & 0xffu) | ((magnitude & 0xff00u)) |
-           ((magnitude & 0xff0000u)) | (value < 0 ? 0xff000000u : 0u);
+    return magnitude | (value < 0 ? 0xff000000u : 0u);
 }
 
 std::int32_t UnpackSigned24(std::uint32_t packed) {
