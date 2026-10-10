@@ -5,11 +5,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/common)
 
 add_library(${PROJECT_NAME} INTERFACE)
 
-if(KRKR2_UNITY_BUILD)
-    set(CMAKE_UNITY_BUILD ON)
-    set(CMAKE_UNITY_BUILD_BATCH_SIZE 8)
-endif()
-
 add_subdirectory(tjs2)
 add_subdirectory(io)
 add_subdirectory(msg)
@@ -24,13 +19,6 @@ add_subdirectory(sound)
 add_subdirectory(visual)
 add_subdirectory(utils)
 add_subdirectory(telemetry)
-
-# These modules collide with macOS SDK names (Rect, Point, ScrollView), local
-# helper names or generated parser code when batched.
-if(KRKR2_UNITY_BUILD)
-    set_target_properties(core_environ_module core_telemetry_module tjs2
-        PROPERTIES UNITY_BUILD OFF)
-endif()
 
 find_library(KRKR2_LIBB2_LIBRARY NAMES b2 libb2 REQUIRED)
 
