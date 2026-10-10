@@ -9,6 +9,7 @@
 #include "IOSurfaceRingComponentTest.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -474,6 +475,147 @@ bool RunDeterministicAsyncSubmitTest(EGLState &state,
     return returnedBeforeSignal && completed;
 }
 
+bool RunSpatialCopyTest(EGLState &state, NSWindow *cocoaWindow) {
+    // Release the deleted program left current by the shader checks.
+    glUseProgram(0);
+    std::array<unsigned char, 16 * 16 * 4> pixels{};
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const bool valid = x < 8 && y < 8;
+            const bool right = x >= 4;
+            const bool top = y >= 4;
+            const size_t offset = static_cast<size_t>(y * 16 + x) * 4;
+            pixels[offset] = !valid || (!top && !right) || (top && right) ? 255 : 0;
+            pixels[offset + 1] = valid && right ? 255 : 0;
+            pixels[offset + 2] = !valid || (top && !right) ? 255 : 0;
+            pixels[offset + 3] = 255;
+        }
+    }
+    GLuint source = 0, attachment = 0, framebuffer = 0;
+    glActiveTexture(GL_TEXTURE0);
+    glGenTextures(1, &source);
+    glBindTexture(GL_TEXTURE_2D, source);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 16, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    glGenTextures(1, &attachment);
+    glBindTexture(GL_TEXTURE_2D, attachment);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, attachment, 0);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, source);
+    glViewport(2, 3, 4, 5);
+    glEnable(GL_BLEND);
+    glEnable(GL_SCISSOR_TEST);
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_STENCIL_TEST);
+    glColorMask(GL_FALSE, GL_TRUE, GL_FALSE, GL_TRUE);
+
+    const char *oldScaler = std::getenv("YOGHOURT_SPATIAL_SCALER");
+    const std::string savedScaler = oldScaler ? oldScaler : "";
+    setenv("YOGHOURT_SPATIAL_SCALER", "metalfx", 1);
+    YoghourtKrKrSpatialTestingHoldCompletions(true);
+    bool passed = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    for (bool flipped : {false, true}) {
+        YoghourtKrKrSpatialRegisterSourceTexture(source, 8, 8, 0.5f, 0.5f, flipped);
+        passed = passed && YoghourtKrKrSpatialPresent(
+            state.display, state.window, state.config, state.context, (__bridge void *)cocoaWindow);
+        GLint restoredFramebuffer = 0, activeTexture = 0, viewport[4] = {};
+        GLboolean colorMask[4] = {};
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &restoredFramebuffer);
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        glGetBooleanv(GL_COLOR_WRITEMASK, colorMask);
+        passed = passed && restoredFramebuffer == static_cast<GLint>(framebuffer) &&
+            activeTexture == GL_TEXTURE3 && viewport[0] == 2 && viewport[1] == 3 &&
+            viewport[2] == 4 && viewport[3] == 5 &&
+            colorMask[0] == GL_FALSE && colorMask[1] == GL_TRUE &&
+            colorMask[2] == GL_FALSE && colorMask[3] == GL_TRUE &&
+            glIsEnabled(GL_BLEND) && glIsEnabled(GL_SCISSOR_TEST) &&
+            glIsEnabled(GL_DEPTH_TEST) && glIsEnabled(GL_STENCIL_TEST) &&
+            eglGetCurrentSurface(EGL_DRAW) == state.window &&
+            eglGetCurrentSurface(EGL_READ) == state.window &&
+            eglGetCurrentContext() == state.context && glGetError() == GL_NO_ERROR;
+        if (!passed) {
+            std::fprintf(stderr,
+                         "[Yoghourt] ERROR spatial FBO state framebuffer=%d/%u textureUnit=0x%x viewport=%d,%d,%d,%d mask=%d,%d,%d,%d enabled=%d,%d,%d,%d surfaces=%d,%d context=%d gl=0x%x\n",
+                         restoredFramebuffer, framebuffer, activeTexture,
+                         viewport[0], viewport[1], viewport[2], viewport[3],
+                         colorMask[0], colorMask[1], colorMask[2], colorMask[3],
+                         glIsEnabled(GL_BLEND), glIsEnabled(GL_SCISSOR_TEST),
+                         glIsEnabled(GL_DEPTH_TEST), glIsEnabled(GL_STENCIL_TEST),
+                         eglGetCurrentSurface(EGL_DRAW) == state.window,
+                         eglGetCurrentSurface(EGL_READ) == state.window,
+                         eglGetCurrentContext() == state.context, glGetError());
+        }
+
+        void *opaqueTexture = nullptr, *opaqueEvent = nullptr;
+        unsigned long long readyValue = 0;
+        if (!passed || !YoghourtKrKrSpatialTestingLastCopy(&opaqueTexture, &opaqueEvent, &readyValue)) {
+            passed = false;
+            break;
+        }
+        id<MTLTexture> texture = (__bridge id<MTLTexture>)opaqueTexture;
+        id<MTLSharedEvent> event = (__bridge id<MTLSharedEvent>)opaqueEvent;
+        id<MTLCommandQueue> queue = [texture.device newCommandQueue];
+        id<MTLBuffer> buffer = [texture.device newBufferWithLength:256 * 8
+                                                       options:MTLResourceStorageModeShared];
+        id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+        [commandBuffer encodeWaitForEvent:event value:readyValue];
+        id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+        [blit copyFromTexture:texture sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                  sourceSize:MTLSizeMake(8, 8, 1) toBuffer:buffer destinationOffset:0
+         destinationBytesPerRow:256 destinationBytesPerImage:256 * 8];
+        [blit endEncoding];
+        [commandBuffer commit];
+        [commandBuffer waitUntilCompleted];
+        if (!texture || !event || !queue || !buffer || !blit ||
+            commandBuffer.status != MTLCommandBufferStatusCompleted) {
+            passed = false;
+            break;
+        }
+        const auto *bytes = static_cast<const uint8_t *>(buffer.contents);
+        const auto matches = [bytes](int x, int y, int r, int g, int b) {
+            const auto *pixel = bytes + y * 256 + x * 4;
+            return std::abs(static_cast<int>(pixel[0]) - b) <= 2 &&
+                std::abs(static_cast<int>(pixel[1]) - g) <= 2 &&
+                std::abs(static_cast<int>(pixel[2]) - r) <= 2 && pixel[3] >= 253;
+        };
+        const int firstRow = flipped ? 6 : 1;
+        const int lastRow = flipped ? 1 : 6;
+        passed = passed && matches(1, firstRow, 255, 0, 0) &&
+            matches(6, firstRow, 0, 255, 0) && matches(1, lastRow, 0, 0, 255) &&
+            matches(6, lastRow, 255, 255, 0);
+        if (!passed) {
+            std::fprintf(stderr,
+                         "[Yoghourt] ERROR spatial FBO copy pixels flipped=%d BGRA=%u,%u,%u,%u|%u,%u,%u,%u|%u,%u,%u,%u|%u,%u,%u,%u\n",
+                         flipped,
+                         bytes[256 + 4], bytes[256 + 5], bytes[256 + 6], bytes[256 + 7],
+                         bytes[256 + 24], bytes[256 + 25], bytes[256 + 26], bytes[256 + 27],
+                         bytes[6 * 256 + 4], bytes[6 * 256 + 5], bytes[6 * 256 + 6], bytes[6 * 256 + 7],
+                         bytes[6 * 256 + 24], bytes[6 * 256 + 25], bytes[6 * 256 + 26], bytes[6 * 256 + 27]);
+            break;
+        }
+    }
+    YoghourtKrKrSpatialTestingHoldCompletions(false);
+    YoghourtKrKrSpatialShutdown();
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &framebuffer);
+    glDeleteTextures(1, &source);
+    glDeleteTextures(1, &attachment);
+    glActiveTexture(GL_TEXTURE0);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (savedScaler.empty()) unsetenv("YOGHOURT_SPATIAL_SCALER");
+    else setenv("YOGHOURT_SPATIAL_SCALER", savedScaler.c_str(), 1);
+    return passed;
+}
+
 bool RunSpatialRingTest(EGLState &state, GLFWwindow *window, NSWindow *cocoaWindow) {
     const unsigned char pixels[8 * 8 * 4] = {};
     GLuint texture = 0;
@@ -523,11 +665,43 @@ bool RunSpatialRingTest(EGLState &state, GLFWwindow *window, NSWindow *cocoaWind
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     const bool submittedAfterResize = YoghourtKrKrSpatialTestingSubmittedFrames() > beforeResize;
+    const auto beforeSourceResize = YoghourtKrKrSpatialTestingSubmittedFrames();
+    YoghourtKrKrSpatialRegisterSourceTexture(texture, 6, 4, 0.75f, 0.5f, false);
+    const bool sourceResized = YoghourtKrKrSpatialPresent(
+        state.display, state.window, state.config, state.context, (__bridge void *)cocoaWindow) &&
+        YoghourtKrKrSpatialTestingSubmittedFrames() > beforeSourceResize;
+
+    // A new context has its own GL names, even on the same EGL display.
+    const EGLint contextAttributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    EGLContext secondContext = eglCreateContext(
+        state.display, state.config, EGL_NO_CONTEXT, contextAttributes);
+    bool contextRebuilt = secondContext != EGL_NO_CONTEXT && eglMakeCurrent(
+        state.display, state.window, state.window, secondContext);
+    GLuint secondTexture = 0;
+    if (contextRebuilt) {
+        glGenTextures(1, &secondTexture);
+        glBindTexture(GL_TEXTURE_2D, secondTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        YoghourtKrKrSpatialRegisterSourceTexture(secondTexture, 8, 8, 1.0f, 1.0f, false);
+        const auto beforeContextRebuild = YoghourtKrKrSpatialTestingSubmittedFrames();
+        contextRebuilt = YoghourtKrKrSpatialPresent(
+            state.display, state.window, state.config, secondContext, (__bridge void *)cocoaWindow) &&
+            YoghourtKrKrSpatialTestingSubmittedFrames() > beforeContextRebuild &&
+            glGetError() == GL_NO_ERROR;
+    }
     YoghourtKrKrSpatialShutdown();
+    if (secondTexture) glDeleteTextures(1, &secondTexture);
+    const bool restoredContext = eglMakeCurrent(
+        state.display, state.window, state.window, state.context) == EGL_TRUE;
+    if (secondContext != EGL_NO_CONTEXT) eglDestroyContext(state.display, secondContext);
+    const bool originalTextureAlive = glIsTexture(texture) == GL_TRUE;
     glDeleteTextures(1, &texture);
     if (savedScaler.empty()) unsetenv("YOGHOURT_SPATIAL_SCALER");
     else setenv("YOGHOURT_SPATIAL_SCALER", savedScaler.c_str(), 1);
-    return saturated && recovered && resized && submittedAfterResize;
+    return saturated && recovered && resized && submittedAfterResize && sourceResized &&
+        contextRebuilt && restoredContext && originalTextureAlive;
 }
 
 } // namespace
@@ -647,6 +821,7 @@ int YoghourtRunRendererSelfTest() {
             if (!RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::metalFX, 32) ||
                 !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::cuNNy, 16) ||
                 !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::metalFX, 8) ||
+                !RunSpatialCopyTest(state, cocoaWindow) ||
                 !RunSpatialRingTest(state, glfwWindow, cocoaWindow)) {
                 LogFailure("asynchronous shared texture ring");
                 break;
@@ -682,7 +857,7 @@ int YoghourtRunRendererSelfTest() {
             const char* glesVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
 
             std::fprintf(stdout,
-                         "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f iosurface=passed sharedTexture=passed quadrants=passed ring=3 sync=passed backpressure=passed asyncSubmit=passed lastReadPoints=passed readback=none glFinish=none externalWait=none resize=passed fallback=passed selfTest=passed\n",
+                         "[Yoghourt] RENDERER backend=angle-metal egl=%d.%d gles=\"%s\" renderer=\"%s\" surface=%dx%d scale=%.2f iosurface=passed sharedTexture=passed quadrants=passed spatialCopy=passed stateRestore=passed ring=3 sync=passed backpressure=passed asyncSubmit=passed lastReadPoints=passed readback=none glFinish=none externalWait=none resize=passed fallback=passed selfTest=passed\n",
                          major,
                          minor,
                          glesVersion ? glesVersion : "unknown",

@@ -72,8 +72,16 @@ EGLDisplay gDisplay = EGL_NO_DISPLAY;
 EGLContext gContext = EGL_NO_CONTEXT;
 id<MTLDevice> gDevice = nil;
 CAMetalLayer *gOverlayLayer = nil;
-std::unique_ptr<Presenter> gPresenter;
 std::unique_ptr<IOSurfaceRing> gRing;
+
+struct CopyTarget {
+    EGLSurface surface = EGL_NO_SURFACE;
+    GLuint texture = 0;
+    GLuint framebuffer = 0;
+    bool bound = false;
+};
+std::array<CopyTarget, 3> gCopyTargets{};
+IOSurfaceRing::Slot *gLastSubmittedSlot = nullptr;
 
 // Session performance telemetry (YOGHOURT_TELEMETRY=1 only). The collector is
 // intentionally never deleted: Metal completion handlers keep a raw pointer
@@ -106,7 +114,10 @@ public:
         if (gTelemetry) gTelemetry->onPipelineFailure(reason);
     }
 };
-KrKrTelemetryBridge gTelemetryBridge;
+// Keep the observer alive for drawable callbacks after the presenter drain.
+KrKrTelemetryBridge *const gTelemetryBridge = new KrKrTelemetryBridge;
+// Destroy the presenter before its ring.
+std::unique_ptr<Presenter> gPresenter;
 
 void EnsureTelemetryCollector() {
     if (gTelemetry) return;
@@ -137,7 +148,11 @@ uint64_t gDroppedScalingFrames = 0;
 uint64_t gRingSaturations = 0;
 uint64_t gFallbacks = 0;
 uint64_t gMaxInFlight = 0;
-std::array<double, 256> gSubmitSamples{};
+struct SubmitSample {
+    double totalMs = 0;
+    double copyMs = 0;
+};
+std::array<SubmitSample, 256> gSubmitSamples{};
 size_t gSubmitSampleCount = 0;
 size_t gSubmitSampleCursor = 0;
 std::chrono::steady_clock::time_point gMetricsEpoch;
@@ -196,11 +211,28 @@ void MarkFallback(const char *reason) {
     HideOverlay();
 }
 
+void ReleaseCopyTargets() {
+    const bool ownsCurrentContext = eglGetCurrentContext() == gContext;
+    for (auto &target : gCopyTargets) {
+        if (target.bound && gDisplay != EGL_NO_DISPLAY) {
+            eglReleaseTexImage(gDisplay, target.surface, EGL_BACK_BUFFER);
+        }
+        if (ownsCurrentContext) {
+            if (target.framebuffer) glDeleteFramebuffers(1, &target.framebuffer);
+            if (target.texture) glDeleteTextures(1, &target.texture);
+        }
+        // A retired context releases its own GL objects.
+        target = {};
+    }
+    gLastSubmittedSlot = nullptr;
+}
+
 void ReleaseResources() {
     if (gPresenter) {
         gPresenter->drain();
     }
     gPresenter.reset();
+    ReleaseCopyTargets();
     if (gRing) {
         gRing->reset();
     }
@@ -340,6 +372,11 @@ bool CreateSharedResources(EGLDisplay display,
                            EGLContext context,
                            void *nativeWindow) {
     if (gSource.width <= 0 || gSource.height <= 0) return false;
+    if (gRing && (gDisplay != display || gContext != context)) {
+        ReleaseResources();
+        // Program names belong to the retired context.
+        gProgram = 0;
+    }
     id<MTLDevice> device = QueryMetalDevice(display);
     if (!device || !EnsureOverlay(nativeWindow, device)) return false;
 
@@ -365,6 +402,7 @@ bool CreateSharedResources(EGLDisplay display,
             gPresenter->drain();
         }
         gPresenter.reset();
+        ReleaseCopyTargets();
         gPresenterWidth = 0;
         gPresenterHeight = 0;
     }
@@ -393,7 +431,7 @@ bool CreateSharedResources(EGLDisplay display,
     Options options;
     options.scaler = ScalerFromEnvironment();
     options.enableOverlayMask = false;
-    options.telemetryObserver = gTelemetry ? &gTelemetryBridge : nullptr;
+    options.telemetryObserver = gTelemetry ? gTelemetryBridge : nullptr;
     gPresenter = std::make_unique<Presenter>((__bridge void *)gOverlayLayer,
                                              gSource.width,
                                              gSource.height,
@@ -467,10 +505,37 @@ void RestoreGLState(const GLState &state) {
     glBindBuffer(GL_ARRAY_BUFFER, state.arrayBuffer);
 }
 
-bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot,
-                           EGLDisplay display,
-                           EGLSurface windowSurface,
-                           EGLContext context) {
+GLuint EnsureCopyTarget(EGLSurface surface) {
+    for (auto &target : gCopyTargets) {
+        if (target.surface == surface) return target.framebuffer;
+    }
+    for (auto &target : gCopyTargets) {
+        if (target.surface != EGL_NO_SURFACE) continue;
+        target.surface = surface;
+        glGenTextures(1, &target.texture);
+        glBindTexture(GL_TEXTURE_2D, target.texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        if (!target.texture || !eglBindTexImage(gDisplay, surface, EGL_BACK_BUFFER)) {
+            return 0;
+        }
+        target.bound = true;
+        glGenFramebuffers(1, &target.framebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, target.texture, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
+            glGetError() != GL_NO_ERROR) {
+            return 0;
+        }
+        return target.framebuffer;
+    }
+    return 0;
+}
+
+bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot) {
     if (!EnsureProgram()) {
         std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: GL program\n");
         return false;
@@ -479,10 +544,15 @@ bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot,
     CaptureGLState(state);
     if (!gRing->waitPreviousMetalDone(&slot)) {
         std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: metalDone wait egl=0x%x\n", eglGetError());
+        RestoreGLState(state);
         return false;
     }
-    if (!eglMakeCurrent(display, gRing->pbufferOf(&slot), gRing->pbufferOf(&slot), context)) {
-        std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: pbuffer makeCurrent egl=0x%x\n", eglGetError());
+    // Keep the window surface current. Surface changes make ANGLE wait for
+    // Metal scheduling; an IOSurface texture attachment needs no such wait.
+    const GLuint framebuffer = EnsureCopyTarget(gRing->pbufferOf(&slot));
+    if (!framebuffer) {
+        std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: IOSurface FBO egl=0x%x\n", eglGetError());
+        RestoreGLState(state);
         return false;
     }
 
@@ -501,7 +571,7 @@ bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot,
         -1.0f,  1.0f, 0.0f,         topT,
          1.0f,  1.0f, gSource.maxS, topT,
     };
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
     glViewport(0, 0, gSource.width, gSource.height);
     glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
@@ -524,14 +594,13 @@ bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot,
     const GLenum drawError = glGetError();
     const bool signaled = drawError == GL_NO_ERROR && gRing->signalAngleReady(&slot);
     const bool drew = drawError == GL_NO_ERROR && signaled;
-    const bool restored = eglMakeCurrent(display, windowSurface, windowSurface, context) == EGL_TRUE;
-    if (!drew || !restored) {
+    if (!drew) {
         std::fprintf(stderr,
-                     "[Yoghourt] KrKr spatial copy failed: draw=0x%x readySignal=%d restore=%d egl=0x%x\n",
-                     drawError, signaled, restored, eglGetError());
+                     "[Yoghourt] KrKr spatial copy failed: draw=0x%x readySignal=%d egl=0x%x\n",
+                     drawError, signaled, eglGetError());
     }
     RestoreGLState(state);
-    return drew && restored;
+    return drew;
 }
 
 void SpatialCompletion(void *context, bool succeeded) {
@@ -541,8 +610,8 @@ void SpatialCompletion(void *context, bool succeeded) {
     gRing->complete(slot, succeeded);
 }
 
-void RecordSubmitTime(double milliseconds) {
-    gSubmitSamples[gSubmitSampleCursor] = milliseconds;
+void RecordSubmitTime(double milliseconds, double copyMilliseconds) {
+    gSubmitSamples[gSubmitSampleCursor] = {milliseconds, copyMilliseconds};
     gSubmitSampleCursor = (gSubmitSampleCursor + 1) % gSubmitSamples.size();
     gSubmitSampleCount = std::min(gSubmitSampleCount + 1, gSubmitSamples.size());
 }
@@ -555,7 +624,8 @@ void LogMetricsIfDue() {
     }
     const double seconds = std::chrono::duration<double>(now - gMetricsEpoch).count();
     if (seconds < 1.0) return;
-    std::array<double, 256> sorted = gSubmitSamples;
+    std::array<double, 256> sorted{};
+    for (size_t i = 0; i < gSubmitSampleCount; ++i) sorted[i] = gSubmitSamples[i].totalMs;
     std::sort(sorted.begin(), sorted.begin() + gSubmitSampleCount);
     const auto percentile = [&](double fraction) {
         if (gSubmitSampleCount == 0) return 0.0;
@@ -564,16 +634,30 @@ void LogMetricsIfDue() {
         return sorted[index];
     };
     const uint64_t completed = gCompletedFrames.load(std::memory_order_relaxed);
+    const double submitP50 = percentile(0.50), submitP95 = percentile(0.95);
+    char phases[160] = {};
+    if (gTelemetry) {
+        for (size_t i = 0; i < gSubmitSampleCount; ++i) sorted[i] = gSubmitSamples[i].copyMs;
+        std::sort(sorted.begin(), sorted.begin() + gSubmitSampleCount);
+        const double copyP50 = percentile(0.50), copyP95 = percentile(0.95);
+        for (size_t i = 0; i < gSubmitSampleCount; ++i) {
+            sorted[i] = gSubmitSamples[i].totalMs - gSubmitSamples[i].copyMs;
+        }
+        std::sort(sorted.begin(), sorted.begin() + gSubmitSampleCount);
+        std::snprintf(phases, sizeof(phases),
+                      " copyCPU.p50=%.3fms copyCPU.p95=%.3fms presentCPU.p50=%.3fms presentCPU.p95=%.3fms",
+                      copyP50, copyP95, percentile(0.50), percentile(0.95));
+    }
     std::fprintf(stdout,
-                 "[Yoghourt] KrKr spatial metrics submitCPU.p50=%.3fms submitCPU.p95=%.3fms submittedFPS=%.1f completedFPS=%.1f droppedScalingFrames=%llu ringSaturation=%llu fallback=%llu inFlight=%llu maxInFlight=%llu\n",
-                 percentile(0.50), percentile(0.95),
+                 "[Yoghourt] KrKr spatial metrics submitCPU.p50=%.3fms submitCPU.p95=%.3fms submittedFPS=%.1f completedFPS=%.1f droppedScalingFrames=%llu ringSaturation=%llu fallback=%llu inFlight=%llu maxInFlight=%llu%s\n",
+                 submitP50, submitP95,
                  (gSubmittedFrames - gMetricsSubmittedBase) / seconds,
                  (completed - gMetricsCompletedBase) / seconds,
                  (unsigned long long)gDroppedScalingFrames,
                  (unsigned long long)gRingSaturations,
                  (unsigned long long)gFallbacks,
                  (unsigned long long)(gRing ? gRing->inFlight() : 0),
-                 (unsigned long long)gMaxInFlight);
+                 (unsigned long long)gMaxInFlight, phases);
     std::fflush(stdout);
     gMetricsEpoch = now;
     gMetricsSubmittedBase = gSubmittedFrames;
@@ -678,11 +762,12 @@ extern "C" bool YoghourtKrKrSpatialPresent(
     }
     gMaxInFlight = std::max(gMaxInFlight, (uint64_t)gRing->inFlight());
     const auto submitStart = std::chrono::steady_clock::now();
-    if (!CopySourceToIOSurface(*slot, display, windowSurface, context)) {
+    if (!CopySourceToIOSurface(*slot)) {
         gRing->forceFree(slot);
         MarkFallback("ANGLE shared-texture copy or synchronization failed");
         return false;
     }
+    const auto copyEnd = gTelemetry ? std::chrono::steady_clock::now() : submitStart;
     if (!gRing->assignMetalDone(slot)) {
         gRing->forceFree(slot);
         MarkFallback("shared-event counter exhausted; resource generation rebuild required");
@@ -705,8 +790,10 @@ extern "C" bool YoghourtKrKrSpatialPresent(
         return false;
     }
     ++gSubmittedFrames;
+    gLastSubmittedSlot = slot;
     RecordSubmitTime(std::chrono::duration<double, std::milli>(
-                         std::chrono::steady_clock::now() - submitStart).count());
+                         std::chrono::steady_clock::now() - submitStart).count(),
+                     std::chrono::duration<double, std::milli>(copyEnd - submitStart).count());
     LogMetricsIfDue();
     if (!gLogged) {
         std::fprintf(stdout,
@@ -779,4 +866,16 @@ extern "C" unsigned long long YoghourtKrKrSpatialTestingMaxInFlight() {
 
 extern "C" unsigned long long YoghourtKrKrSpatialTestingSubmittedFrames() {
     return gSubmittedFrames;
+}
+
+extern "C" bool YoghourtKrKrSpatialTestingLastCopy(
+    void **texture, void **readyEvent, unsigned long long *readyValue) {
+    if (!gTestHoldCompletions.load(std::memory_order_acquire) ||
+        !gRing || !gLastSubmittedSlot || !texture || !readyEvent || !readyValue) {
+        return false;
+    }
+    *texture = gRing->textureOf(gLastSubmittedSlot);
+    *readyEvent = gRing->angleReadyEvent();
+    *readyValue = gRing->angleReadyValueOf(gLastSubmittedSlot);
+    return *texture && *readyEvent && *readyValue != 0;
 }

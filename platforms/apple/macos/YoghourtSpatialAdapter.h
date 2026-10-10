@@ -25,3 +25,6 @@ extern "C" void YoghourtKrKrSpatialTestingHoldCompletions(bool hold);
 extern "C" unsigned long long YoghourtKrKrSpatialTestingDroppedFrames();
 extern "C" unsigned long long YoghourtKrKrSpatialTestingMaxInFlight();
 extern "C" unsigned long long YoghourtKrKrSpatialTestingSubmittedFrames();
+// The caller must hold completions until its read of this copy completes.
+extern "C" bool YoghourtKrKrSpatialTestingLastCopy(
+    void **texture, void **readyEvent, unsigned long long *readyValue);
