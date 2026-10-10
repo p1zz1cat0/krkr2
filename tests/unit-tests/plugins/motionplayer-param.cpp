@@ -117,6 +117,13 @@ TEST_CASE("parameter bindings retain duplicate ids and scoped suffix matches") {
     CHECK(runtime->parameterEntries[2].value == 25);
     CHECK(runtime->parameterEntries[3].value == 25);
 
+    player.setVariable(ttstr("eye"), 11);
+    player.progressMsLike_0x6D2A54(0);
+    CHECK(runtime->parameterEntries[0].value == 10);
+    CHECK(runtime->parameterEntries[1].value == 11);
+    CHECK(runtime->parameterEntries[2].value == 11);
+    CHECK(runtime->parameterEntries[3].value == 25);
+
     player.onFindMotion(ttstr("second"), motion::PlayFlagForce);
     REQUIRE(runtime->parameterEntries.size() == 1);
     CHECK(runtime->parameterIndicesById.count("eye") == 0);

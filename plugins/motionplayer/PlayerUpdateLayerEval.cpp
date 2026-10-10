@@ -902,9 +902,7 @@ namespace motion {
             // Aligned to sub_6C4668: refresh parameter entries directly. This
             // intentionally does not call public setVariable() on child
             // players.
-            for(const auto &[label, value] : _variableValues) {
-                bindParameterValueLike_0x6C4668(label, 0, value);
-            }
+            bindVariableParameterTable();
             // 参考 sdl3 emotemotion::getTickByIdx（不编译）：每帧从变量表刷新
             // parameter entry，驱动 parameterize 节点（口/眼等）帧选择。
             syncParameterEntriesFromVariablesLike_sdl3();

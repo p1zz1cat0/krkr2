@@ -589,7 +589,9 @@ namespace motion {
                                              double value);
         void bindParsedParameterValue(const std::string &label,
                                       const std::string &suffix, int mode,
-                                      double value);
+                                      double value, bool syncChildren = true);
+        void bindVariableParameterTable();
+        void syncDescendantParameterEntries();
         void writeEvalResultValueLike_0x6C4668(const std::string &label,
                                                double value);
         void writeEvalResultValueLike_0x6C4668(const std::string &label,

@@ -333,7 +333,7 @@ namespace motion {
 
     void Player::bindParsedParameterValue(const std::string &label,
                                          const std::string &suffix, int mode,
-                                         double value) {
+                                         double value, bool syncChildren) {
         if(!_runtime || label.empty()) {
             return;
         }
@@ -372,8 +372,9 @@ namespace motion {
             if(node.nodeType == 3) {
                 if(auto *child = node.getChildPlayer()) {
                     propagateInherited(child);
-                    child->bindParsedParameterValue(label, suffix, mode, value);
-                    if(child->_runtime) {
+                    child->bindParsedParameterValue(label, suffix, mode, value,
+                                                    syncChildren);
+                    if(syncChildren && child->_runtime) {
                         child->syncParameterEntriesFromVariablesLike_sdl3();
                     }
                 }
@@ -381,11 +382,52 @@ namespace motion {
                 for(int i = 0; i < node.getParticleCount(); ++i) {
                     if(auto *child = node.getParticleChild(i)) {
                         propagateInherited(child);
-                        child->bindParsedParameterValue(label, suffix, mode, value);
-                        if(child->_runtime) {
+                        child->bindParsedParameterValue(label, suffix, mode, value,
+                                                        syncChildren);
+                        if(syncChildren && child->_runtime) {
                             child->syncParameterEntriesFromVariablesLike_sdl3();
                         }
                     }
+                }
+            }
+        }
+    }
+
+    void Player::bindVariableParameterTable() {
+        if(_variableValues.empty()) {
+            return;
+        }
+        // No callback reads the intermediate bindings in this refresh.
+        bool hasBinding = false;
+        for(const auto &[label, value] : _variableValues) {
+            if(label.empty()) {
+                continue;
+            }
+            const auto parts = splitParameterLabelLike_0x6D0BF4(label);
+            bindParsedParameterValue(label, parts.suffix, 0, value, false);
+            hasBinding = true;
+        }
+        if(hasBinding) {
+            syncDescendantParameterEntries();
+        }
+    }
+
+    void Player::syncDescendantParameterEntries() {
+        if(!_runtime) {
+            return;
+        }
+        const auto syncChild = [](Player *child) {
+            if(child && child->_runtime) {
+                child->syncDescendantParameterEntries();
+                child->syncParameterEntriesFromVariablesLike_sdl3();
+            }
+        };
+        for(auto &node : _runtime->nodes) {
+            if(node.nodeType == 3) {
+                syncChild(node.getChildPlayer());
+            } else if(node.nodeType == 4) {
+                for(int i = 0; i < node.getParticleCount(); ++i) {
+                    syncChild(node.getParticleChild(i));
                 }
             }
         }

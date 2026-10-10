@@ -307,13 +307,16 @@ namespace motion {
                                               3.f * su * u * u, u * u * u };
                         const float bv[4] = { sv * sv * sv, 3.f * sv * sv * v,
                                               3.f * sv * v * v, v * v * v };
-                        outX = 0;
-                        outY = 0;
+                        // Read all control points before writing the result.
+                        float resultX = 0;
+                        float resultY = 0;
                         for(int i = 0; i < 16; ++i) {
                             const float w = bv[i >> 2] * bu[i & 3];
-                            outX += mesh[i * 2] * w;
-                            outY += mesh[i * 2 + 1] * w;
+                            resultX += mesh[i * 2] * w;
+                            resultY += mesh[i * 2 + 1] * w;
                         }
+                        outX = resultX;
+                        outY = resultY;
                     };
                     // Native +2024, +2048 and +2072 are different buffers:
                     // authored unit patch, dense render grid, and world-space
