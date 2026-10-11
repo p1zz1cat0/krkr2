@@ -1977,6 +1977,19 @@ namespace motion {
             }
 
             if(!hasBuiltChildren) {
+                // Keep the leaf surface for the next frame. Without this
+                // write-back, each leaf-only item got a new default-size
+                // Layer every frame and grew it to its clip (two
+                // ChangeImageSize -> CreateTexture2D per item). The surface
+                // is kept, but the signatures are not: the item is drawn
+                // again on each frame, as before.
+                if(commandCacheEntry != nullptr) {
+                    commandCacheEntry->leafLayer = item.leafLayer;
+                    commandCacheEntry->leafValid = false;
+                    commandCacheEntry->outputValid = false;
+                    commandCacheEntry->lastUseGeneration =
+                        commandCacheGeneration;
+                }
                 return true;
             }
 
