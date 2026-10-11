@@ -12,6 +12,7 @@ extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
     return false;
 }
 extern "C" void YoghourtKrKrSpatialShutdown() {}
+extern "C" void YoghourtKrKrSetFrameLimit(int) {}
 extern "C" void YoghourtKrKrTelemetryRecordFrameStages(double, double, double) {}
 #endif
 // 链接锚点桩：注册型插件是 krkr2plugin 聚合库的 PRIVATE source，core 测试

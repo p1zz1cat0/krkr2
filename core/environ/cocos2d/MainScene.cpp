@@ -30,6 +30,9 @@
 
 #include "CCKeyCodeConv.h"
 #include "RenderUtils.h"
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+#include "YoghourtSpatialAdapter.h"
+#endif
 
 USING_NS_CC;
 
@@ -755,7 +758,14 @@ void TVPMainScene::doStartup(float dt, std::string path) {
         GameNode->addChild(_fpsLabel, GAME_MENU_ORDER);
     }
     int fps = pGlobalCfgMgr->GetValue<int>("fps_limit", 60);
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    // The window vsync paces the frames. The cocos loop sleeps on a 16 ms
+    // integer timer, which runs ahead of a 60 Hz display, so turn it off.
+    YoghourtKrKrSetFrameLimit(fps);
+    cocos2d::Director::getInstance()->setAnimationInterval(0.0f);
+#else
     cocos2d::Director::getInstance()->setAnimationInterval(1.0f / fps);
+#endif
 }
 
 extern ttstr TVPGetErrorDialogTitle();

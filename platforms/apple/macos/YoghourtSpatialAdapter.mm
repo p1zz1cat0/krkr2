@@ -2,6 +2,7 @@
 #import <IOSurface/IOSurface.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
+#import <QuartzCore/QuartzCore.h>
 
 #include "YoghourtSpatialAdapter.h"
 #include "YoghourtSpatialPresenter.h"
@@ -17,10 +18,12 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <limits>
 
 namespace {
@@ -702,6 +705,98 @@ extern "C" void YoghourtKrKrTelemetryRecordFrameStages(
     gSwapTelemetryFrameIndex = 0;
 }
 
+// VSync pacing. The display link of the game window is the only frame clock:
+// presentDrawable and eglSwapBuffers return before the vsync, so blocking in
+// nextDrawable alone lets the engine queue frames until the drawable pool is
+// empty, and then it stalls for a full refresh. Each frame waits for a vsync
+// that is newer than the previous present, and presents right after it. At
+// most one frame is in the queue, and the engine tick starts at a regular
+// interval.
+namespace {
+struct VSyncClock {
+    std::mutex mutex;
+    std::condition_variable changed;
+    uint64_t count = 0;
+    double period = 1.0 / 60.0;
+};
+VSyncClock gVSync;
+// Set by MainScene from fps_limit. Zero disables pacing (renderer self-test).
+int gFrameLimitFps = 0;
+}
+
+@interface YoghourtVSyncTarget : NSObject
+- (void)onVSync:(CADisplayLink *)link;
+@end
+
+@implementation YoghourtVSyncTarget
+- (void)onVSync:(CADisplayLink *)link {
+    {
+        std::lock_guard<std::mutex> lock(gVSync.mutex);
+        ++gVSync.count;
+        const double period = link.targetTimestamp - link.timestamp;
+        if (period > 0.0) gVSync.period = period;
+    }
+    gVSync.changed.notify_one();
+}
+@end
+
+namespace {
+CADisplayLink *gVSyncLink = nil;
+__weak NSWindow *gVSyncWindow = nil;
+
+// The main thread runs the cocos loop and does not run its run loop, so the
+// link runs on its own thread. The thread stops when the link is invalidated.
+void EnsureVSyncLink(NSWindow *window) {
+    if (gVSyncLink && gVSyncWindow == window) return;
+    [gVSyncLink invalidate];
+    static YoghourtVSyncTarget *target = [YoghourtVSyncTarget new];
+    CADisplayLink *link = [window displayLinkWithTarget:target selector:@selector(onVSync:)];
+    gVSyncLink = link;
+    gVSyncWindow = window;
+    NSThread *thread = [[NSThread alloc] initWithBlock:^{
+        [link addToRunLoop:NSRunLoop.currentRunLoop forMode:NSDefaultRunLoopMode];
+        [NSRunLoop.currentRunLoop run];
+    }];
+    thread.name = @"Yoghourt VSync";
+    thread.qualityOfService = NSQualityOfServiceUserInteractive;
+    [thread start];
+}
+
+void StopVSyncLink() {
+    [gVSyncLink invalidate];
+    gVSyncLink = nil;
+    gVSyncWindow = nil;
+}
+
+void WaitForPresentTime(NSWindow *window) {
+    EnsureVSyncLink(window);
+    static uint64_t seen = 0;
+    static double next = 0.0;
+    // The link stops while the window is hidden or the display sleeps.
+    // Then present at a low rate instead of a stop.
+    constexpr auto kLinkTimeout = std::chrono::milliseconds(50);
+    {
+        std::unique_lock<std::mutex> lock(gVSync.mutex);
+        for (;;) {
+            if (!gVSync.changed.wait_for(lock, kLinkTimeout,
+                                         [] { return gVSync.count != seen; }))
+                break;
+            seen = gVSync.count;
+            // A limit below the refresh rate skips vsyncs. Half a period of
+            // tolerance puts each present on the nearest vsync.
+            if (CACurrentMediaTime() >= next - gVSync.period / 2) break;
+        }
+    }
+    // Keep the long-term rate at fps_limit. After a slow frame, start again
+    // from now and do not present a burst.
+    next = std::max(next + 1.0 / gFrameLimitFps, CACurrentMediaTime());
+}
+}
+
+extern "C" void YoghourtKrKrSetFrameLimit(int fps) {
+    gFrameLimitFps = std::max(fps, 0);
+}
+
 extern "C" bool YoghourtKrKrSpatialPresent(
     EGLDisplay display,
     EGLSurface windowSurface,
@@ -709,6 +804,10 @@ extern "C" bool YoghourtKrKrSpatialPresent(
     EGLContext context,
     void *nativeWindow) {
     gSwapTelemetryFrameIndex = 0;
+    // Pace both paths: this Metal presenter, and eglSwapBuffers after a false return.
+    if (gFrameLimitFps > 0 && nativeWindow) {
+        WaitForPresentTime((__bridge NSWindow *)nativeWindow);
+    }
     if (gSource.name == 0 || gSource.width <= 0 || gSource.height <= 0 ||
         display == EGL_NO_DISPLAY || windowSurface == EGL_NO_SURFACE ||
         context == EGL_NO_CONTEXT || !nativeWindow) {
@@ -808,6 +907,7 @@ extern "C" bool YoghourtKrKrSpatialPresent(
 }
 
 extern "C" void YoghourtKrKrSpatialShutdown() {
+    StopVSyncLink();
     HideOverlay();
     if (gOverlayLayer) {
         [gOverlayLayer removeFromSuperlayer];

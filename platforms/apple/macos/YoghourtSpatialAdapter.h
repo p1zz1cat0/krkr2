@@ -19,6 +19,10 @@ extern "C" bool YoghourtKrKrSpatialPresent(
 
 extern "C" void YoghourtKrKrSpatialShutdown();
 
+// Paces each present on the game window vsync, at most fps frames a second.
+// Zero disables pacing. The cocos loop timer must be off when this is set.
+extern "C" void YoghourtKrKrSetFrameLimit(int fps);
+
 // Renderer self-test hooks. They retain completed slot ownership so the
 // fourth submission deterministically exercises ring saturation.
 extern "C" void YoghourtKrKrSpatialTestingHoldCompletions(bool hold);
