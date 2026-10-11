@@ -17,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <vector>
@@ -199,9 +200,21 @@ public:
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D layer manager is null"));
         tTVPDrawDevice::AddLayerManager(manager);
         manager->SetDesiredLayerType(ltOpaque);
+        if(auto *concreteManager = dynamic_cast<tTVPLayerManager *>(manager)) {
+            static const bool cacheEnabled = [] {
+                const char *value = std::getenv("KRKR_D3D_KAG_CACHE");
+                return !value || value[0] != '0' || value[1] != '\0';
+            }();
+            const bool cacheGPU = cacheEnabled && !TVPIsSoftwareRenderManager();
+            concreteManager->SetDrawBufferCacheEnabled(cacheGPU);
+            if(cacheGPU)
+                concreteManager->SetHoldAlpha(false);
+        }
     }
 
     void RemoveLayerManager(iTVPLayerManager *manager) override {
+        if(auto *concreteManager = dynamic_cast<tTVPLayerManager *>(manager))
+            concreteManager->SetDrawBufferCacheEnabled(false);
         tTVPDrawDevice::RemoveLayerManager(manager);
         if(PrimaryLayerManagerIndex >= Managers.size())
             PrimaryLayerManagerIndex = Managers.empty() ? 0 : Managers.size() - 1;
@@ -720,10 +733,13 @@ iTVPBaseBitmap *DrawDeviceD3D::compose() {
         concreteManager->SetHoldAlpha(false);
         auto *drawBuffer = concreteManager->GetOrCreateDrawBuffer();
         if(drawBuffer) {
-            const tTVPRect full(0, 0, drawBuffer->GetWidth(),
-                                drawBuffer->GetHeight());
-            drawBuffer->Fill(full, 0);
-            manager->RequestInvalidation(full);
+            if(!concreteManager->GetDrawBufferCacheEnabled() ||
+               TVPIsSoftwareRenderManager()) {
+                const tTVPRect full(0, 0, drawBuffer->GetWidth(),
+                                    drawBuffer->GetHeight());
+                drawBuffer->Fill(full, 0);
+                manager->RequestInvalidation(full);
+            }
             manager->UpdateToDrawDevice();
         }
     }

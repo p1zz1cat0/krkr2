@@ -6556,6 +6556,8 @@ void tTJSNI_BaseLayer::BeforeCompletion() {
     // for transition
     if(InTransition) {
         // transition is processing
+        if(Manager && Manager->GetDrawBufferCacheEnabled())
+            Manager->InvalidateDrawBufferCache();
 
         if(DivisibleTransHandler) {
             // notify start of processing unit
@@ -7800,11 +7802,22 @@ void tTJSNI_BaseLayer::CompleteForWindow(tTVPDrawable *drawable) {
     if(Manager)
         Manager->GetLayerTreeOwner()->StartBitmapCompletion(Manager);
     try {
-        if(IsGPU()) {
-            InternalComplete2_GPU(Rect, drawable);
-        } else {
-            InternalComplete2(Manager->GetUpdateRegionForCompletion(),
-                              drawable);
+        const bool cacheDrawBuffer = Manager && drawable == Manager &&
+            Manager->GetDrawBufferCacheEnabled();
+        if(!cacheDrawBuffer || Manager->BeginDrawBufferCompletion()) {
+            if(IsGPU()) {
+                InternalComplete2_GPU(Rect, drawable);
+            } else if(cacheDrawBuffer) {
+                // Draw the full frame. Keep new manager updates for the next frame.
+                tTVPComplexRect full;
+                full.Or(tTVPRect(0, 0, Rect.get_width(), Rect.get_height()));
+                InternalComplete2(full, drawable);
+            } else {
+                InternalComplete2(Manager->GetUpdateRegionForCompletion(),
+                                  drawable);
+            }
+            if(cacheDrawBuffer)
+                Manager->EndDrawBufferCompletion();
         }
     } catch(...) {
         if(Manager)

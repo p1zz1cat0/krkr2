@@ -132,6 +132,141 @@ device.capture(captured, 0);
 pluginAssertEqual("attached manager leaves independent picture visible",
                   source.getMainPixel(1, 1), captured.getMainPixel(6, 7));
 
+// Allow the software alpha blend's integer rounding.
+function assertKAGPixel(name, expected, actual) {
+    for(var shift = 0; shift < 24; shift += 8)
+        pluginAssertTrue(name, Math.abs(((expected >> shift) & 255) -
+                                       ((actual >> shift) & 255)) <= 3);
+}
+
+// Check KAG changes after repeated captures of the same layer tree.
+var kagWindow = new Window();
+var kagDevice = new D3D(8, 6);
+kagWindow.drawDevice = kagDevice;
+var kagPrimary = new Layer(kagWindow, null);
+kagPrimary.type = ltAlpha;
+kagPrimary.setImageSize(8, 6);
+kagPrimary.setSizeToImageSize();
+kagPrimary.fillRect(0, 0, 8, 6, 0x00000000);
+var kagScene = new D3DLayer(kagDevice);
+var kagOutput = new Layer(sourceWindow, source);
+kagDevice.capture(kagOutput, 0);
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("unchanged transparent KAG stays clear", 0,
+                  kagOutput.getMaskPixel(1, 1));
+
+var kagChild = new Layer(kagWindow, kagPrimary);
+kagChild.type = ltAlpha;
+kagChild.setImageSize(2, 2);
+kagChild.setSizeToImageSize();
+kagChild.fillRect(0, 0, 2, 2, 0xff102030);
+kagChild.setPos(1, 1);
+kagChild.visible = true;
+kagDevice.update(0);
+kagDevice.capture(kagOutput, 0);
+assertKAGPixel("KAG child creation updates the frame",
+                  kagChild.getMainPixel(0, 0), kagOutput.getMainPixel(1, 1));
+var kagFirstPixel = kagOutput.getMainPixel(1, 1);
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("unchanged KAG preserves its exact color", kagFirstPixel,
+                  kagOutput.getMainPixel(1, 1));
+pluginAssertEqual("repeated KAG capture preserves alpha", 255,
+                  kagOutput.getMaskPixel(1, 1));
+
+kagChild.fillRect(0, 0, 2, 2, 0xffd04020);
+kagDevice.capture(kagOutput, 0);
+assertKAGPixel("KAG pixel write updates the frame",
+                  kagChild.getMainPixel(0, 0), kagOutput.getMainPixel(1, 1));
+kagChild.setPos(4, 2);
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("KAG move clears the previous position", 0,
+                  kagOutput.getMaskPixel(1, 1));
+assertKAGPixel("KAG move paints the new position",
+                  kagChild.getMainPixel(0, 0), kagOutput.getMainPixel(4, 2));
+kagChild.opacity = 128;
+kagDevice.capture(kagOutput, 0);
+var kagAlpha = kagOutput.getMaskPixel(4, 2);
+kagDevice.capture(kagOutput, 0);
+pluginAssertTrue("KAG opacity updates the frame", kagAlpha > 0 && kagAlpha < 255);
+pluginAssertEqual("unchanged KAG does not accumulate alpha", kagAlpha,
+                  kagOutput.getMaskPixel(4, 2));
+kagChild.visible = false;
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("KAG hide clears the old pixels", 0,
+                  kagOutput.getMaskPixel(4, 2));
+kagChild.visible = true;
+kagChild.opacity = 255;
+kagDevice.capture(kagOutput, 0);
+invalidate kagChild;
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("KAG removal clears the old pixels", 0,
+                  kagOutput.getMaskPixel(4, 2));
+
+class PaintingKAGLayer extends Layer {
+    var paintCount = 0;
+    function PaintingKAGLayer(window, parent) { super.Layer(window, parent); }
+    function onPaint() {
+        paintCount++;
+        fillRect(0, 0, 2, 2, 0xff2040d0);
+    }
+}
+var kagPaint = new PaintingKAGLayer(kagWindow, kagPrimary);
+kagPaint.setImageSize(2, 2);
+kagPaint.setSizeToImageSize();
+kagPaint.visible = true;
+kagDevice.capture(kagOutput, 0);
+kagPaint.callOnPaint = true;
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("clean KAG still delivers onPaint", 1, kagPaint.paintCount);
+assertKAGPixel("onPaint updates the cached KAG pixels",
+                  kagPaint.getMainPixel(0, 0), kagOutput.getMainPixel(0, 0));
+
+// Advance a self-updated core transition without changing any layer pixels.
+var kagTransSource = new Layer(kagWindow, kagPrimary);
+kagTransSource.setImageSize(2, 2);
+kagTransSource.setSizeToImageSize();
+kagTransSource.fillRect(0, 0, 2, 2, 0xffd04020);
+var kagTick = 0;
+var kagOptions = %[time: 100, selfupdate: true,
+                   callback: function() { return kagTick; }];
+kagPaint.beginTransition("crossfade", false, kagTransSource, kagOptions);
+kagDevice.capture(kagOutput, 0);
+var kagTransOld = kagOutput.getMainPixel(0, 0);
+kagTick = 50;
+kagDevice.capture(kagOutput, 0);
+pluginAssertTrue("self-updated KAG transition advances on a clean tree",
+                 kagOutput.getMainPixel(0, 0) != kagTransOld);
+kagTick = 100;
+kagDevice.capture(kagOutput, 0);
+assertKAGPixel("self-updated KAG transition reaches its final pixels",
+                  kagTransSource.getMainPixel(0, 0), kagOutput.getMainPixel(0, 0));
+
+kagPrimary.setImageSize(10, 8);
+kagPrimary.setSizeToImageSize();
+kagDevice.setSize(10, 8);
+kagPrimary.fillRect(0, 0, 10, 8, 0x00000000);
+kagPrimary.fillRect(9, 7, 1, 1, 0xffd04020);
+kagDevice.capture(kagOutput, 0);
+assertKAGPixel("KAG grow paints the expanded region",
+                  kagPrimary.getMainPixel(9, 7), kagOutput.getMainPixel(9, 7));
+kagPrimary.setImageSize(4, 3);
+kagPrimary.setSizeToImageSize();
+kagDevice.setSize(4, 3);
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("KAG shrink updates capture width", 4, kagOutput.imageWidth);
+pluginAssertEqual("KAG shrink updates capture height", 3, kagOutput.imageHeight);
+invalidate kagPrimary;
+kagDevice.capture(kagOutput, 0);
+pluginAssertEqual("detached KAG primary leaves no cached pixels", 0,
+                  kagOutput.getMaskPixel(0, 0));
+var kagReplacement = new Layer(kagWindow, null);
+kagReplacement.setImageSize(4, 3);
+kagReplacement.setSizeToImageSize();
+kagReplacement.fillRect(0, 0, 4, 3, 0xff102030);
+kagDevice.capture(kagOutput, 0);
+assertKAGPixel("replacement KAG primary paints its new pixels",
+                  kagReplacement.getMainPixel(0, 0), kagOutput.getMainPixel(0, 0));
+
 // Device properties with the original DLL's defaults and access (oracle).
 var propDevice = new D3D(12, 10);
 pluginAssertEqual("primaryWidth is the device width", 12, propDevice.primaryWidth);

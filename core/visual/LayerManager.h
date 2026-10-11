@@ -300,6 +300,8 @@ class tTVPLayerManager : public iTVPLayerManager, public tTVPDrawable {
 
     bool InNotifyingHintOrCursorChange;
     bool HoldAlpha = true;
+    bool DrawBufferCacheEnabled = false;
+    bool DrawBufferCacheValid = false;
 
 public:
     tTVPLayerManager(class iTVPLayerTreeOwner *owner);
@@ -320,9 +322,16 @@ public:
 
 public:
     void SetDesiredLayerType(tTVPLayerType type) override {
+        if(DesiredLayerType != type)
+            DrawBufferCacheValid = false;
         DesiredLayerType = type;
     }
     void SetHoldAlpha(bool b);
+    void SetDrawBufferCacheEnabled(bool enabled);
+    bool GetDrawBufferCacheEnabled() const { return DrawBufferCacheEnabled; }
+    void InvalidateDrawBufferCache() { DrawBufferCacheValid = false; }
+    bool BeginDrawBufferCompletion();
+    void EndDrawBufferCompletion() { DrawBufferCacheValid = true; }
 
 public: // methods from tTVPDrawable
     tTVPBaseTexture *GetDrawTargetBitmap(const tTVPRect &rect,
@@ -333,7 +342,9 @@ public: // methods from tTVPDrawable
     void DrawCompleted(const tTVPRect &destrect, tTVPBaseTexture *bmp,
                        const tTVPRect &cliprect, tTVPLayerType type,
                        tjs_int opacity) override;
-    tTVPBaseTexture *GetDrawBuffer() override { return DrawBuffer; }
+    tTVPBaseTexture *GetDrawBuffer() override {
+        return DrawBufferCacheEnabled && !Primary ? nullptr : DrawBuffer;
+    }
     tTVPBaseTexture *GetOrCreateDrawBuffer();
 
 public:

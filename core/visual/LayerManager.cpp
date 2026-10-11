@@ -68,10 +68,40 @@ void tTVPLayerManager::UnregisterSelfFromWindow() {
 }
 
 void tTVPLayerManager::SetHoldAlpha(bool b) {
+    if(HoldAlpha != b)
+        DrawBufferCacheValid = false;
     HoldAlpha = b;
     if(!DrawBuffer)
         return;
     static_cast<tTVPDestTexture *>(DrawBuffer)->SetHoldAlpha(b);
+}
+
+void tTVPLayerManager::SetDrawBufferCacheEnabled(bool enabled) {
+    if(DrawBufferCacheEnabled != enabled)
+        DrawBufferCacheValid = false;
+    DrawBufferCacheEnabled = enabled;
+}
+
+bool tTVPLayerManager::BeginDrawBufferCompletion() {
+    tjs_int width, height;
+    if(!GetPrimaryLayerSize(width, height))
+        return false;
+    auto *buffer = GetOrCreateDrawBuffer();
+    if(!buffer)
+        return false;
+    if(buffer->GetWidth() != static_cast<tjs_uint>(width) ||
+       buffer->GetHeight() != static_cast<tjs_uint>(height)) {
+        DrawBufferCacheValid = false;
+        buffer->SetSize(width, height, false);
+    }
+    if(DrawBufferCacheValid && UpdateRegion.GetCount() == 0)
+        return false;
+
+    DrawBufferCacheValid = false;
+    // Clear before drawing. Keep updates from drawing and completion callbacks.
+    UpdateRegion.Clear();
+    buffer->Fill(tTVPRect(0, 0, width, height), 0);
+    return true;
 }
 
 //---------------------------------------------------------------------------
@@ -163,6 +193,7 @@ void tTVPLayerManager::AttachPrimary(tTJSNI_BaseLayer *pri) {
     DetachPrimary();
 
     if(!Primary) {
+        DrawBufferCacheValid = false;
         Primary = pri;
         EnabledWorkRefCount = 0;
         OverallOrderIndexValid = false;
@@ -175,6 +206,7 @@ void tTVPLayerManager::AttachPrimary(tTJSNI_BaseLayer *pri) {
 void tTVPLayerManager::DetachPrimary() {
     // detach primary layer from the manager
     if(Primary) {
+        DrawBufferCacheValid = false;
         SetFocusTo(nullptr);
         ReleaseCapture();
         ReleaseTouchCaptureAll();
@@ -309,6 +341,7 @@ void tTVPLayerManager::SetHint(iTJSDispatch2 *sender, const ttstr &hint) {
 }
 //---------------------------------------------------------------------------
 void tTVPLayerManager::NotifyLayerResize() {
+    DrawBufferCacheValid = false;
     // notifies layer resizing to the LayerTreeOwner
     if(!LayerTreeOwner)
         return;
