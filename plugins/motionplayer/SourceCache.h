@@ -72,7 +72,6 @@ namespace motion {
 
         void bindRuntime(detail::PlayerRuntime *runtime,
                          ResourceManager *resourceManager);
-        void setSelfObject(tTJSVariant selfObject);
         void setLayerOwner(tTJSVariant owner, tjs_int layerType);
 
         tTJSVariant loadSource(tTJSVariant keyOrSource,
@@ -142,7 +141,6 @@ namespace motion {
         tTJSVariant loadRawSourceVariant(const ttstr &name,
                                          std::string &resolvedKey) const;
 
-        tTJSVariant _selfObject;
         tTJSVariant _owner;
         tTJSVariant _primaryLayer;
         tTJSVariant _bufLayer;

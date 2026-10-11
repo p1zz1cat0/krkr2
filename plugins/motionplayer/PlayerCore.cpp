@@ -187,7 +187,6 @@ namespace motion {
         if(auto *dispatch = SourceCacheAdaptor::CreateAdaptor(sourceCache)) {
             _runtime->sourceCacheNative = sourceCache;
             _runtime->sourceCacheObject = tTJSVariant(dispatch, dispatch);
-            sourceCache->setSelfObject(_runtime->sourceCacheObject);
             dispatch->Release();
         } else {
             delete sourceCache;

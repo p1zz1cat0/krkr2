@@ -487,10 +487,6 @@ namespace motion {
         _resourceManager = resourceManager;
     }
 
-    void SourceCache::setSelfObject(tTJSVariant selfObject) {
-        _selfObject = std::move(selfObject);
-    }
-
     void SourceCache::setLayerOwner(tTJSVariant owner, tjs_int layerType) {
         _owner = std::move(owner);
         _layerType = layerType;
