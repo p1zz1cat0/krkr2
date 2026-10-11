@@ -69,6 +69,27 @@ namespace motion {
         bool hasTargetTexture() const { return _targetTexture != nullptr; }
         bool ensureTargetTexture();
         void clearTargetTexture();
+        // True when the target is cleared to transparent black before each
+        // render, so skipping the target leaves the same visible result.
+        bool targetClearedToTransparent() const {
+            return _clearEnabled && _clearColor == 0;
+        }
+        // Fork-only. When the owner allows it, the alpha-mask route does not
+        // clear or fill the target texture. It keeps the premultiplied
+        // render texture instead, and the owner draws that texture itself
+        // (DrawDeviceD3D). The texture is valid until the next render.
+        void setPremultipliedOutputAllowed(bool v) {
+            _premultipliedOutputAllowed = v;
+        }
+        bool getPremultipliedOutputAllowed() const {
+            return _premultipliedOutputAllowed;
+        }
+        void setPremultipliedOutput(iTVPTexture2D *texture) {
+            _premultipliedOutput = texture;
+        }
+        iTVPTexture2D *premultipliedOutput() const {
+            return _premultipliedOutput;
+        }
         bool copyTextureFrom(iTVPTexture2D *sourceTexture);
         bool copyTargetTextureRowsForCaptureLike_0x6AD92C(std::uint8_t *dst,
                                                           tjs_int dstPitch);
@@ -93,6 +114,8 @@ namespace motion {
         bool _resizable = false;
         bool _alphaOpAdd = false;
         int _clearColor = 0;
+        bool _premultipliedOutputAllowed = false;
+        iTVPTexture2D *_premultipliedOutput = nullptr;
         iTVPTexture2D *_targetTexture = nullptr;
         std::vector<std::uint8_t> _buffer;
     };

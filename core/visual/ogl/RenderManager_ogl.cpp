@@ -4071,6 +4071,16 @@ public:
         }
         TEST_SHADER(AdditiveAlphaToAlpha,
                     TVPConvertAdditiveAlphaToAlpha(testdest, 256 * 256));
+        // Fork-only. Blends a premultiplied source onto a straight-alpha
+        // target (bmAddAlphaOnAlpha, which the shared method table does not
+        // have). Linear sampling of a premultiplied source is exact, so the
+        // source RGB of low-alpha pixels does not leak into the edges.
+        CompileAndRegRegularBlendMethod(
+            "AdditiveAlphaBlend_d", "",
+            "    float a = s.a + d.a - s.a * d.a;\n"
+            "    vec3 rgb = s.rgb + d.rgb * d.a * (1.0 - s.a);\n"
+            "    gl_FragColor = a > 0.0 ? vec4(rgb / a, a) : vec4(0.0);\n"
+            "}");
 
         CompileAndRegScript<tTVPOGLRenderMethod_Script>("AlphaToAdditiveAlpha",
                                                         "void main(){}", 0)

@@ -23,6 +23,38 @@
 
 namespace {
 
+// Draws a premultiplied-alpha texture onto a straight-alpha target. The
+// geometry is the same as iTVPBaseBitmap::AffineBlt with a matrix: a source
+// pixel (0,0) covers (-0.5,-0.5)-(0.5,0.5). The shared blend-method table has
+// no bmAddAlphaOnAlpha, so this calls the GL method directly.
+void affineBltPremultipliedOnAlpha(tTVPBaseTexture &target, iTVPTexture2D *source,
+                                   tjs_int width, tjs_int height,
+                                   const t2DAffineMatrix &m, tTVPBBStretchType type) {
+    auto *mgr = TVPGetRenderManager();
+    static iTVPRenderMethod *method = mgr->GetRenderMethod("AdditiveAlphaBlend_d");
+    if(!method)
+        return;
+    const auto at = [&m](tjs_real x, tjs_real y) {
+        return tTVPPointD{ m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty };
+    };
+    const tTVPPointD lt = at(-0.5, -0.5), rt = at(width - 0.5, -0.5),
+                     lb = at(-0.5, height - 0.5), rb = at(width - 0.5, height - 0.5);
+    const tTVPPointD dst[6] = { lt, rt, lb, rt, lb, rb };
+    const tTVPPointD src[6] = {
+        { 0.0, 0.0 }, { static_cast<double>(width), 0.0 },
+        { 0.0, static_cast<double>(height) }, { static_cast<double>(width), 0.0 },
+        { 0.0, static_cast<double>(height) },
+        { static_cast<double>(width), static_cast<double>(height) },
+    };
+    static const int stretchTypeId = mgr->EnumParameterID("StretchType");
+    mgr->SetParameterInt(stretchTypeId, static_cast<int>(type & stTypeMask));
+    const tTVPRect rect(0, 0, target.GetWidth(), target.GetHeight());
+    tRenderTexQuadArray::Element texture[] = { tRenderTexQuadArray::Element(source, src) };
+    auto *targetTexture = target.GetTextureForRender(true, &rect);
+    mgr->OperateTriangles(method, 2, targetTexture, targetTexture, rect, dst,
+                          tRenderTexQuadArray(texture));
+}
+
 class D3DLayer;
 class D3DPicture;
 class DeviceEmotePlayer;
@@ -569,8 +601,20 @@ public:
                                        &values[3], &values[4], &values[5] };
             setDrawAffineTranslateMatrixCompat(nullptr, 6, params, this);
         }
+        canvas_.setPremultipliedOutputAllowed(true);
         if(!getPlayer().renderToD3DAdaptor(&canvas_))
             return;
+        // screen = M * (canvas - canvasCenter) + translation + screenCenter
+        t2DAffineMatrix transform = { matrix[0], matrix[1], matrix[4], matrix[5], 0, 0 };
+        const tjs_real cx = canvasWidth / 2.0, cy = canvasHeight / 2.0;
+        transform.tx = matrix[12] + screenWidth / 2.0 - (transform.a * cx + transform.c * cy);
+        transform.ty = matrix[13] + screenHeight / 2.0 - (transform.b * cx + transform.d * cy);
+        const auto stretch = getSmoothing() ? stLinear : stNearest;
+        if(auto *premultiplied = canvas_.premultipliedOutput()) {
+            affineBltPremultipliedOnAlpha(target, premultiplied, canvasWidth,
+                                          canvasHeight, transform, stretch);
+            return;
+        }
         auto *texture = canvas_.targetTexture();
         if(!texture)
             return;
@@ -580,15 +624,9 @@ public:
             canvasView_ = std::move(view);
             viewedTexture_ = texture;
         }
-        // screen = M * (canvas - canvasCenter) + translation + screenCenter
-        t2DAffineMatrix transform = { matrix[0], matrix[1], matrix[4], matrix[5], 0, 0 };
-        const tjs_real cx = canvasWidth / 2.0, cy = canvasHeight / 2.0;
-        transform.tx = matrix[12] + screenWidth / 2.0 - (transform.a * cx + transform.c * cy);
-        transform.ty = matrix[13] + screenHeight / 2.0 - (transform.b * cx + transform.d * cy);
         target.AffineBlt(tTVPRect(0, 0, target.GetWidth(), target.GetHeight()),
                          canvasView_.get(), tTVPRect(0, 0, canvasWidth, canvasHeight),
-                         transform, bmAlphaOnAlpha, 255, nullptr, false,
-                         getSmoothing() ? stLinear : stNearest);
+                         transform, bmAlphaOnAlpha, 255, nullptr, false, stretch);
     }
 
 private:

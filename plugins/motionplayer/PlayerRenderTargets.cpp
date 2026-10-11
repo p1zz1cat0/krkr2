@@ -816,22 +816,53 @@ namespace motion {
             return false;
         }
 
-        iTJSDispatch2 *renderLayerObject = ensureReusableLayerObject(
-            _runtime->internalRenderLayer, windowObject, primaryLayerObject,
-            static_cast<tTVPLayerType>(ltAlpha), false);
-        // Size only: the executor clears whatever target it paints, so a
-        // clear here would write this layer twice per frame.
-        if(!renderLayerObject ||
-           !sizeLayerForRender(renderLayerObject, adaptor->getWidth(),
-                               adaptor->getHeight())) {
-            return false;
-        }
         const bool renderCommandsBuilt = commandGraphEnabled()
             ? buildRenderCommandGraph(adaptor->getWidth(),
                                       adaptor->getHeight())
             : buildRenderCommands(adaptor->getWidth(),
                                   adaptor->getHeight());
-        if(!renderCommandsBuilt ||
+        if(!renderCommandsBuilt) {
+            return false;
+        }
+
+        // On the GPU, alpha blending onto a straight-alpha (ltAlpha) target
+        // needs the target pixels in the shader, so each item draw first
+        // copies the target to a temporary texture. A premultiplied
+        // (ltAddAlpha) target uses fixed-function blending and does not copy.
+        // Use it only when the adaptor owner draws the premultiplied texture
+        // itself: converting back to straight alpha loses the RGB precision of
+        // low-alpha pixels, and straight-alpha linear sampling downstream
+        // spreads that error into the edges (up to 19/255 measured).
+        // Keep ltAlpha when an item uses a Photoshop-style blend: those
+        // shaders read the target as straight alpha.
+        // KRKR_EMOTE_D3D_STRAIGHT_TARGET=1 keeps the ltAlpha target for A/B
+        // checks and as a fallback for commercial regressions.
+        static const bool straightTargetForced = [] {
+            const char *value = std::getenv("KRKR_EMOTE_D3D_STRAIGHT_TARGET");
+            return value && value[0] != '\0' && value[0] != '0';
+        }();
+        auto *mgr = TVPGetRenderManager();
+        bool premultiplied = !straightTargetForced && mgr &&
+            !mgr->IsSoftware() && adaptor->getPremultipliedOutputAllowed() &&
+            adaptor->targetClearedToTransparent();
+        for(const auto &item : _runtime->preparedRenderItems) {
+            if(!premultiplied) {
+                break;
+            }
+            if((item.blendMode & 0x0F) != 0) {
+                premultiplied = false;
+            }
+        }
+
+        iTJSDispatch2 *renderLayerObject = ensureReusableLayerObject(
+            _runtime->internalRenderLayer, windowObject, primaryLayerObject,
+            static_cast<tTVPLayerType>(premultiplied ? ltAddAlpha : ltAlpha),
+            false);
+        // Size only: the executor clears whatever target it paints, so a
+        // clear here would write this layer twice per frame.
+        if(!renderLayerObject ||
+           !sizeLayerForRender(renderLayerObject, adaptor->getWidth(),
+                               adaptor->getHeight()) ||
            !executeLayerRenderCommands(renderLayerObject, true)) {
             return false;
         }
@@ -839,6 +870,18 @@ namespace motion {
         auto *renderLayer = resolveNativeLayer(renderLayerObject);
         auto *image = renderLayer ? renderLayer->GetMainImage() : nullptr;
         auto *sourceTexture = image ? image->GetTexture() : nullptr;
+        if(premultiplied && sourceTexture) {
+            // The owner draws the premultiplied texture itself. This skips
+            // the target clear and the full-canvas conversion copy, and the
+            // owner samples premultiplied data (no edge leak, Decision 0004).
+            adaptor->setPremultipliedOutput(sourceTexture);
+            return true;
+        }
+        if(adaptor->getPremultipliedOutputAllowed() &&
+           adaptor->getClearEnabled()) {
+            // renderFromPlayer deferred the clear for this route.
+            adaptor->clearTargetTexture();
+        }
         return adaptor->copyTextureFrom(sourceTexture);
     }
 
@@ -860,12 +903,17 @@ namespace motion {
         if(!adaptor->ensureTargetTexture()) {
             return false;
         }
-        if(adaptor->getClearEnabled()) {
-            adaptor->clearTargetTexture();
-        }
+        adaptor->setPremultipliedOutput(nullptr);
         const bool emoteLike = isEmoteLikeRuntime(_runtime.get());
         const bool continuousMask =
             detail::shouldUseContinuousEmoteMask(emoteLike, _maskMode);
+        // With premultiplied output, the alpha-mask route may not write the
+        // target texture at all, so it clears the target only when it uses it.
+        const bool clearDeferred = adaptor->getClearEnabled() &&
+            continuousMask && adaptor->getPremultipliedOutputAllowed();
+        if(adaptor->getClearEnabled() && !clearDeferred) {
+            adaptor->clearTargetTexture();
+        }
         if(continuousMask && renderAlphaMaskedD3DLike_0x6ADFBC(adaptor)) {
             detail::logoChainTraceLogf(
                 _runtime->activeMotion->path, "draw.d3d.alphaMask",
@@ -880,6 +928,10 @@ namespace motion {
                     "D3D alpha-mask command route failed; falling back to "
                     "binary stencil path");
             }
+        }
+        if(clearDeferred) {
+            adaptor->setPremultipliedOutput(nullptr);
+            adaptor->clearTargetTexture();
         }
         return renderItemsToD3DTextureLike_0x6ADFBC(adaptor);
     }
