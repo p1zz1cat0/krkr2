@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -269,6 +270,48 @@ namespace {
             }
         }
         return {};
+    }
+
+    // Decoded source pixels, shared by all players of one parsed module. A
+    // clone or a new player for a pose change then skips the storage probes
+    // and the PSB decode of each source (After: about 120 ms on the first
+    // frame of each new player). baseBitmap is immutable (see ensureEntry),
+    // so sharing is safe. The values are weak: the pixels stay alive only
+    // while an entry holds them. A module address is not reused while its
+    // pixels are alive, because the entry holds the snapshot and the snapshot
+    // holds the module.
+    // ponytail: main thread only, like the rest of SourceCache.
+    using SharedPixelKey = std::pair<const void *, std::string>;
+    struct SharedPixelKeyHash {
+        size_t operator()(const SharedPixelKey &key) const {
+            return std::hash<const void *>()(key.first) ^
+                (std::hash<std::string>()(key.second) * 31u);
+        }
+    };
+    std::unordered_map<SharedPixelKey, std::weak_ptr<tTVPBaseBitmap>,
+                       SharedPixelKeyHash>
+        gSharedPixels;
+
+    // The same identity as internal::sameMotionSnapshot.
+    const void *moduleIdentity(const motion::detail::MotionSnapshot &snapshot) {
+        if(snapshot.moduleValue.Type() == tvtObject) {
+            return snapshot.moduleValue.AsObjectNoAddRef();
+        }
+        return &snapshot;
+    }
+
+    std::weak_ptr<tTVPBaseBitmap> &
+    sharedPixelsFor(const motion::detail::MotionSnapshot &snapshot,
+                    const std::string &key) {
+        // Remove expired items from time to time. The table does not grow
+        // without limit when characters come and go.
+        static size_t lookups = 0;
+        if(++lookups % 4096 == 0) {
+            for(auto it = gSharedPixels.begin(); it != gSharedPixels.end();) {
+                it = it->second.expired() ? gSharedPixels.erase(it) : ++it;
+            }
+        }
+        return gSharedPixels[{ moduleIdentity(snapshot), key }];
     }
 
     std::shared_ptr<tTVPBaseBitmap> loadGraphicBitmap(const ttstr &path) {
@@ -943,21 +986,26 @@ namespace motion {
                 return false;
             }
             entry.backingLoadAttempted = true;
-            const auto loadStart = std::chrono::steady_clock::now();
-            const auto path = resolveMotionSourcePathLike_0x6948E8(
-                *sourceMotion, key);
-            entry.baseBitmap = loadGraphicBitmap(path);
+            auto &shared = sharedPixelsFor(*sourceMotion, key);
+            entry.baseBitmap = shared.lock();
             if(!entry.baseBitmap) {
-                entry.baseBitmap = loadPsbBitmap(*sourceMotion, key);
-            }
-            const double loadMs =
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - loadStart)
-                    .count();
-            if(loadMs > 100.0) {
-                if(auto logger = spdlog::get("plugin")) {
-                    logger->warn("SourceCache decode slow key={} ms={:.1f}",
-                                 key, loadMs);
+                const auto loadStart = std::chrono::steady_clock::now();
+                const auto path = resolveMotionSourcePathLike_0x6948E8(
+                    *sourceMotion, key);
+                entry.baseBitmap = loadGraphicBitmap(path);
+                if(!entry.baseBitmap) {
+                    entry.baseBitmap = loadPsbBitmap(*sourceMotion, key);
+                }
+                shared = entry.baseBitmap;
+                const double loadMs =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - loadStart)
+                        .count();
+                if(loadMs > 100.0) {
+                    if(auto logger = spdlog::get("plugin")) {
+                        logger->warn("SourceCache decode slow key={} ms={:.1f}",
+                                     key, loadMs);
+                    }
                 }
             }
         }
