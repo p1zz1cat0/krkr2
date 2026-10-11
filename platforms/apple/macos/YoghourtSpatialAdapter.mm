@@ -708,10 +708,13 @@ extern "C" void YoghourtKrKrTelemetryRecordFrameStages(
 // VSync pacing. The display link of the game window is the only frame clock:
 // presentDrawable and eglSwapBuffers return before the vsync, so blocking in
 // nextDrawable alone lets the engine queue frames until the drawable pool is
-// empty, and then it stalls for a full refresh. Each frame waits for a vsync
-// that is newer than the previous present, and presents right after it. At
-// most one frame is in the queue, and the engine tick starts at a regular
-// interval.
+// empty, and then it stalls for a full refresh. Each frame presents as soon
+// as it is ready, then waits for a vsync that is newer than the previous
+// frame start. At most one frame is in the queue, and the engine tick starts
+// at a regular interval.
+// Do not wait before the present: the frame then shows one refresh later,
+// each drawable is held for about three refreshes, and the pool of three
+// stalls for a full refresh every few frames (After: one frame in nine).
 namespace {
 struct VSyncClock {
     std::mutex mutex;
@@ -768,7 +771,7 @@ void StopVSyncLink() {
     gVSyncWindow = nil;
 }
 
-void WaitForPresentTime(NSWindow *window) {
+void WaitForFrameStart(NSWindow *window) {
     EnsureVSyncLink(window);
     static uint64_t seen = 0;
     static double next = 0.0;
@@ -783,7 +786,7 @@ void WaitForPresentTime(NSWindow *window) {
                 break;
             seen = gVSync.count;
             // A limit below the refresh rate skips vsyncs. Half a period of
-            // tolerance puts each present on the nearest vsync.
+            // tolerance puts each frame start on the nearest vsync.
             if (CACurrentMediaTime() >= next - gVSync.period / 2) break;
         }
     }
@@ -797,17 +800,13 @@ extern "C" void YoghourtKrKrSetFrameLimit(int fps) {
     gFrameLimitFps = std::max(fps, 0);
 }
 
-extern "C" bool YoghourtKrKrSpatialPresent(
+static bool PresentSpatialFrame(
     EGLDisplay display,
     EGLSurface windowSurface,
     EGLConfig config,
     EGLContext context,
     void *nativeWindow) {
     gSwapTelemetryFrameIndex = 0;
-    // Pace both paths: this Metal presenter, and eglSwapBuffers after a false return.
-    if (gFrameLimitFps > 0 && nativeWindow) {
-        WaitForPresentTime((__bridge NSWindow *)nativeWindow);
-    }
     if (gSource.name == 0 || gSource.width <= 0 || gSource.height <= 0 ||
         display == EGL_NO_DISPLAY || windowSurface == EGL_NO_SURFACE ||
         context == EGL_NO_CONTEXT || !nativeWindow) {
@@ -903,6 +902,23 @@ extern "C" bool YoghourtKrKrSpatialPresent(
         std::fflush(stdout);
         gLogged = true;
     }
+    return true;
+}
+
+extern "C" bool YoghourtKrKrSpatialPresent(
+    EGLDisplay display,
+    EGLSurface windowSurface,
+    EGLConfig config,
+    EGLContext context,
+    void *nativeWindow) {
+    const bool presented =
+        PresentSpatialFrame(display, windowSurface, config, context, nativeWindow);
+    if (gFrameLimitFps <= 0 || !nativeWindow) return presented;
+    // Present first, then wait. The pacer must run after both presentation
+    // paths, so this hook also does the native swap.
+    if (!presented && !eglSwapBuffers(display, windowSurface))
+        std::fprintf(stderr, "[Yoghourt] ERROR renderer present failed error=0x%x\n", eglGetError());
+    WaitForFrameStart((__bridge NSWindow *)nativeWindow);
     return true;
 }
 
