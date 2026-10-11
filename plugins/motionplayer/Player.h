@@ -833,6 +833,10 @@ namespace motion {
         bool _physicsDisabled = false; // player+1159
         bool _emoteAnimatorFlag = false; // player+1161
         bool _emoteDirty = false; // player+1162
+        // Fork-only. While set, eval-result writes bind without the
+        // per-write descendant sync; the writer syncs once at the end.
+        bool _deferDescendantParameterSync = false;
+        bool _descendantParameterSyncPending = false;
         struct EmoteCoordState {
             double x = 0.0;
             double y = 0.0;

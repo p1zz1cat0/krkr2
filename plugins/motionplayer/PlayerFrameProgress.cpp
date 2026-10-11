@@ -1,5 +1,6 @@
 // PlayerFrameProgress.cpp — frameProgress timeline/control stepping
 #include <stdexcept>
+#include <optional>
 
 #include "PlayerInternal.h"
 #include "MotionTraceWeb.h"
@@ -1071,6 +1072,30 @@ namespace motion {
         // cannot overwrite an authored pose in the same frame.
         beginProgressTransaction(_speed ? dtFrames : 0.0);
 
+        // The controller sub-steps, the fixed-controller refresh and the
+        // post-process write many eval results. Each write synced every
+        // descendant's full parameter table: writes x children x entries per
+        // frame (about 20% of the main thread in an After scene). Nothing in
+        // this block reads descendant parameter entries, and a sync recomputes
+        // all entries from the final values, so one sync at the end gives the
+        // same state. Public setVariable and controller writes outside this
+        // block still sync on each write (Decision 0004).
+        struct DeferDescendantParameterSync {
+            Player &player;
+            explicit DeferDescendantParameterSync(Player &p) : player(p) {
+                player._deferDescendantParameterSync = true;
+            }
+            ~DeferDescendantParameterSync() {
+                player._deferDescendantParameterSync = false;
+                if(player._descendantParameterSyncPending) {
+                    player._descendantParameterSyncPending = false;
+                    player.syncDescendantParameterEntries();
+                }
+            }
+        };
+        std::optional<DeferDescendantParameterSync> deferDescendantSync;
+        deferDescendantSync.emplace(*this);
+
         // sdl3: clockPassed += mstime/speedRatio（仅 _playing）；立绘树固定
         // progress(0)。
         if(_speed && dtFrames > 0.0) {
@@ -1124,6 +1149,7 @@ namespace motion {
         }
         // progress(0) 也须 face_talk→talk 与 clamp；否则口型 parameter 不刷新。
         applyEvalResultPostProcessLike_0x67CC9C();
+        deferDescendantSync.reset();
         syncParameterEntriesFromVariablesLike_sdl3();
 
         if(_queuing) {

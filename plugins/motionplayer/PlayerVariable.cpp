@@ -328,7 +328,11 @@ namespace motion {
     void Player::bindParameterValueLike_0x6C4668(const std::string &label,
                                                  int mode, double value) {
         const auto parts = splitParameterLabelLike_0x6D0BF4(label);
-        bindParsedParameterValue(label, parts.suffix, mode, value);
+        bindParsedParameterValue(label, parts.suffix, mode, value,
+                                 !_deferDescendantParameterSync);
+        if(_deferDescendantParameterSync) {
+            _descendantParameterSyncPending = true;
+        }
     }
 
     void Player::bindParsedParameterValue(const std::string &label,
