@@ -120,6 +120,10 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 2
 fi
 
+# Make-based vcpkg ports (openssl) do not quote paths, and the Yoghourt
+# path has a space. Keep the vcpkg trees in a path without spaces. Yoghourt
+# Scripts/bootstrap/krkr2.sh uses the same install tree.
+vcpkg_scratch="${XDG_CACHE_HOME:-$HOME/.cache}/yoghourt/vcpkg"
 spatial_dir="${YOGHOURT_SPATIAL_PRESENTER_DIR:-${repo_root:h:h}/RuntimeSupport/SpatialPresenter}"
 relay_dir="${YOGHOURT_SURFACE_RELAY_DIR:-${repo_root:h:h}/RuntimeSupport/SurfaceRelay}"
 for configuration in debug release; do
@@ -132,7 +136,8 @@ for configuration in debug release; do
       -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       -DYOGHOURT_SPATIAL_PRESENTER_DIR="$spatial_dir" \
       -DYOGHOURT_SURFACE_RELAY_DIR="$relay_dir" \
-      -DVCPKG_INSTALLED_DIR="$work_root_build/krkr2-vcpkg-installed" \
+      -DVCPKG_INSTALLED_DIR="$vcpkg_scratch/installed" \
+      -DVCPKG_INSTALL_OPTIONS="--x-buildtrees-root=$vcpkg_scratch/buildtrees;--x-packages-root=$vcpkg_scratch/packages" \
       -DENABLE_TESTS=ON -DBUILD_TOOLS=OFF
   targets=("${(@f)$(manifest_query buildTarget | sort -u)}")
   # plugin-tests keeps the macOS ctest stage on the same unit-test set the
