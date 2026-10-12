@@ -177,11 +177,10 @@ namespace motion {
                 }
             }
 
+            // Raw RGBA needs no decode. Keep decodedOut empty: all callers
+            // then read pixelResource.data directly. A copy here costs a full
+            // atlas copy for each icon that is cut from that atlas.
             if(pixelResource.data.size() >= expectedRgbaBytes) {
-                decodedOut.assign(pixelResource.data.begin(),
-                                  pixelResource.data.begin() +
-                                      static_cast<std::ptrdiff_t>(
-                                          expectedRgbaBytes));
                 return true;
             }
 

@@ -2,9 +2,126 @@
 // Geometry update phases.
 #include "PlayerUpdateLayersInternal.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <vector>
+
+#if defined(__APPLE__)
+#include <dispatch/dispatch.h>
+#endif
 
 namespace motion {
+    namespace {
+        // One dense mesh grid to build after the vertex loop.
+        struct MeshGridJob {
+            detail::MotionNode *node;
+            double orgX, orgY;
+            double mw11, mw12, mw21, mw22;
+            bool ownMesh;
+            size_t chainBegin, chainEnd; // range in the shared chain list
+        };
+
+        void evalPatchPoint(const float *mesh, float u, float v, float &outX,
+                            float &outY) {
+            // Keep the operation order of evalBezierPatch in
+            // updateLayersPhase3_VertexComputation, so that the grid stays
+            // bit-identical to the serial calculation.
+            const float su = 1.f - u, sv = 1.f - v;
+            const float bu[4] = { su * su * su, 3.f * su * su * u,
+                                  3.f * su * u * u, u * u * u };
+            const float bv[4] = { sv * sv * sv, 3.f * sv * sv * v,
+                                  3.f * sv * v * v, v * v * v };
+            float resultX = 0;
+            float resultY = 0;
+            for(int i = 0; i < 16; ++i) {
+                const float w = bv[i >> 2] * bu[i & 3];
+                resultX += mesh[i * 2] * w;
+                resultY += mesh[i * 2 + 1] * w;
+            }
+            outX = resultX;
+            outY = resultY;
+        }
+
+        using MeshChainList = std::vector<const detail::MotionNode *>;
+
+        void buildMeshGrid(const MeshGridJob &job,
+                           const MeshChainList &chains) {
+            auto &vn = *job.node;
+            float *grid = vn.meshRenderPoints.data();
+            for(int gy = 0; gy < vn.meshDivY; ++gy) {
+                const float v = vn.meshDivY > 1
+                    ? static_cast<float>(gy) / (vn.meshDivY - 1)
+                    : 0.0f;
+                for(int gx = 0; gx < vn.meshDivX; ++gx) {
+                    const float u = vn.meshDivX > 1
+                        ? static_cast<float>(gx) / (vn.meshDivX - 1)
+                        : 0.0f;
+                    float px = static_cast<float>(job.orgX + u * job.mw11 +
+                                                  v * job.mw12);
+                    float py = static_cast<float>(job.orgY + u * job.mw21 +
+                                                  v * job.mw22);
+                    if(job.ownMesh) {
+                        evalPatchPoint(vn.meshWorldControlPoints.data(), u,
+                                       v, px, py);
+                    }
+                    const size_t point =
+                        static_cast<size_t>(gy * vn.meshDivX + gx) * 2;
+                    grid[point] = px;
+                    grid[point + 1] = py;
+                }
+            }
+            const size_t gridCount = vn.meshRenderPoints.size() / 2;
+            for(size_t c = job.chainBegin; c < job.chainEnd; ++c) {
+                const auto &a = *chains[c];
+                // Locals let the compiler keep the patch in registers. The
+                // grid stores are floats and could alias the vector data.
+                float patch[32];
+                std::copy_n(a.meshWorldControlPoints.data(), 32, patch);
+                const float offX = a.meshInvOffX, offY = a.meshInvOffY;
+                const double inv11 = a.meshInvM11, inv12 = a.meshInvM12;
+                const double inv21 = a.meshInvM21, inv22 = a.meshInvM22;
+                for(size_t point = 0; point < gridCount; ++point) {
+                    const float x = grid[point * 2] + offX;
+                    const float y = grid[point * 2 + 1] + offY;
+                    const float u = static_cast<float>(inv11 * x + inv12 * y);
+                    const float v = static_cast<float>(inv21 * x + inv22 * y);
+                    evalPatchPoint(patch, u, v, grid[point * 2],
+                                   grid[point * 2 + 1]);
+                }
+            }
+        }
+
+        // Each job writes only its own node grid and reads only finished
+        // ancestor patches, so the jobs are independent.
+        void runMeshGridJobs(const std::vector<MeshGridJob> &jobs,
+                             const MeshChainList &chains,
+                             size_t work) {
+            // Below this many point evaluations the dispatch costs more than it
+            // saves.
+            constexpr size_t kParallelWork = 16384;
+    #if defined(__APPLE__)
+            if(work >= kParallelWork && jobs.size() > 1) {
+                struct Context {
+                    const std::vector<MeshGridJob> *jobs;
+                    const MeshChainList *chains;
+                } context{ &jobs, &chains };
+                dispatch_apply_f(jobs.size(), DISPATCH_APPLY_AUTO, &context,
+                                 [](void *raw, size_t index) {
+                                     const auto *ctx =
+                                         static_cast<const Context *>(raw);
+                                     buildMeshGrid((*ctx->jobs)[index],
+                                                   *ctx->chains);
+                                 });
+                return;
+            }
+    #endif
+            (void)work;
+            for(const auto &job : jobs) {
+                buildMeshGrid(job, chains);
+            }
+        }
+    } // namespace
+
     void Player::updateLayersPhase3_CameraConstraint() {
         auto &nodes = _runtime->nodes;
         // --- sub_6BC000: Camera constraint (nodeType=9) ---
@@ -155,6 +272,9 @@ namespace motion {
 
     void Player::updateLayersPhase3_VertexComputation() {
         auto &nodes = _runtime->nodes;
+        std::vector<MeshGridJob> gridJobs;
+        MeshChainList gridChains;
+        size_t gridWork = 0;
         // --- sub_6BC4F0: Vertex computation ---
         // Aligned to 0x6BC4F0. Full implementation matching decompilation.
         for(size_t vi = 1; vi < nodes.size(); ++vi) {
@@ -396,31 +516,14 @@ namespace motion {
                         const int numPts = vn.meshDivX * vn.meshDivY;
                         vn.meshRenderPoints.resize(
                             static_cast<size_t>(numPts) * 2);
-                        for(int gy = 0; gy < vn.meshDivY; ++gy) {
-                            const float v = vn.meshDivY > 1
-                                ? static_cast<float>(gy) / (vn.meshDivY - 1)
-                                : 0.0f;
-                            for(int gx = 0; gx < vn.meshDivX; ++gx) {
-                                const float u = vn.meshDivX > 1
-                                    ? static_cast<float>(gx) /
-                                          (vn.meshDivX - 1)
-                                    : 0.0f;
-                                float px = static_cast<float>(
-                                    orgX + u * mw11 + v * mw12);
-                                float py = static_cast<float>(
-                                    orgY + u * mw21 + v * mw22);
-                                if(ownMesh) {
-                                    evalBezierPatch(
-                                        vn.meshWorldControlPoints.data(), u, v,
-                                        px, py);
-                                }
-                                const size_t point = static_cast<size_t>(
-                                    gy * vn.meshDivX + gx) * 2;
-                                vn.meshRenderPoints[point] = px;
-                                vn.meshRenderPoints[point + 1] = py;
-                            }
-                        }
 
+                        // Only the cascaded origin is needed in this loop. It
+                        // costs one patch evaluation for each ancestor. The
+                        // dense grid costs one for each grid point and
+                        // ancestor, so it goes to gridJobs and runs after the
+                        // loop. The ancestors are earlier nodes, thus their
+                        // patches are final when the job runs.
+                        const size_t chainBegin = gridChains.size();
                         double cascadeOrgX = orgX;
                         double cascadeOrgY = orgY;
                         auto applyAncestor = [&](const detail::MotionNode &a) {
@@ -428,24 +531,7 @@ namespace motion {
                                a.meshWorldControlPoints.size() != 32) {
                                 return;
                             }
-                            for(size_t point = 0;
-                                point < vn.meshRenderPoints.size() / 2;
-                                ++point) {
-                                const float x =
-                                    vn.meshRenderPoints[point * 2] +
-                                    a.meshInvOffX;
-                                const float y =
-                                    vn.meshRenderPoints[point * 2 + 1] +
-                                    a.meshInvOffY;
-                                const float u = static_cast<float>(
-                                    a.meshInvM11 * x + a.meshInvM12 * y);
-                                const float v = static_cast<float>(
-                                    a.meshInvM21 * x + a.meshInvM22 * y);
-                                evalBezierPatch(
-                                    a.meshWorldControlPoints.data(), u, v,
-                                    vn.meshRenderPoints[point * 2],
-                                    vn.meshRenderPoints[point * 2 + 1]);
-                            }
+                            gridChains.push_back(&a);
                             const float x = static_cast<float>(cascadeOrgX) +
                                 a.meshInvOffX;
                             const float y = static_cast<float>(cascadeOrgY) +
@@ -475,6 +561,11 @@ namespace motion {
                                 applyAncestor(*ancestor);
                             }
                         }
+                        gridJobs.push_back({ &vn, orgX, orgY, mw11, mw12, mw21,
+                                             mw22, ownMesh, chainBegin,
+                                             gridChains.size() });
+                        gridWork += static_cast<size_t>(numPts) *
+                            (gridChains.size() - chainBegin + 1);
                         vn.vertexPosX = cascadeOrgX;
                         vn.vertexPosY = cascadeOrgY;
                     } else {
@@ -615,6 +706,7 @@ namespace motion {
             }
         bc4f0_next:;
         }
+        runMeshGridJobs(gridJobs, gridChains, gridWork);
 
         // Delta position computation (0x6BBB74..0x6BBC54)
         // if playing (player+480): delta = 0; else: delta = currentPos -
