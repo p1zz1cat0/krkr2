@@ -54,7 +54,7 @@ pluginAssertEqual("image height", 3, image.height);
 var expectedPixel = source.getMainPixel(1, 1);
 source.setMainPixel(1, 1, 0xff2040d0);
 var scene = new D3DLayer(sceneDevice);
-pluginAssertEqual("draw plane constant", 0, D3DLayer.DrawPlaneBoth);
+pluginAssertEqual("draw plane constant", 3, D3DLayer.DrawPlaneBoth);
 scene.frontIndex = 7;
 pluginAssertEqual("front index", 7, scene.frontIndex);
 var picture = new D3DPicture(scene, image);
@@ -179,6 +179,8 @@ pluginAssertTrue("each read is a new Array", childDevice.children !== children);
 invalidate childA;
 pluginAssertTrue("invalidated layers leave children",
                  childDevice.children.count == 1 && childDevice.children[0] === childB);
+
+Scripts.execStorage("multi_primary_fixture.tjs");
 
 // Verify nested E-mote rendering with only the draw-device modules linked.
 Scripts.execStorage("emote_fixture.tjs");

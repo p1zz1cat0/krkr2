@@ -1,0 +1,172 @@
+class FixtureRemovingPrimary extends Layer {
+    var target;
+    var armed = false;
+    function FixtureRemovingPrimary(window, targetLayer) {
+        super.Layer(window, null);
+        target = targetLayer;
+        hasImage = false;
+    }
+    property drawPlane {
+        getter() {
+            if (armed) {
+                armed = false;
+                invalidate target;
+            }
+            return 0;
+        }
+    }
+}
+
+// Test menu popups on a separate primary tree, as NEKOPARA After uses them.
+function testMultiPrimaryComposition() {
+    function assertColorNear(name, expected, actual) {
+        // Allow integer alpha rounding when the background color changes.
+        for (var shift = 0; shift < 24; shift += 8)
+            pluginAssertTrue(name, Math.abs(((expected >> shift) & 255) -
+                                           ((actual >> shift) & 255)) <= 3);
+    }
+    var win = new Window();
+    var dev = new D3D(16, 12);
+    win.drawDevice = dev;
+    var base = new Layer(win, null);
+    base.setImageSize(16, 12);
+    base.setSizeToImageSize();
+    base.visible = true;
+    base.fillRect(0, 0, 16, 12, 0xff123456);
+    base.drawPlane = D3DLayer.DrawPlaneFront;
+    base.frontIndex = -10;
+    base.backIndex = -10;
+
+    var ui = new Layer(win, null);
+    ui.setImageSize(16, 12);
+    ui.setSizeToImageSize();
+    ui.type = ltAlpha;
+    ui.visible = true;
+    ui.fillRect(0, 0, 16, 12, 0);
+    ui.drawPlane = D3DLayer.DrawPlaneBoth;
+    ui.frontIndex = 5000001;
+    ui.backIndex = 5000001;
+    var popup = new Layer(win, ui);
+    popup.setImageSize(4, 3);
+    popup.setSizeToImageSize();
+    popup.type = ltAlpha;
+    popup.fillRect(0, 0, 4, 3, 0xffd04020);
+    popup.setPos(2, 2);
+    popup.visible = false;
+
+    var scratchWin = new Window();
+    var output = new Layer(scratchWin, null);
+    dev.capture(output, 0);
+    var background = output.getMainPixel(3, 3);
+    pluginAssertTrue("native background is drawn", background != 0);
+    assertColorNear("native scene keeps its color", base.getMainPixel(3, 3),
+                    background);
+    popup.visible = true;
+    dev.layerManagerIndex = 0;
+    dev.capture(output, 0);
+    var popupPixel = output.getMainPixel(3, 3);
+    pluginAssertTrue("independent popup is drawn above the background",
+                     popupPixel != background && popupPixel != 0);
+    assertColorNear("popup keeps its color", popup.getMainPixel(1, 1), popupPixel);
+    pluginAssertEqual("transparent UI preserves the scene", background,
+                      output.getMainPixel(10, 10));
+    dev.layerManagerIndex = 1;
+    dev.capture(output, 0);
+    pluginAssertEqual("focus on UI preserves popup", popupPixel,
+                      output.getMainPixel(3, 3));
+    pluginAssertEqual("focus on UI preserves scene", background,
+                      output.getMainPixel(10, 10));
+
+    dev.capture(output, ui.frontIndex);
+    pluginAssertEqual("snapshot excludes the UI primary", background,
+                      output.getMainPixel(3, 3));
+    dev.capture(output, base.frontIndex);
+    pluginAssertEqual("signed exclusive bound excludes the scene", 0,
+                      output.getMainPixel(10, 10));
+
+    popup.visible = false;
+    dev.capture(output, 0);
+    pluginAssertEqual("hidden popup clears its cached pixels", background,
+                      output.getMainPixel(3, 3));
+    popup.visible = true;
+    popup.setPos(6, 2);
+    dev.capture(output, 0);
+    pluginAssertEqual("moving popup clears its previous pixels", background,
+                      output.getMainPixel(3, 3));
+    pluginAssertEqual("moving popup draws at its new position", popupPixel,
+                      output.getMainPixel(7, 3));
+    popup.opacity = 0;
+    dev.capture(output, 0);
+    pluginAssertEqual("transparent popup clears its cached pixels", background,
+                      output.getMainPixel(7, 3));
+    popup.opacity = 255;
+    ui.drawvisible = false;
+    dev.capture(output, 0);
+    pluginAssertEqual("drawvisible hides the UI tree", background,
+                      output.getMainPixel(7, 3));
+    ui.drawvisible = true;
+    ui.drawPlane = 0;
+    dev.capture(output, 0);
+    pluginAssertEqual("zero plane hides the UI tree", background,
+                      output.getMainPixel(7, 3));
+    ui.drawPlane = D3DLayer.DrawPlaneBoth;
+
+    // Sort native roots and independent D3D layers in one front-index order.
+    var source = new Layer(scratchWin, output);
+    source.setImageSize(4, 3);
+    source.fillRect(0, 0, 4, 3, 0xff20d040);
+    var image = new D3DImage(dev);
+    image.load(source);
+    var scene = new D3DLayer(dev);
+    scene.frontIndex = ui.frontIndex - 1;
+    var picture = new D3DPicture(scene, image);
+    picture.blendMode = ltOpaque;
+    picture.assignImageRange(0, 0, 4, 3, -2, -4);
+    dev.capture(output, 0);
+    assertColorNear("UI index sorts above an independent picture", popupPixel,
+                    output.getMainPixel(7, 3));
+    scene.frontIndex = ui.frontIndex + 1;
+    dev.capture(output, 0);
+    var picturePixel = output.getMainPixel(7, 3);
+    pluginAssertTrue("picture index sorts above the UI",
+                     picturePixel != popupPixel && picturePixel != background);
+    scene.drawPlane = 0;
+    dev.capture(output, 0);
+    pluginAssertEqual("zero plane hides an independent picture", popupPixel,
+                      output.getMainPixel(7, 3));
+
+    var back = new Layer(win, null);
+    back.setImageSize(16, 12);
+    back.setSizeToImageSize();
+    back.visible = true;
+    back.fillRect(0, 0, 16, 12, 0xff20d040);
+    back.drawPlane = D3DLayer.DrawPlaneBack;
+    back.frontIndex = ui.frontIndex + 1;
+    back.backIndex = -5;
+    var transition = %['method' => 'crossfade', 'time' => 100];
+    dev.startTransition(transition);
+    dev.transState = 0;
+    dev.capture(output, 0);
+    var backPixel = output.getMainPixel(10, 10);
+    pluginAssertTrue("back primary replaces the front scene",
+                     backPixel != background && backPixel != 0);
+    assertColorNear("both-plane UI stays above the back scene", popupPixel,
+                    output.getMainPixel(7, 3));
+    dev.capture(output, ui.frontIndex);
+    pluginAssertEqual("bounded snapshot still uses the front scene", background,
+                      output.getMainPixel(7, 3));
+    dev.startTransition(transition);
+    dev.transState = 0;
+    dev.capture(output, 0);
+    pluginAssertEqual("second transition restores the front scene", background,
+                      output.getMainPixel(10, 10));
+    dev.layerManagerIndex = 0;
+    var remover = new FixtureRemovingPrimary(win, ui);
+    remover.armed = true;
+    dev.capture(output, 0);
+    pluginAssertEqual("primary removed by a script getter leaves the scene", background,
+                      output.getMainPixel(7, 3));
+    invalidate win;
+    invalidate scratchWin;
+}
+testMultiPrimaryComposition();

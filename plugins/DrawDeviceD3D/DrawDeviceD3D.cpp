@@ -61,7 +61,7 @@ class D3DPicture;
 class DeviceEmotePlayer;
 
 // The window owns this native device through its TJS drawDevice object.
-// LayerManager owns its DrawBuffer; this device selects and presents it.
+// LayerManager owns its DrawBuffer. Keep input focus separate from drawing.
 class DrawDeviceD3D : public tTVPDrawDevice {
 public:
     DrawDeviceD3D(tjs_int width, tjs_int height) {
@@ -199,7 +199,7 @@ public:
         if(!manager)
             TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D layer manager is null"));
         tTVPDrawDevice::AddLayerManager(manager);
-        manager->SetDesiredLayerType(ltOpaque);
+        manager->SetDesiredLayerType(ltAlpha);
         if(auto *concreteManager = dynamic_cast<tTVPLayerManager *>(manager)) {
             static const bool cacheEnabled = [] {
                 const char *value = std::getenv("KRKR_D3D_KAG_CACHE");
@@ -225,9 +225,9 @@ public:
             tTVPDrawDevice::NotifyLayerResize(manager);
     }
 
-    void NotifyLayerImageChange(iTVPLayerManager *manager) override {
+    void NotifyLayerImageChange(iTVPLayerManager *) override {
         if(Window)
-            tTVPDrawDevice::NotifyLayerImageChange(manager);
+            Window->RequestUpdate();
     }
 
     void Show() override {
@@ -335,7 +335,7 @@ private:
 
 class D3DLayer {
 public:
-    enum : tjs_int { DrawPlaneBoth = 0, DrawPlaneFront = 1, DrawPlaneBack = 2 };
+    enum : tjs_int { DrawPlaneFront = 1, DrawPlaneBack = 2, DrawPlaneBoth = 3 };
 
     D3DLayer(iTJSDispatch2 *deviceObject, iTJSDispatch2 *scriptObject)
         : deviceObject_(deviceObject, deviceObject), scriptObject_(scriptObject) {
@@ -364,7 +364,7 @@ public:
 
     tjs_int getDrawPlane() const { return drawPlane_; }
     void setDrawPlane(tjs_int value) {
-        if(value < DrawPlaneBoth || value > DrawPlaneBack)
+        if(value < 0 || value > DrawPlaneBoth)
             TVPThrowExceptionMessage(TJS_W("D3DLayer drawPlane is invalid"));
         drawPlane_ = value;
     }
@@ -711,57 +711,98 @@ void DrawDeviceD3D::updateLayers(tjs_real elapsed) {
 }
 
 iTVPBaseBitmap *DrawDeviceD3D::compose(tjs_int frontIndexLimit) {
-    auto *manager = GetLayerManagerAt(PrimaryLayerManagerIndex);
-    if(layers_.empty() && !transitionActive_)
-        return manager ? manager->GetDrawBuffer() : nullptr;
-
     if(!composite_ || composite_->GetWidth() != static_cast<tjs_uint>(width_) ||
        composite_->GetHeight() != static_cast<tjs_uint>(height_))
         composite_ = std::make_unique<tTVPBaseTexture>(width_, height_);
     composite_->Fill(tTVPRect(0, 0, width_, height_), 0);
 
-    std::vector<D3DLayer *> ordered = layers_;
-    // Zero selects all layers. A nonzero limit excludes the UI boundary.
-    if(frontIndexLimit != 0)
-        ordered.erase(std::remove_if(ordered.begin(), ordered.end(),
-                                     [frontIndexLimit](const D3DLayer *layer) {
-                                         return layer->getFrontIndex() >= frontIndexLimit;
-                                     }), ordered.end());
-    std::stable_sort(ordered.begin(), ordered.end(),
-                     [](const D3DLayer *left, const D3DLayer *right) {
-                         return left->getFrontIndex() < right->getFrontIndex();
-                     });
-    const bool drawBackPlane = frontIndexLimit == 0 &&
-        (transitionActive_ ? !showBackPlane_ : showBackPlane_);
-    for(auto *layer : ordered) {
-        if(layer->getDrawPlane() != D3DLayer::DrawPlaneBack)
-            layer->draw(*composite_);
-    }
-    if(drawBackPlane)
-        for(auto *layer : ordered)
-            if(layer->getDrawPlane() == D3DLayer::DrawPlaneBack)
-                layer->draw(*composite_);
+    struct DrawEntry {
+        D3DLayer *layer = nullptr;
+        std::shared_ptr<iTVPLayerManager> manager;
+        tjs_int plane = D3DLayer::DrawPlaneBoth;
+        tjs_int frontIndex = 0;
+        tjs_int backIndex = 0;
+    };
+    std::vector<DrawEntry> entries;
+    for(auto *layer : layers_)
+        entries.push_back({layer, {}, layer->getDrawPlane(),
+                           layer->getFrontIndex(), layer->getBackIndex()});
 
-    auto *concreteManager = dynamic_cast<tTVPLayerManager *>(manager);
-    if(concreteManager) {
-        concreteManager->SetHoldAlpha(false);
-        auto *drawBuffer = concreteManager->GetOrCreateDrawBuffer();
-        if(drawBuffer) {
-            if(!concreteManager->GetDrawBufferCacheEnabled() ||
-               TVPIsSoftwareRenderManager()) {
-                const tTVPRect full(0, 0, drawBuffer->GetWidth(),
-                                    drawBuffer->GetHeight());
-                drawBuffer->Fill(full, 0);
+    // Retain managers while script getters and completion callbacks run.
+    const auto managers = [&] {
+        std::vector<std::shared_ptr<iTVPLayerManager>> result;
+        for(auto *manager : Managers) {
+            manager->AddRef();
+            result.emplace_back(manager, [](iTVPLayerManager *value) {
+                value->Release();
+            });
+        }
+        return result;
+    }();
+    for(const auto &manager : managers) {
+        auto *primary = manager->GetPrimaryLayer();
+        auto *owner = primary ? primary->GetOwnerNoAddRef() : nullptr;
+        if(!owner)
+            continue;
+        const tTJSVariant retainedOwner(owner, owner);
+        const auto property = [owner](const tjs_char *name, tjs_int fallback) {
+            tTJSVariant value;
+            if(TJS_FAILED(owner->PropGet(0, name, nullptr, &value, owner)) ||
+               value.Type() == tvtVoid)
+                return fallback;
+            return static_cast<tjs_int>(value.AsInteger());
+        };
+        if(!property(TJS_W("drawvisible"), 1))
+            continue;
+        entries.push_back({nullptr, manager,
+                           property(TJS_W("drawPlane"), D3DLayer::DrawPlaneBoth),
+                           property(TJS_W("frontIndex"), 0),
+                           property(TJS_W("backIndex"), 0)});
+    }
+
+    const auto draw = [&](const DrawEntry &entry) {
+        if(entry.layer) {
+            if(std::find(layers_.begin(), layers_.end(), entry.layer) != layers_.end())
+                entry.layer->draw(*composite_);
+            return;
+        }
+        auto *manager = entry.manager.get();
+        if(std::find(Managers.begin(), Managers.end(), manager) == Managers.end() ||
+           !manager->GetPrimaryLayer())
+            return;
+        auto *concreteManager = dynamic_cast<tTVPLayerManager *>(manager);
+        if(concreteManager) {
+            concreteManager->SetHoldAlpha(false);
+            auto *buffer = concreteManager->GetOrCreateDrawBuffer();
+            if(buffer && (!concreteManager->GetDrawBufferCacheEnabled() ||
+                          TVPIsSoftwareRenderManager())) {
+                const tTVPRect full(0, 0, buffer->GetWidth(), buffer->GetHeight());
+                buffer->Fill(full, 0);
                 manager->RequestInvalidation(full);
             }
-            manager->UpdateToDrawDevice();
         }
-    }
-    auto *buffer = manager ? manager->GetDrawBuffer() : nullptr;
-    if(buffer)
-        composite_->Blt(0, 0, buffer,
-                        tTVPRect(0, 0, buffer->GetWidth(), buffer->GetHeight()),
-                        ltAlpha, 255, false);
+        manager->UpdateToDrawDevice();
+        auto *buffer = manager->GetDrawBuffer();
+        if(buffer)
+            composite_->Blt(0, 0, buffer,
+                            tTVPRect(0, 0, buffer->GetWidth(), buffer->GetHeight()),
+                            ltAlpha, 255, false);
+    };
+
+    // Draw the selected plane. Both kinds of layer use the same index order.
+    const bool drawBackPlane = frontIndexLimit == 0 &&
+        (transitionActive_ ? !showBackPlane_ : showBackPlane_);
+    const tjs_int plane = drawBackPlane ? D3DLayer::DrawPlaneBack
+                                       : D3DLayer::DrawPlaneFront;
+    std::stable_sort(entries.begin(), entries.end(),
+                     [drawBackPlane](const DrawEntry &left, const DrawEntry &right) {
+                         return drawBackPlane ? left.backIndex < right.backIndex
+                                              : left.frontIndex < right.frontIndex;
+                     });
+    for(const auto &entry : entries)
+        if((entry.plane & plane) &&
+           (frontIndexLimit == 0 || entry.frontIndex < frontIndexLimit))
+            draw(entry);
     if(frontIndexLimit != 0 || !transitionActive_ || !transitionSource_)
         return composite_.get();
     if(transState_ <= 0) {
