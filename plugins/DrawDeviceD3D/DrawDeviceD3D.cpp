@@ -472,12 +472,9 @@ public:
         auto *image = resolveImage();
         if(!image || !image->bitmap() || source_.get_width() <= 0 || opacity_ == 0)
             return;
-        const tjs_real localX = destX_ + coordX_;
-        const tjs_real localY = destY_ + coordY_;
         const t2DAffineMatrix transform = {
             matrix[0], matrix[1], matrix[4], matrix[5],
-            matrix[0] * localX + matrix[4] * localY + matrix[12],
-            matrix[1] * localX + matrix[5] * localY + matrix[13]
+            matrix[12] + destX_ + coordX_, matrix[13] + destY_ + coordY_
         };
         if(!std::isfinite(transform.tx) || !std::isfinite(transform.ty))
             TVPThrowExceptionMessage(TJS_W("D3DPicture transformed coordinates are invalid"));
