@@ -4,6 +4,7 @@
 // core 测试不链接插件库，因此一并补桩。
 #if defined(__APPLE__)
 extern "C" void YoghourtApplyWindowPresentation(void *) {}
+extern "C" void YoghourtSetGameWindowContentSize(int, int) {}
 extern "C" bool YoghourtGameWindowIsFullscreen(void) { return false; }
 extern "C" void YoghourtKrKrSpatialRegisterSourceTexture(unsigned int, int, int,
                                                          float, float, bool) {}

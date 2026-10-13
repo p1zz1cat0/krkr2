@@ -39,11 +39,8 @@ extern "C" void YoghourtRefreshWindowLayout(int width, int height, bool fullscre
     // has already reconciled those two sizes. Calling setFrameSize() here
     // treats points as pixels and resizes the native window a second time,
     // which makes the rendered viewport and pointer transform diverge.
-    glview->setDesignResolutionSize(
-        designResolutionSize.width,
-        designResolutionSize.height,
-        ResolutionPolicy::SHOW_ALL);
-    director->setViewport();
+    if(auto *scene = TVPMainScene::GetInstance())
+        scene->relayoutForWindowSize();
 }
 
 void TVPAppDelegate::applicationWillEnterForeground() {

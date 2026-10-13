@@ -22,6 +22,7 @@
 
 #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
 #include "YoghourtSpatialAdapter.h"
+extern "C" void YoghourtSetGameWindowContentSize(int width, int height);
 #endif
 
 tTJSNI_Window *TVPWindowLayer::TVPGetActiveWindow() {
@@ -515,6 +516,8 @@ void TVPWindowLayer::UpdateDrawBuffer(iTVPTexture2D *tex) {
         ResetDrawSprite();
     }
 #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    if(_currentWindowLayer == this && Visible)
+        YoghourtSetGameWindowContentSize(LayerWidth, LayerHeight);
     if(newtex) {
         // The adapter texture keeps maxS/maxT at 1 even when the game frame
         // lives in a padded power-of-two texture (1280x720 inside 2048x1024).

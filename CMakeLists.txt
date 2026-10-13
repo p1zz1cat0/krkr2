@@ -88,6 +88,7 @@ if(MACOS)
             ${YOGHOURT_SURFACE_RELAY_DIR}
     )
     set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtPresentation.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
