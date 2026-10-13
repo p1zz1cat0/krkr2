@@ -36,7 +36,8 @@ if [[ -z "$work_root_build" ]]; then
   done
 fi
 work_root_build="${work_root_build:-$repo_root/out}"
-log_dir="${YOGHOURT_QUALITY_LOG_DIR:-${work_root_build:h}/logs/quality-gate}"
+# Logs go to the literal /tmp (not TMPDIR, which differs per agent sandbox).
+log_dir="${YOGHOURT_QUALITY_LOG_DIR:-/tmp/yoghourt/logs/quality-gate}"
 mkdir -p -- "$log_dir"
 
 # 环境前置检查。这两项缺失时 CMake 的报错离根因很远（toolchain 路径拼成
