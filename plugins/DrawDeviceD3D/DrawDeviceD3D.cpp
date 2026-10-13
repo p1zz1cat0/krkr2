@@ -249,7 +249,7 @@ public:
 
 private:
     void updateLayers(tjs_real elapsed);
-    iTVPBaseBitmap *compose();
+    iTVPBaseBitmap *compose(tjs_int frontIndexLimit = 0);
     tjs_int width_ = 0;
     tjs_int height_ = 0;
     std::array<tjs_int, 4> screenRect_{};
@@ -703,7 +703,7 @@ void DrawDeviceD3D::updateLayers(tjs_real elapsed) {
     }
 }
 
-iTVPBaseBitmap *DrawDeviceD3D::compose() {
+iTVPBaseBitmap *DrawDeviceD3D::compose(tjs_int frontIndexLimit) {
     auto *manager = GetLayerManagerAt(PrimaryLayerManagerIndex);
     if(layers_.empty() && !transitionActive_)
         return manager ? manager->GetDrawBuffer() : nullptr;
@@ -714,11 +714,18 @@ iTVPBaseBitmap *DrawDeviceD3D::compose() {
     composite_->Fill(tTVPRect(0, 0, width_, height_), 0);
 
     std::vector<D3DLayer *> ordered = layers_;
+    // Zero selects all layers. A nonzero limit excludes the UI boundary.
+    if(frontIndexLimit != 0)
+        ordered.erase(std::remove_if(ordered.begin(), ordered.end(),
+                                     [frontIndexLimit](const D3DLayer *layer) {
+                                         return layer->getFrontIndex() >= frontIndexLimit;
+                                     }), ordered.end());
     std::stable_sort(ordered.begin(), ordered.end(),
                      [](const D3DLayer *left, const D3DLayer *right) {
                          return left->getFrontIndex() < right->getFrontIndex();
                      });
-    const bool drawBackPlane = transitionActive_ ? !showBackPlane_ : showBackPlane_;
+    const bool drawBackPlane = frontIndexLimit == 0 &&
+        (transitionActive_ ? !showBackPlane_ : showBackPlane_);
     for(auto *layer : ordered) {
         if(layer->getDrawPlane() != D3DLayer::DrawPlaneBack)
             layer->draw(*composite_);
@@ -748,7 +755,7 @@ iTVPBaseBitmap *DrawDeviceD3D::compose() {
         composite_->Blt(0, 0, buffer,
                         tTVPRect(0, 0, buffer->GetWidth(), buffer->GetHeight()),
                         ltAlpha, 255, false);
-    if(!transitionActive_ || !transitionSource_)
+    if(frontIndexLimit != 0 || !transitionActive_ || !transitionSource_)
         return composite_.get();
     if(transState_ <= 0) {
         stopTransition();
@@ -871,15 +878,13 @@ void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
 }
 
 void DrawDeviceD3D::capture(iTJSDispatch2 *layerObject, tjs_int index) {
-    if(index != 0)
-        TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D capture index is unsupported"));
     tTJSNI_BaseLayer *layer = nullptr;
     if(!layerObject || TJS_FAILED(layerObject->NativeInstanceSupport(
             TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
             reinterpret_cast<iTJSNativeInstance **>(&layer))) || !layer)
         TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.capture requires a Layer"));
     Update();
-    auto *frame = compose();
+    auto *frame = compose(index);
     if(!frame)
         TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.capture has no frame"));
     auto *frameTexture = frame->GetTexture();
