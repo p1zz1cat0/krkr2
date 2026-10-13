@@ -64,6 +64,8 @@ transitionDevice.capture(output, 0);
 pluginAssertEqual("transition finishes on back plane", 0x000000f0,
                   output.getMainPixel(0, 0));
 transitionDevice.stopTransition();
+front.drawPlane = D3DLayer.DrawPlaneBack;
+back.drawPlane = D3DLayer.DrawPlaneFront;
 transition.method = "vanish";
 var unsupportedTransition = false;
 try {
@@ -113,6 +115,9 @@ transitionDevice.transState = 0;
 transitionDevice.capture(output, 0);
 pluginAssertEqual("universal finishes on the front plane", 0x00f00000,
                   output.getMainPixel(0, 0));
+transitionDevice.stopTransition();
+front.drawPlane = D3DLayer.DrawPlaneFront;
+back.drawPlane = D3DLayer.DrawPlaneBack;
 
 rule.fillRect(0, 0, 2, 2, 0xff000000);
 transitionDevice.startTransition(transition);

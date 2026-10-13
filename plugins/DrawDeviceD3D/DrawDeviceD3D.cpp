@@ -180,8 +180,6 @@ public:
     void stopTransition() {
         transitionSource_.reset();
         transitionRule_.reset();
-        if(transitionActive_)
-            showBackPlane_ = !showBackPlane_;
         transitionActive_ = false;
         transState_ = 1.0;
         if(Window)
@@ -259,7 +257,6 @@ private:
     tjs_int forceRenderTexture_ = 0;
     tjs_real transState_ = 1.0;
     bool transitionActive_ = false;
-    bool showBackPlane_ = false;
     std::unique_ptr<tTVPBaseTexture> transitionSource_;
     // Set only for universal transitions: 8bpp rule, as the core loads it.
     struct TextureRelease {
@@ -790,8 +787,8 @@ iTVPBaseBitmap *DrawDeviceD3D::compose(tjs_int frontIndexLimit) {
     };
 
     // Draw the selected plane. Both kinds of layer use the same index order.
-    const bool drawBackPlane = frontIndexLimit == 0 &&
-        (transitionActive_ ? !showBackPlane_ : showBackPlane_);
+    // The script exchanges page flags after stopTransition. Use Front at rest.
+    const bool drawBackPlane = frontIndexLimit == 0 && transitionActive_;
     const tjs_int plane = drawBackPlane ? D3DLayer::DrawPlaneBack
                                        : D3DLayer::DrawPlaneFront;
     std::stable_sort(entries.begin(), entries.end(),
@@ -805,10 +802,8 @@ iTVPBaseBitmap *DrawDeviceD3D::compose(tjs_int frontIndexLimit) {
             draw(entry);
     if(frontIndexLimit != 0 || !transitionActive_ || !transitionSource_)
         return composite_.get();
-    if(transState_ <= 0) {
-        stopTransition();
+    if(transState_ <= 0)
         return composite_.get();
-    }
     const tjs_real remaining = std::clamp(transState_, 0.0, 1.0);
     if(!transitionRule_) {
         const auto opacity = static_cast<tjs_int>(std::lround(remaining * 255.0));

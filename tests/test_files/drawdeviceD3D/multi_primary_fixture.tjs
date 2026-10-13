@@ -17,14 +17,15 @@ class FixtureRemovingPrimary extends Layer {
     }
 }
 
+function multiPrimaryAssertColorNear(name, expected, actual) {
+    // Allow integer alpha rounding when the background color changes.
+    for (var shift = 0; shift < 24; shift += 8)
+        pluginAssertTrue(name, Math.abs(((expected >> shift) & 255) -
+                                       ((actual >> shift) & 255)) <= 3);
+}
+
 // Test menu popups on a separate primary tree, as NEKOPARA After uses them.
 function testMultiPrimaryComposition() {
-    function assertColorNear(name, expected, actual) {
-        // Allow integer alpha rounding when the background color changes.
-        for (var shift = 0; shift < 24; shift += 8)
-            pluginAssertTrue(name, Math.abs(((expected >> shift) & 255) -
-                                           ((actual >> shift) & 255)) <= 3);
-    }
     var win = new Window();
     var dev = new D3D(16, 12);
     win.drawDevice = dev;
@@ -59,7 +60,7 @@ function testMultiPrimaryComposition() {
     dev.capture(output, 0);
     var background = output.getMainPixel(3, 3);
     pluginAssertTrue("native background is drawn", background != 0);
-    assertColorNear("native scene keeps its color", base.getMainPixel(3, 3),
+    multiPrimaryAssertColorNear("native scene keeps its color", base.getMainPixel(3, 3),
                     background);
     popup.visible = true;
     dev.layerManagerIndex = 0;
@@ -67,7 +68,7 @@ function testMultiPrimaryComposition() {
     var popupPixel = output.getMainPixel(3, 3);
     pluginAssertTrue("independent popup is drawn above the background",
                      popupPixel != background && popupPixel != 0);
-    assertColorNear("popup keeps its color", popup.getMainPixel(1, 1), popupPixel);
+    multiPrimaryAssertColorNear("popup keeps its color", popup.getMainPixel(1, 1), popupPixel);
     pluginAssertEqual("transparent UI preserves the scene", background,
                       output.getMainPixel(10, 10));
     dev.layerManagerIndex = 1;
@@ -123,7 +124,7 @@ function testMultiPrimaryComposition() {
     picture.blendMode = ltOpaque;
     picture.assignImageRange(0, 0, 4, 3, -2, -4);
     dev.capture(output, 0);
-    assertColorNear("UI index sorts above an independent picture", popupPixel,
+    multiPrimaryAssertColorNear("UI index sorts above an independent picture", popupPixel,
                     output.getMainPixel(7, 3));
     scene.frontIndex = ui.frontIndex + 1;
     dev.capture(output, 0);
@@ -150,16 +151,25 @@ function testMultiPrimaryComposition() {
     var backPixel = output.getMainPixel(10, 10);
     pluginAssertTrue("back primary replaces the front scene",
                      backPixel != background && backPixel != 0);
-    assertColorNear("both-plane UI stays above the back scene", popupPixel,
+    multiPrimaryAssertColorNear("both-plane UI stays above the back scene", popupPixel,
                     output.getMainPixel(7, 3));
     dev.capture(output, ui.frontIndex);
     pluginAssertEqual("bounded snapshot still uses the front scene", background,
                       output.getMainPixel(7, 3));
+    dev.stopTransition();
+    base.drawPlane = D3DLayer.DrawPlaneBack;
+    back.drawPlane = D3DLayer.DrawPlaneFront;
+    dev.capture(output, 0);
+    pluginAssertEqual("KAG page exchange keeps the completed scene", backPixel,
+                      output.getMainPixel(10, 10));
     dev.startTransition(transition);
     dev.transState = 0;
     dev.capture(output, 0);
     pluginAssertEqual("second transition restores the front scene", background,
                       output.getMainPixel(10, 10));
+    dev.stopTransition();
+    base.drawPlane = D3DLayer.DrawPlaneFront;
+    back.drawPlane = D3DLayer.DrawPlaneBack;
     dev.layerManagerIndex = 0;
     var remover = new FixtureRemovingPrimary(win, ui);
     remover.armed = true;
@@ -170,3 +180,75 @@ function testMultiPrimaryComposition() {
     invalidate scratchWin;
 }
 testMultiPrimaryComposition();
+
+// Follow KAG page exchange and clear the old page after each transition.
+function testTransitionPageExchange() {
+    var win = new Window();
+    var dev = new D3D(16, 12);
+    win.drawDevice = dev;
+    var scratchWin = new Window();
+    var output = new Layer(scratchWin, null);
+    var fore = new Layer(win, null);
+    var back = new Layer(win, null);
+    var source = new Layer(scratchWin, output);
+    source.setImageSize(4, 4);
+    source.fillRect(0, 0, 4, 4, 0xffd04020);
+    var image = new D3DImage(dev);
+    image.load(source);
+    var forePictureLayer = new D3DLayer(dev);
+    var backPictureLayer = new D3DLayer(dev);
+    var forePicture = new D3DPicture(forePictureLayer, image);
+    var backPicture = new D3DPicture(backPictureLayer, image);
+    forePicture.assignImageRange(0, 0, 4, 4, -2, -2);
+    backPicture.assignImageRange(0, 0, 4, 4, -2, -2);
+    forePictureLayer.frontIndex = backPictureLayer.frontIndex = 1;
+    forePictureLayer.backIndex = backPictureLayer.backIndex = 1;
+    var roots = [fore, back];
+    for (var rootIndex = 0; rootIndex < roots.count; ++rootIndex) {
+        var root = roots[rootIndex];
+        root.setImageSize(16, 12);
+        root.setSizeToImageSize();
+        root.visible = true;
+    }
+    fore.fillRect(0, 0, 16, 12, 0xff123456);
+    fore.drawPlane = forePictureLayer.drawPlane = D3DLayer.DrawPlaneFront;
+    back.drawPlane = backPictureLayer.drawPlane = D3DLayer.DrawPlaneBack;
+    for (var i = 0; i < 12; ++i) {
+        var color = (i & 1) ? 0xff123456 : 0xff20d040;
+        back.fillRect(0, 0, 16, 12, color);
+        backPicture.opacity = 255;
+        var expected = back.getMainPixel(10, 10);
+        dev.startTransition(%['method' => 'crossfade', 'time' => 100]);
+        dev.transState = (i % 3 == 0) ? 0 : 0.01;
+        if (i % 3 != 2) {
+            dev.capture(output, 0);
+            var firstPixel = output.getMainPixel(10, 10);
+            dev.capture(output, 0);
+            if (i % 3 == 0) {
+                multiPrimaryAssertColorNear("zero-state readback shows the target",
+                                            expected, firstPixel);
+                pluginAssertEqual("zero-state readback keeps the transition target",
+                                  firstPixel, output.getMainPixel(10, 10));
+            }
+        }
+        // KAG stops before exchanging native roots and affine source planes.
+        dev.stopTransition();
+        var previous = fore; fore = back; back = previous;
+        previous = forePictureLayer;
+        forePictureLayer = backPictureLayer; backPictureLayer = previous;
+        previous = forePicture; forePicture = backPicture; backPicture = previous;
+        fore.drawPlane = forePictureLayer.drawPlane = D3DLayer.DrawPlaneFront;
+        back.drawPlane = backPictureLayer.drawPlane = D3DLayer.DrawPlaneBack;
+        back.fillRect(0, 0, 16, 12, 0xff000000);
+        backPicture.opacity = 0;
+        dev.stopTransition();
+        dev.capture(output, 0);
+        multiPrimaryAssertColorNear("completed KAG scene survives old-page clearing",
+                                    expected, output.getMainPixel(10, 10));
+        multiPrimaryAssertColorNear("completed affine picture survives old-page clearing",
+                                    source.getMainPixel(1, 1), output.getMainPixel(7, 5));
+    }
+    invalidate win;
+    invalidate scratchWin;
+}
+testTransitionPageExchange();
