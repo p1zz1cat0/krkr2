@@ -475,6 +475,7 @@ namespace motion {
         if(label.empty()) {
             return;
         }
+        ensureEvalResultSlotLike_0x686944(label) = value;
         publishEvalResultValueKeepingVariableLike_0x6C4668(label, mode, value);
         _variableValues[label] = value;
     }
@@ -484,7 +485,6 @@ namespace motion {
         if(label.empty()) {
             return;
         }
-        ensureEvalResultSlotLike_0x686944(label) = value;
         _evalResultValues[label] = value;
         bindParameterValueLike_0x6C4668(label, mode, value);
     }

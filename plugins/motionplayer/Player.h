@@ -596,11 +596,12 @@ namespace motion {
                                                double value);
         void writeEvalResultValueLike_0x6C4668(const std::string &label,
                                                int mode, double value);
-        // Publishes the evaluated value to the eval slot, the eval map and the
-        // parameter bindings, but leaves the script variable table untouched.
-        // The clamp projection uses this: the motion tree must see the
-        // projected value, while getVariable() must keep reporting what the
-        // script set.
+        // Publishes the evaluated value to the eval map and the parameter
+        // bindings only. The script variable table and the eval slot are not
+        // changed. The clamp projection uses this: the motion tree must see
+        // the projected value, but getVariable() must report what the script
+        // set. The post-process starts again from the eval slot on each
+        // progress, so a projected slot is projected again on progress(0).
         void publishEvalResultValueKeepingVariableLike_0x6C4668(
             const std::string &label, int mode, double value);
         bool renderToLayer(iTJSDispatch2 *layerObject, bool skipUpdate = false);

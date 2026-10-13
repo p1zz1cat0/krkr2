@@ -431,8 +431,13 @@ namespace motion {
             // motion restart one frame after it started. The original DLL
             // reports the requested value (VM oracle after-oracle-trace-pass2
             // reads -28.95 approaching -30, never ±21.2132 = 30/sqrt(2)).
-            // Publish to the eval slot, the eval map and the parameter
-            // bindings only; _variableValues keeps the value the script set.
+            // Publish to the eval map and the parameter bindings only.
+            // _variableValues keeps the value the script set. The eval slot
+            // keeps the unprojected value: progress(0) skips the controller
+            // step, so the post-process republishes the slot as is. A
+            // projected slot went back into _variableValues and was projected
+            // again on each progress(0) (-30, -21.2, -19.0, ...). After calls
+            // progress(0) between frames, so the head and eyes jittered.
             g_emoteWriteSite = "clamp";
             publishEvalResultValueKeepingVariableLike_0x6C4668(binding.varLr, 0,
                                                                lrFinal);
