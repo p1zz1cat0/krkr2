@@ -39,12 +39,12 @@ var front = new D3DLayer(transitionDevice);
 front.drawPlane = D3DLayer.DrawPlaneFront;
 var oldPicture = new D3DPicture(front, oldImage);
 oldPicture.blendMode = 1;
-oldPicture.assignImageRange(0, 0, 1, 1, 0, 0);
+oldPicture.assignImageRange(0, 0, 1, 1, -1, -1); // origin is the center (1, 1)
 var back = new D3DLayer(transitionDevice);
 back.drawPlane = D3DLayer.DrawPlaneBack;
 var newPicture = new D3DPicture(back, newImage);
 newPicture.blendMode = 1;
-newPicture.assignImageRange(0, 0, 1, 1, 0, 0);
+newPicture.assignImageRange(0, 0, 1, 1, -1, -1);
 var output = new Layer(sourceWindow, source);
 output.setImageSize(2, 2);
 transitionDevice.capture(output, 0);

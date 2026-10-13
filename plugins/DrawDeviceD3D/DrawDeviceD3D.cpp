@@ -468,13 +468,20 @@ public:
             TVPThrowExceptionMessage(TJS_W("D3DPicture opacity is out of range"));
         opacity_ = value;
     }
-    void draw(tTVPBaseTexture &target, const std::array<tjs_real, 16> &matrix) const {
+    // The device origin is the screen center, as for DeviceEmotePlayer.
+    // Destination and setCoord offsets are local and go through the matrix:
+    // screen = M * (local + dest + coord) + translation + screenCenter.
+    void draw(tTVPBaseTexture &target, const std::array<tjs_real, 16> &matrix,
+              tjs_int screenWidth, tjs_int screenHeight) const {
         auto *image = resolveImage();
         if(!image || !image->bitmap() || source_.get_width() <= 0 || opacity_ == 0)
             return;
+        const tjs_real localX = destX_ + coordX_;
+        const tjs_real localY = destY_ + coordY_;
         const t2DAffineMatrix transform = {
             matrix[0], matrix[1], matrix[4], matrix[5],
-            matrix[12] + destX_ + coordX_, matrix[13] + destY_ + coordY_
+            matrix[0] * localX + matrix[4] * localY + matrix[12] + screenWidth / 2.0,
+            matrix[1] * localX + matrix[5] * localY + matrix[13] + screenHeight / 2.0
         };
         if(!std::isfinite(transform.tx) || !std::isfinite(transform.ty))
             TVPThrowExceptionMessage(TJS_W("D3DPicture transformed coordinates are invalid"));
@@ -682,10 +689,10 @@ tTJSVariant DrawDeviceD3D::getChildren() const {
 }
 
 void D3DLayer::draw(tTVPBaseTexture &target) const {
-    for(auto *picture : pictures_)
-        picture->draw(target, matrix_);
     if(!device_)
         return;
+    for(auto *picture : pictures_)
+        picture->draw(target, matrix_, device_->getWidth(), device_->getHeight());
     for(auto *emote : emotes_)
         emote->composite(target, matrix_, device_->getWidth(), device_->getHeight());
 }

@@ -60,8 +60,10 @@ pluginAssertEqual("front index", 7, scene.frontIndex);
 var picture = new D3DPicture(scene, image);
 picture.assignImageRange(1, 1, 1, 1, 0, 0);
 picture.blendMode = 1; // ltOpaque: verify the snapshot without alpha rounding.
+// The device origin is the screen center (6, 5): translation (-3, -1) puts
+// the pixel at (3, 4).
 scene.setMatrix(1, 0, 0, 0, 0, 1, 0, 0,
-                0, 0, 1, 0, 3, 4, 0, 1);
+                0, 0, 1, 0, -3, -1, 0, 1);
 var captured = new Layer(sourceWindow, source);
 captured.setImageSize(12, 10);
 sceneDevice.capture(captured, 0);
@@ -109,6 +111,15 @@ pluginAssertEqual("picture coordinate moves the pixel", expectedPixel,
                   captured.getMainPixel(5, 4));
 pluginAssertEqual("previous coordinate is clear", 0,
                   captured.getMainPixel(3, 4));
+// NEKOPARA After backgrounds: setCoord is local and scales with the matrix.
+// x = 2 * 2 - 3 + 6 = 7, y = 0 - 1 + 5 = 4.
+scene.setMatrix(2, 0, 0, 0, 0, 2, 0, 0,
+                0, 0, 1, 0, -3, -1, 0, 1);
+sceneDevice.capture(captured, 0);
+pluginAssertEqual("scaled picture coordinate is local", expectedPixel,
+                  captured.getMainPixel(7, 4));
+scene.setMatrix(1, 0, 0, 0, 0, 1, 0, 0,
+                0, 0, 1, 0, -3, -1, 0, 1);
 
 var failedLoad = false;
 try {
@@ -127,7 +138,7 @@ attachedImage.load(source);
 var attachedScene = new D3DLayer(device);
 var attachedPicture = new D3DPicture(attachedScene, attachedImage);
 attachedPicture.blendMode = 1;
-attachedPicture.assignImageRange(1, 1, 1, 1, 6, 7);
+attachedPicture.assignImageRange(1, 1, 1, 1, -10, -5); // center (16, 12)
 device.capture(captured, 0);
 pluginAssertEqual("attached manager leaves independent picture visible",
                   source.getMainPixel(1, 1), captured.getMainPixel(6, 7));
