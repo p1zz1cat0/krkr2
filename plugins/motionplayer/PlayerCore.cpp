@@ -254,6 +254,76 @@ namespace motion {
         return _allplaying;
     }
 
+    bool Player::timelineLoopsForever(
+        const detail::TimelineState &state,
+        const detail::TimelineControlBinding *binding) const {
+        if(!binding) {
+            // No authored control window: only an explicit loop time wraps.
+            const double effectiveLoopTime = state.loopOverrideSet
+                ? (state.loop ? (state.loopTime >= 0.0 ? state.loopTime : 0.0)
+                              : -1.0)
+                : state.loopTime;
+            return effectiveLoopTime >= 0.0;
+        }
+        if(state.loopOverrideSet && !state.loop) {
+            return false;
+        }
+        if(binding->loopBegin < 0.0) {
+            return state.loop;
+        }
+        if(binding->loopEnd > binding->loopBegin) {
+            // The authored loop interval wraps forever unless a blend-out
+            // retires the timeline (fadeOutTimeline / stopWhenBlendDone).
+            return !state.blendAutoStop;
+        }
+        return false;
+    }
+
+    bool Player::hasAnimatingTimeline() const {
+        if(!_runtime) {
+            return false;
+        }
+        const auto *activeMotion = _runtime->activeMotion.get();
+        for(const auto &label : _runtime->playingTimelineLabels) {
+            const auto stateIt = _runtime->timelines.find(label);
+            if(stateIt == _runtime->timelines.end()) {
+                continue;
+            }
+            const detail::TimelineControlBinding *binding = nullptr;
+            if(activeMotion) {
+                if(const auto controlIt =
+                       activeMotion->timelineControlByLabel.find(label);
+                   controlIt != activeMotion->timelineControlByLabel.end()) {
+                    binding = &controlIt->second;
+                }
+            }
+            if(!timelineLoopsForever(stateIt->second, binding)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool Player::getAnimating() const {
+        // Aligned to the original EmotePlayer.animating (VM oracle
+        // after-oracle-trace-pass2, player 6): the property is true only while
+        // a timeline that can still finish is playing. NEKOPARA keeps the idle
+        // loop 待機ループ00 playing forever, so the original reports 0 at idle
+        // and the game's onUpdate sees the 1 -> 0 edge that fires
+        // onAnimationStop/onSync. Nested motion players aggregate the same way
+        // Player_getAllplaying (0x6CCE34) aggregates the playing family.
+        if(_runtime) {
+            for(const auto &node : _runtime->nodes) {
+                if(auto *child = node.getChildPlayer()) {
+                    if(child->getAnimating()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return hasAnimatingTimeline();
+    }
+
     // Aligned to libkrkr2.so Player_getRootX (0x6D98A8) / Player_setRootX
     // (0x6CD028):
     //   sub_6CD028: if (root.delta.posX != v) { root.delta.posX = v;

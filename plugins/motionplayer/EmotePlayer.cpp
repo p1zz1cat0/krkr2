@@ -199,7 +199,10 @@ namespace motion {
         _modified = true;
     }
 
-    bool EmotePlayer::getAnimating() const { return _player.getAllplaying(); }
+    // Aligned to the original D3DEmotePlayer.animating (VM oracle
+    // after-oracle-trace-pass2): idle loop timelines report 0; see
+    // Player::getAnimating. `allplaying` stays the raw playing-set query.
+    bool EmotePlayer::getAnimating() const { return _player.getAnimating(); }
 
     void EmotePlayer::setModule(tTJSVariant v) {
         _module = v;

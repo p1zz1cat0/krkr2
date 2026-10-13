@@ -158,6 +158,16 @@ namespace motion {
         void setAllplaying(bool v) { _allplaying = v; }
         bool getPlaying() const;
         bool getAllplaying() const;
+        // True while at least one playing timeline can still reach its own
+        // end. Endless authored loops (the idle loop) do not count.
+        bool getAnimating() const;
+        bool hasAnimatingTimeline() const;
+        // True when the timeline wraps from its loop point forever and never
+        // stops by itself. Mirrors the control-window branches of
+        // preProgressPlayingTimelinesLike_0x671764.
+        bool timelineLoopsForever(
+            const detail::TimelineState &state,
+            const detail::TimelineControlBinding *binding) const;
 
         void setSyncWaiting(bool v) { _syncWaiting = v; }
         bool getSyncWaiting() const { return _syncWaiting; }
