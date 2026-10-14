@@ -625,6 +625,41 @@ namespace motion {
                             return;
                         }
                     }
+                    // After emotedriver FUN_100200d0: an eyebrowControl label
+                    // with an edge/node graph walks the graph. The route
+                    // starts at the control's own value, not at the script
+                    // variable (an instant set is not visible to getVariable
+                    // before the next progress, but the route uses it).
+                    if(bindingIt->second.type == 5) {
+                        if(const auto graphIt =
+                               activeMotion->routedGraphs.find(key);
+                           graphIt != activeMotion->routedGraphs.end()) {
+                            auto &state = _type5ControllerAnimators[key];
+                            if(!state.routed) {
+                                const double current = _variableValues.count(key)
+                                    ? _variableValues[key]
+                                    : getVariable(detail::widen(key));
+                                state.queue.clear();
+                                state.active = false;
+                                state.routed.emplace(
+                                    graphIt->second,
+                                    static_cast<float>(current));
+                            }
+                            ensureEvalResultSlotLike_0x686944(key);
+                            state.routed->set(static_cast<float>(value),
+                                              static_cast<float>(transition),
+                                              static_cast<float>(easeWeight),
+                                              _emoteAnimatorFlag);
+                            state.currentValue = state.routed->value();
+                            writeEvalResultValueLike_0x6C4668(
+                                key,
+                                transition <= 0.0
+                                    ? value
+                                    : static_cast<double>(state.currentValue));
+                            _emoteDirty = true;
+                            return;
+                        }
+                    }
                     auto *bucket = controllerAnimatorBucketLike_0x671228(
                         bindingIt->second.type);
                     if(!bucket) {

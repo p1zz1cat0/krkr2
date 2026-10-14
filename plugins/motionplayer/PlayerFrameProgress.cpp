@@ -186,6 +186,17 @@ namespace motion {
         _emoteDirty = true;
     }
 
+    bool Player::stepControllerAnimatorLike_0x67D01C(
+        VariableAnimatorState &state, double dt, double &outValue) {
+        if(!state.routed) {
+            return stepQueuedAnimatorLike_0x67D01C(state, dt, outValue);
+        }
+        state.routed->advance(static_cast<float>(dt));
+        state.currentValue = state.routed->value();
+        outValue = state.currentValue;
+        return state.routed->busy();
+    }
+
     void Player::stepTimelineControlAnimatorsLike_0x67D01C(double dt) {
         for(const auto &label : _runtime->playingTimelineLabels) {
             const auto timelineIt = _runtime->timelines.find(label);
@@ -953,7 +964,7 @@ namespace motion {
                                                  double controllerDt) {
             for(auto &[label, state] : bucket) {
                 double steppedValue = state.currentValue;
-                const bool stillAnimating = stepQueuedAnimatorLike_0x67D01C(
+                const bool stillAnimating = stepControllerAnimatorLike_0x67D01C(
                     state, controllerDt, steppedValue);
                 g_emoteWriteSite = "bucket";
                 // A live diff-timeline contribution owns this label; the
@@ -1120,7 +1131,7 @@ namespace motion {
                 for(auto &[label, state] : bucket) {
                     double steppedValue = state.currentValue;
                     const bool stillAnimating =
-                        stepQueuedAnimatorLike_0x67D01C(
+                        stepControllerAnimatorLike_0x67D01C(
                             state, controllerDt, steppedValue);
                     // Live diff-timeline contribution owns this label.
                 // The controller animator follows the current accumulated value

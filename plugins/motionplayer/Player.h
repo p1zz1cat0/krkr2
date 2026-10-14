@@ -9,6 +9,7 @@
 #include <deque>
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -777,7 +778,14 @@ namespace motion {
             float progress = 1.0f;
             float duration = 0.0f;
             float weight = 1.0f;
+            // Set for eyebrowControl labels with an edge/node graph. It
+            // replaces the linear queue above; currentValue mirrors it.
+            std::optional<motion::routed::Transition> routed;
         };
+        // One controller sub-step (0x67D01C). Routed states walk their graph,
+        // the others interpolate linearly.
+        static bool stepControllerAnimatorLike_0x67D01C(
+            VariableAnimatorState &state, double dt, double &outValue);
         std::unordered_map<std::string, VariableAnimatorState>
             _variableAnimators;
         std::unordered_map<std::string, VariableAnimatorState>

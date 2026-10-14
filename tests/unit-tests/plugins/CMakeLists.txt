@@ -13,6 +13,7 @@ set(SOURCES
         extNagano-dll.cpp
         plugin-safety-dll.cpp
         motionplayer-physics.cpp
+        motionplayer-routed.cpp
         motionplayer-param.cpp
         motionplayer-source-dialect.cpp
         lzfs-dll.cpp
@@ -31,6 +32,10 @@ foreach(name ${TARGETS})
         add_executable(${name}
             ${name}.cpp
             ${KRKR2PLUGIN_PATH}/motionplayer/MotionPhysics.cpp)
+    elseif(name STREQUAL "motionplayer-routed")
+        add_executable(${name}
+            ${name}.cpp
+            ${KRKR2PLUGIN_PATH}/motionplayer/RoutedTransition.cpp)
     else()
         add_executable(${name} ${name}.cpp ${COMMON_SOURCES})
     endif()
@@ -41,7 +46,7 @@ set(ALL_TARGETS
 )
 
 foreach(name ${ALL_TARGETS})
-    if(name STREQUAL "motionplayer-physics")
+    if(name STREQUAL "motionplayer-physics" OR name STREQUAL "motionplayer-routed")
         target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain)
     else()
         target_link_libraries(${name}

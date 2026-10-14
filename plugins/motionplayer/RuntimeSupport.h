@@ -21,6 +21,7 @@
 #include "tjs.h"
 #include "psbfile/PSBFile.h"
 #include "MotionNode.h"
+#include "RoutedTransition.h"
 
 namespace motion {
     class SourceCache;
@@ -288,6 +289,11 @@ namespace motion::detail {
             variableFrames;
         std::unordered_map<std::string, VariableControllerBinding>
             controllerBindings;
+        // eyebrowControl edge/node graphs: these labels use the routed
+        // transition of the After driver instead of a straight line.
+        std::unordered_map<std::string,
+                           std::shared_ptr<const motion::routed::Graph>>
+            routedGraphs;
         std::unordered_set<std::string> instantVariableLabels;
         std::unordered_map<std::string, SelectorControlBinding>
             selectorControls;

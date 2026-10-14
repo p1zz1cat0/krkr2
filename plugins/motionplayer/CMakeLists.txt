@@ -9,6 +9,7 @@ target_sources(${PROJECT_NAME}
     PRIVATE
         EmotePlayer.cpp
         MotionPhysics.cpp
+        RoutedTransition.cpp
         PlayerCore.cpp
         PlayerPhysics.cpp
         PlayerFrameProgress.cpp

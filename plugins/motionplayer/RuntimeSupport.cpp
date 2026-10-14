@@ -456,6 +456,30 @@ namespace motion::detail {
             return std::nullopt;
         }
 
+        // A PSB number list is a PSBArray (unsigned values only) or a
+        // PSBList of numbers (negative values, e.g. eyeControl -10).
+        std::optional<std::vector<float>>
+        psbNumberList(const std::shared_ptr<PSB::IPSBValue> &value) {
+            std::vector<float> out;
+            if(auto array = std::dynamic_pointer_cast<PSB::PSBArray>(value)) {
+                for(const auto v : array->value) {
+                    out.push_back(static_cast<float>(v));
+                }
+                return out;
+            }
+            if(auto list = std::dynamic_pointer_cast<PSB::PSBList>(value)) {
+                for(const auto &item : *list) {
+                    const auto number = psbNumber(item);
+                    if(!number) {
+                        return std::nullopt;
+                    }
+                    out.push_back(static_cast<float>(*number));
+                }
+                return out;
+            }
+            return std::nullopt;
+        }
+
         std::shared_ptr<PSB::PSBList>
         dictionaryList(const std::shared_ptr<const PSB::PSBDictionary> &dic,
                        const std::vector<std::string> &keys) {
@@ -692,6 +716,47 @@ namespace motion::detail {
                     }
                 }
                 ++index;
+            }
+        }
+
+        // After emotedriver FUN_10011fb0: each eyebrowControl entry carries
+        // "edge" ([a, b] ranges) and "node" (groups of equal-shape points).
+        void collectRoutedGraphs(
+            const std::shared_ptr<const PSB::PSBDictionary> &base,
+            const char *listKey, MotionSnapshot &snapshot) {
+            const auto list = dictionaryList(base, { listKey });
+            if(!list) {
+                return;
+            }
+            for(const auto &item : *list) {
+                const auto dic =
+                    std::dynamic_pointer_cast<PSB::PSBDictionary>(item);
+                if(!dic || !dictionaryBool(dic, { "enabled" }).value_or(false)) {
+                    continue;
+                }
+                const auto label = dictionaryString(dic, { "label" });
+                if(!label || label->empty()) {
+                    continue;
+                }
+                auto graph = std::make_shared<motion::routed::Graph>();
+                if(const auto edges = dictionaryList(dic, { "edge" })) {
+                    for(const auto &edge : *edges) {
+                        const auto pair = psbNumberList(edge);
+                        if(pair && pair->size() == 2) {
+                            graph->edges.emplace_back((*pair)[0], (*pair)[1]);
+                        }
+                    }
+                }
+                if(const auto nodes = dictionaryList(dic, { "node" })) {
+                    for(const auto &node : *nodes) {
+                        if(auto group = psbNumberList(node)) {
+                            graph->nodes.push_back(std::move(*group));
+                        }
+                    }
+                }
+                if(!graph->empty()) {
+                    snapshot.routedGraphs[*label] = std::move(graph);
+                }
             }
         }
 
@@ -1058,6 +1123,7 @@ namespace motion::detail {
                                    { { "label", "label" } }, snapshot);
             collectControlBindings(metadata, "eyebrowControl", 5,
                                    { { "label", "label" } }, snapshot);
+            collectRoutedGraphs(metadata, "eyebrowControl", snapshot);
             collectControlBindings(
                 metadata, "mouthControl", 6,
                 { { "label", "label" }, { "talkLabel", "talkLabel" } },
