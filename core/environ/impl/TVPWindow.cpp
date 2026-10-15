@@ -295,6 +295,9 @@ void TVPWindowLayer::onMouseMove(const cocos2d::Vec2 &pt) {
     cocos2d::Vec2 nsp = PrimaryLayerArea->convertToNodeSpace(pt);
     _LastMouseX = nsp.x,
     _LastMouseY = PrimaryLayerArea->getContentSize().height - nsp.y;
+    // 这条输入事件投递时会转成 tTJSNI_BaseWindow::OnMouseMove，图层管理器因此
+    // 知道鼠标下面是哪个图层（光标、鼠标进出与提示文字都挂在它上面）；不要再
+    // 直接调一次，否则每次移动都会重复派发。
     TVPPostInputEvent(new tTVPOnMouseMoveInputEvent(
                           tjsNativeInstance, _LastMouseX, _LastMouseY,
                           TVPGetCurrentShiftKeyState()),

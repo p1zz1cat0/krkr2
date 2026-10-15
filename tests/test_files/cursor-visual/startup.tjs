@@ -1,0 +1,14 @@
+// 肉眼确认用：窗口先显示定好尺寸，再把主图层光标换成随包带来的动画光标
+// （洋红 ↔ 青，每帧 200 ms）。
+//
+// 用法：krkr2 <本目录>，然后把鼠标移到窗口上——指针会变成方块并换色。
+// 关掉窗口退出。自动化部分由 tests/test_files/cursor 覆盖，这里只给人看。
+var testWindow = new Window();
+var layer = new Layer(testWindow, null);
+layer.setImageSize(400, 300);
+layer.fillRect(0, 0, 400, 300, 0xff303030);
+testWindow.width = 400;
+testWindow.height = 300;
+testWindow.visible = true;
+layer.cursor = "pointer.ani";
+Debug.message("CURSOR_VISUAL_READY: move the pointer over this window");
