@@ -257,6 +257,7 @@ private:
     tjs_int forceRenderTexture_ = 0;
     tjs_real transState_ = 1.0;
     bool transitionActive_ = false;
+    bool updatingLayers_ = false;
     std::unique_ptr<tTVPBaseTexture> transitionSource_;
     // Set only for universal transitions: 8bpp rule, as the core loads it.
     struct TextureRelease {
@@ -700,9 +701,24 @@ DrawDeviceD3D::~DrawDeviceD3D() {
 }
 
 void DrawDeviceD3D::updateLayers(tjs_real elapsed) {
-    const auto snapshot = layers_;
-    for(auto *layer : snapshot) {
-        if(std::find(layers_.begin(), layers_.end(), layer) != layers_.end())
+    if(updatingLayers_)
+        return;
+    struct UpdateScope {
+        bool &active;
+        explicit UpdateScope(bool &value) : active(value) { active = true; }
+        ~UpdateScope() { active = false; }
+    } scope(updatingLayers_);
+    // Keep script owners alive. A callback can invalidate another layer.
+    std::vector<tTJSVariant> snapshot;
+    for(auto *layer : layers_) {
+        auto *owner = layer->scriptObject();
+        if(owner)
+            snapshot.emplace_back(owner, owner);
+    }
+    for(const auto &owner : snapshot) {
+        auto *layer = ncbInstanceAdaptor<D3DLayer>::GetNativeInstance(
+            owner.AsObjectNoAddRef());
+        if(layer && std::find(layers_.begin(), layers_.end(), layer) != layers_.end())
             layer->update(elapsed);
     }
 }
@@ -897,6 +913,8 @@ void DrawDeviceD3D::startTransition(iTJSDispatch2 *parameters) {
     } else if(methodName != TJS_W("crossfade")) {
         TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D supports only crossfade and universal transitions"));
     }
+    // Commit pending coordinates and visibility before copying the source frame.
+    updateLayers(0);
     auto *frame = compose();
     if(!frame || !frame->GetTexture())
         TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D.startTransition has no frame"));

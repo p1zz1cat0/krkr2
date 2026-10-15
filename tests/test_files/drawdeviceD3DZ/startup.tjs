@@ -136,6 +136,8 @@ pluginAssertEqual("universal finishes on the back plane", 0x000000f0,
 
 Scripts.execStorage("../drawdeviceD3D/multi_primary_fixture.tjs");
 
+Scripts.execStorage("../drawdeviceD3D/transition_update_fixture.tjs");
+
 // The alias must register the same nested-player dependency in a fresh process.
 Scripts.execStorage("../drawdeviceD3D/emote_fixture.tjs");
 

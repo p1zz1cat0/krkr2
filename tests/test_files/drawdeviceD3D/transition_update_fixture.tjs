@@ -1,0 +1,95 @@
+class FixtureDeferredD3DLayer extends D3DLayer {
+    var device;
+    var picture;
+    var hiddenPicture;
+    var removeTarget;
+    var reenter = false;
+    var calls = 0;
+    var elapsed = 0;
+    function FixtureDeferredD3DLayer(dev) {
+        super.D3DLayer(dev);
+        device = dev;
+    }
+    function onUpdate(diff) {
+        calls++;
+        elapsed += diff;
+        if (picture !== void) picture.setCoord(-16, -12);
+        if (hiddenPicture !== void) hiddenPicture.opacity = 0;
+        if (removeTarget !== void) {
+            invalidate removeTarget;
+            removeTarget = void;
+        }
+        if (reenter) {
+            reenter = false;
+            device.update(0);
+            device.startTransition(%[method: "crossfade"]);
+        }
+    }
+}
+
+function checkDeferredTransitionUpdate() {
+    var dev = new D3D(32, 24);
+    var source = new Layer(new Window(), null);
+    source.setImageSize(32, 24);
+    source.fillRect(0, 0, 32, 24, 0xff2468b0);
+    var expectedFront = source.getMainPixel(4, 4);
+    var frontImage = new D3DImage(dev);
+    frontImage.load(source);
+    source.fillRect(0, 0, 32, 24, 0xffb06428);
+    var expectedBack = source.getMainPixel(4, 4);
+    var backImage = new D3DImage(dev);
+    backImage.load(source);
+    var front = new FixtureDeferredD3DLayer(dev);
+    front.drawPlane = D3DLayer.DrawPlaneFront;
+    var back = new FixtureDeferredD3DLayer(dev);
+    back.drawPlane = D3DLayer.DrawPlaneBack;
+    front.picture = new D3DPicture(front, frontImage);
+    back.picture = new D3DPicture(back, backImage);
+    front.picture.assignImageRange(0, 0, 32, 24, 0, 0);
+    back.picture.assignImageRange(0, 0, 32, 24, 0, 0);
+    front.picture.blendMode = ltOpaque;
+    back.picture.blendMode = ltOpaque;
+
+    var old = new D3DLayer(dev);
+    old.drawPlane = D3DLayer.DrawPlaneFront;
+    old.frontIndex = 10;
+    var marker = new D3DPicture(old, backImage);
+    marker.assignImageRange(0, 0, 4, 4, -12, -8);
+    marker.blendMode = ltOpaque;
+    front.hiddenPicture = marker;
+    var removed = new FixtureDeferredD3DLayer(dev);
+    front.removeTarget = removed;
+    var output = new Layer(new Window(), null);
+    dev.startTransition(%[method: "crossfade"]);
+    pluginAssertEqual("snapshot commits pending front state", 1, front.calls);
+    pluginAssertEqual("snapshot commits pending back state", 1, back.calls);
+    pluginAssertEqual("snapshot does not advance time", 0, front.elapsed);
+    pluginAssertTrue("snapshot callback removes another layer", !isvalid removed);
+    dev.capture(output, 0);
+    pluginAssertEqual("snapshot covers the upper left", expectedFront,
+                      output.getMainPixel(2, 2));
+    pluginAssertEqual("snapshot covers the lower right", expectedFront,
+                      output.getMainPixel(28, 20));
+    pluginAssertEqual("snapshot excludes a pending hidden picture", expectedFront,
+                      output.getMainPixel(5, 5));
+    dev.transState = 0;
+    dev.capture(output, 0);
+    pluginAssertEqual("updated back target covers the upper left", expectedBack,
+                      output.getMainPixel(2, 2));
+    dev.capture(output, 0);
+    pluginAssertEqual("readback does not repeat script updates", 1, front.calls);
+    pluginAssertEqual("readback keeps the transition target", expectedBack,
+                      output.getMainPixel(28, 20));
+    dev.stopTransition();
+    dev.update(7);
+    pluginAssertEqual("normal update keeps its elapsed time", 7, front.elapsed);
+    front.reenter = true;
+    dev.startTransition(%[method: "crossfade"]);
+    pluginAssertEqual("nested snapshot does not repeat callbacks", 3, front.calls);
+    pluginAssertEqual("nested snapshot does not advance time", 7, front.elapsed);
+    dev.capture(output, 0);
+    pluginAssertEqual("nested snapshot keeps the source pixels", expectedFront,
+                      output.getMainPixel(2, 2));
+    dev.stopTransition();
+}
+checkDeferredTransitionUpdate();

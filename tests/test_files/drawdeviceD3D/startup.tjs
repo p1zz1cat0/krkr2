@@ -206,6 +206,8 @@ pluginAssertTrue("invalidated layers leave children",
 
 Scripts.execStorage("multi_primary_fixture.tjs");
 
+Scripts.execStorage("transition_update_fixture.tjs");
+
 // Verify nested E-mote rendering with only the draw-device modules linked.
 Scripts.execStorage("emote_fixture.tjs");
 
