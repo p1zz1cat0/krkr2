@@ -1,9 +1,9 @@
 // Routed variable transition of the After E-mote driver (emotedriver.dll,
-// PE 2025-04-28). Expression controls (eyebrowControl) do not move a variable
-// in a straight line. They walk the shortest path on a graph:
+// PE 2025-04-28). Eye and eyebrow controls follow an authored graph:
 //
 //   edge  [a, b]       a range on the variable axis that interpolates.
-//   node  {p, q, ...}  end points with the same shape; a jump costs 0.
+//   node  {p, q, ...}  equal-shape points; a jump costs 0.
+// Internal node exits retain their authored order. Same-edge moves are direct.
 //
 // Example (face_eyebrow): 怒り 20 -> 笑い 40 goes 20 -> 11, jumps to 31, then
 // goes 31 -> 40. A straight line would show 哀しみ (30) on the way.
@@ -40,7 +40,7 @@ namespace motion::routed {
     float planRoute(const Graph &graph, float from, float to,
                     std::vector<Leg> &legs);
 
-    // One routed control (emote::EPGraph inside EPEyebrowControl).
+    // One eye or eyebrow route. Blink state is owned by EyeControl.
     // set() is FUN_100200d0. advance() is FUN_1001fc70 for one sub-step; the
     // caller splits progress(dt) into sub-steps of at most 1.1 frames.
     class Transition {

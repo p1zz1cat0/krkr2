@@ -68,9 +68,47 @@ namespace motion::routed {
                     std::vector<Leg> &legs) {
         legs.clear();
 
+        const auto containingEdge = [&](float value) {
+            for(size_t i = 0; i < graph.edges.size(); ++i) {
+                const auto [a, b] = graph.edges[i];
+                if(inRange(a, b, value)) {
+                    return i;
+                }
+            }
+            return graph.edges.size();
+        };
+        const auto startEdge = containingEdge(from);
+        if(startEdge < graph.edges.size() && startEdge == containingEdge(to)) {
+            legs.push_back({ from, to });
+            return std::abs(to - from);
+        }
+
+        // FUN_100229cd selects the first internal node on the start edge.
+        // Preserve node order. A node at the start value is not a free exit.
+        std::optional<float> internalExit;
+        if(startEdge < graph.edges.size()) {
+            const auto [a, b] = graph.edges[startEdge];
+            for(const auto &group : graph.nodes) {
+                for(const float value : group) {
+                    if(value != a && value != b && inRange(a, b, value)) {
+                        internalExit = value;
+                        break;
+                    }
+                }
+                if(internalExit) {
+                    break;
+                }
+            }
+        }
+
         std::map<Vertex, std::vector<Link>> adjacency;
         const Vertex start{ true, from };
         adjacency[start];
+        if(internalExit) {
+            adjacency[start].push_back(
+                { *internalExit, std::abs(static_cast<double>(*internalExit) - from),
+                  true, from });
+        }
         for(const auto &[a, b] : graph.edges) {
             adjacency[{ false, a }];
             adjacency[{ false, b }];
@@ -100,7 +138,7 @@ namespace motion::routed {
                         adjacency[{ false, a }].push_back({ b, 0.0, false, 0 });
                     }
                 }
-                if(a == from) {
+                if(a == from && !internalExit) {
                     for(const float b : group) {
                         if(b != from) {
                             adjacency[start].push_back({ b, 0.0, false, 0 });
@@ -140,7 +178,7 @@ namespace motion::routed {
         double bestEntry = -std::numeric_limits<double>::infinity();
         std::optional<Vertex> bestVertex;
         // Start and target on the same edge: the direct move is a candidate.
-        if(const auto cost = goalCost(graph, from, to)) {
+        if(const auto cost = goalCost(graph, from, to); cost && !internalExit) {
             best = *cost;
             bestEntry = 0.0;
             bestVertex = start;

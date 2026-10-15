@@ -12,11 +12,6 @@ namespace motion::physics {
         constexpr double kSoftScale = kPi / 80.0;
         constexpr double kSoftGain = 1.149999976158142;
         constexpr double kPendLengthGuard = 0.015625;
-        // emoteplayer.dll fcn.100c5a60 cases 10/12 advance the blink by
-        // (end - begin) * dt * 2.5 / blinkFrameCount; hold and interval
-        // countdowns use plain dt. Without it blinks run 2.5x slower and
-        // linger on authored icon-swap seams (Vanilla mabuta tick 14 -> 15).
-        constexpr double kBlinkSpeedScale = 2.5;
 
         double soft(double value) {
             return std::atan(value * kSoftGain * kSoftScale) / kSoftScale;
@@ -412,136 +407,74 @@ namespace motion::physics {
         return output_;
     }
 
-    EyeControl::EyeControl(EyeConfig config) : config_(std::move(config)) {
-        current_ = config_.beginFrame;
-        lastPublished_ = current_;
-    }
+    EyeControl::EyeControl(EyeConfig config,
+                           std::shared_ptr<const routed::Graph> graph) :
+        config_(std::move(config)),
+        route_(graph ? std::move(graph) : std::make_shared<routed::Graph>(),
+               static_cast<float>(config_.beginFrame)),
+        current_(static_cast<float>(config_.beginFrame)), published_(current_) {}
 
-    bool EyeControl::atBegin(double value) const noexcept {
-        return std::abs(value - config_.beginFrame) <= 0.000001;
-    }
-
-    bool EyeControl::reachedEnd(double value) const noexcept {
-        return config_.endFrame >= config_.beginFrame
-            ? value >= config_.endFrame
-            : value <= config_.endFrame;
-    }
-
-    bool EyeControl::reachedBegin(double value) const noexcept {
-        return config_.endFrame >= config_.beginFrame
-            ? value <= config_.beginFrame
-            : value >= config_.beginFrame;
+    void EyeControl::set(float value, float duration, float weight, bool queue) {
+        route_.set(value, duration, weight, queue);
     }
 
     void EyeControl::resetCountdown(const RandomSource &random) {
-        const double unit = random ? clampRandom(random()) : 0.0;
-        countdown_ = config_.blinkIntervalMin +
-            (config_.blinkIntervalMax - config_.blinkIntervalMin) * unit;
+        const float unit = random ? static_cast<float>(clampRandom(random())) : 0.0f;
+        const float minimum = static_cast<float>(config_.blinkIntervalMin);
+        const float maximum = static_cast<float>(config_.blinkIntervalMax);
+        countdown_ = minimum + (maximum - minimum) * unit;
+        intervalInitialized_ = true;
     }
 
-    std::optional<double>
-    EyeControl::step(double dt, double currentVariableValue,
-                     const RandomSource &random) {
-        if(!config_.blinkEnabled) {
-            return std::nullopt;
-        }
-
-        // Suppression is released only after an externally driven value remains
-        // at begin for a minimum span of animation time. Authored idle holds
-        // satisfy the span; zero crossings do not. Timeline controls run after
-        // EyeControl and remain the final writer.
-        constexpr double kStableDurationNeeded = 8.0;
-        if(std::abs(currentVariableValue - stableValue_) > 0.000001) {
-            stableValue_ = currentVariableValue;
-            stableDuration_ = 0.0;
-        } else {
-            stableDuration_ += std::max(dt, 0.0);
-        }
-
-        if(suppressed_) {
-            if(atBegin(currentVariableValue) &&
-               stableDuration_ >= kStableDurationNeeded) {
-                suppressed_ = false;
-                phase_ = Phase::Idle;
-                current_ = config_.beginFrame;
-                resetCountdown(random);
-            }
-        }
-
-        if(hasPublished_ &&
-           std::abs(currentVariableValue - lastPublished_) > 0.000001) {
-            if(!atBegin(currentVariableValue)) {
-                suppressed_ = true;
-                phase_ = Phase::Idle;
-                current_ = currentVariableValue;
-            } else if(phase_ != Phase::Idle) {
-                // A later timeline may hold the authored open value while
-                // this controller is closing or opening. That final writer
-                // does not restart an in-flight automatic blink.
-            } else if(stableDuration_ >= kStableDurationNeeded) {
-                suppressed_ = false;
-                current_ = config_.beginFrame;
-                resetCountdown(random);
-            } else {
-                // While the external writer is still driving begin, wait without writing.
-                suppressed_ = true;
-                phase_ = Phase::Idle;
-                current_ = currentVariableValue;
-            }
-        } else if(!hasPublished_ && !atBegin(currentVariableValue)) {
-            suppressed_ = true;
-            current_ = currentVariableValue;
-        }
-
-        if(suppressed_) {
-            hasPublished_ = false;
-            return std::nullopt;
-        }
-        if(countdown_ < 0.0) {
+    float EyeControl::step(float dt, const RandomSource &random) {
+        route_.advance(dt);
+        const float begin = static_cast<float>(config_.beginFrame);
+        const float end = static_cast<float>(config_.endFrame);
+        const float frames = static_cast<float>(config_.blinkFrameCount);
+        if(!intervalInitialized_) {
             resetCountdown(random);
         }
-
-        if(dt > 0.0) {
-            const double delta = config_.endFrame - config_.beginFrame;
-            switch(phase_) {
-                case Phase::Idle:
-                    if(atBegin(current_)) {
-                        countdown_ -= dt;
-                        if(countdown_ <= 0.0) {
-                            phase_ = Phase::Closing;
-                        }
-                    }
+        // Reuse the full dt after a phase change. Bound a zero-interval cycle.
+        for(int phaseSteps = 0; phaseSteps < 5; ++phaseSteps) {
+            if(phase_ == Phase::Idle) {
+                if(!config_.blinkEnabled || std::trunc(current_) != begin) {
                     break;
-                case Phase::Closing:
-                    current_ += delta * dt * kBlinkSpeedScale /
-                        config_.blinkFrameCount;
-                    if(reachedEnd(current_)) {
-                        current_ = config_.endFrame;
-                        hold_ = config_.blinkFrameCount / 5.0;
-                        phase_ = Phase::Hold;
-                    }
+                }
+                countdown_ -= dt;
+                if(countdown_ > 0.0f) {
                     break;
-                case Phase::Hold:
-                    hold_ -= dt;
-                    if(hold_ <= 0.0) {
-                        resetCountdown(random);
-                        phase_ = Phase::Opening;
-                    }
+                }
+                phase_ = Phase::Closing;
+            } else if(phase_ == Phase::Closing) {
+                current_ += dt * 2.5f / frames * (end - begin);
+                if(end >= begin ? current_ < end : current_ > end) {
                     break;
-                case Phase::Opening:
-                    current_ -= delta * dt * kBlinkSpeedScale /
-                        config_.blinkFrameCount;
-                    if(reachedBegin(current_)) {
-                        current_ = config_.beginFrame;
-                        phase_ = Phase::Idle;
-                    }
+                }
+                current_ = end;
+                phase_ = Phase::Hold;
+                countdown_ = frames / 5.0f;
+            } else if(phase_ == Phase::Hold) {
+                countdown_ -= dt;
+                if(countdown_ > 0.0f) {
                     break;
+                }
+                phase_ = Phase::Opening;
+                resetCountdown(random);
+            } else {
+                current_ -= dt * 2.5f / frames * (end - begin);
+                if(end >= begin ? current_ > begin : current_ < begin) {
+                    break;
+                }
+                current_ = begin;
+                phase_ = Phase::Idle;
             }
         }
-
-        lastPublished_ = current_;
-        hasPublished_ = true;
-        return current_;
+        published_ = route_.value();
+        if(end != begin && std::min(begin, end) <= published_ &&
+           published_ <= std::max(begin, end)) {
+            published_ += (current_ - begin) * (end - published_) / (end - begin);
+        }
+        return published_;
     }
 
 } // namespace motion::physics

@@ -289,7 +289,7 @@ namespace motion::detail {
             variableFrames;
         std::unordered_map<std::string, VariableControllerBinding>
             controllerBindings;
-        // eyebrowControl edge/node graphs: these labels use the routed
+        // Eye and eyebrow edge/node graphs: these labels use the routed
         // transition of the After driver instead of a straight line.
         std::unordered_map<std::string,
                            std::shared_ptr<const motion::routed::Graph>>

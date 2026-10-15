@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "RoutedTransition.h"
+
 namespace motion::physics {
 
     // The 2016 DLL constructors leave these fields untouched even though the
@@ -214,36 +216,27 @@ namespace motion::physics {
     public:
         using RandomSource = WindControl::RandomSource;
 
-        explicit EyeControl(EyeConfig config);
+        explicit EyeControl(EyeConfig config,
+                            std::shared_ptr<const routed::Graph> graph = nullptr);
 
         [[nodiscard]] const EyeConfig &config() const noexcept {
             return config_;
         }
-        [[nodiscard]] std::optional<double>
-        step(double dt, double currentVariableValue,
-             const RandomSource &random);
+        void set(float value, float duration, float weight, bool queue);
+        float step(float dt, const RandomSource &random);
+        [[nodiscard]] float value() const noexcept { return published_; }
 
     private:
         enum class Phase { Idle, Closing, Hold, Opening };
-
         void resetCountdown(const RandomSource &random);
-        [[nodiscard]] bool atBegin(double value) const noexcept;
-        [[nodiscard]] bool reachedEnd(double value) const noexcept;
-        [[nodiscard]] bool reachedBegin(double value) const noexcept;
 
         EyeConfig config_;
+        routed::Transition route_;
         Phase phase_ = Phase::Idle;
-        double current_ = 0.0;
-        double countdown_ = -1.0;
-        double hold_ = 0.0;
-        double lastPublished_ = 0.0;
-        bool hasPublished_ = false;
-        bool suppressed_ = false;
-        // Release suppression only after an externally driven label remains at
-        // begin for a minimum animation-time span. Repeated progress(0) calls
-        // do not satisfy the span.
-        double stableDuration_ = 0.0;
-        double stableValue_ = 0.0;
+        float current_ = 0.0f;
+        float countdown_ = -1.0f;
+        float published_ = 0.0f;
+        bool intervalInitialized_ = false;
     };
 
     struct ControllerRuntimeState {

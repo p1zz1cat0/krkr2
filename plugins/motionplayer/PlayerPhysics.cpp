@@ -193,7 +193,8 @@ namespace {
 
     std::unique_ptr<motion::physics::ControllerRuntimeState>
     buildControllerCandidate(const tTJSVariant &metadata,
-                             std::uint64_t motionGeneration) {
+                             std::uint64_t motionGeneration,
+                             const motion::detail::MotionSnapshot *snapshot) {
         if(metadata.Type() != tvtObject ||
            metadata.AsObjectNoAddRef() == nullptr) {
             invalidMetadata("root must be an object");
@@ -364,7 +365,14 @@ namespace {
                    config.blinkFrameCount <= 0.0) {
                     invalidMetadata("eyeControl blink ranges are invalid");
                 }
-                candidate->eyes.emplace_back(std::move(config));
+                std::shared_ptr<const motion::routed::Graph> graph;
+                if(snapshot) {
+                    const auto it = snapshot->routedGraphs.find(config.label);
+                    if(it != snapshot->routedGraphs.end()) {
+                        graph = it->second;
+                    }
+                }
+                candidate->eyes.emplace_back(std::move(config), std::move(graph));
             });
 
         return candidate;
@@ -378,7 +386,8 @@ namespace motion {
             metadata.Type() == tvtVoid ? _metadata : metadata;
         try {
             auto candidate = buildControllerCandidate(
-                source, _runtime ? _runtime->motionGeneration : 0);
+                source, _runtime ? _runtime->motionGeneration : 0,
+                _runtime ? _runtime->activeMotion.get() : nullptr);
 
             const bool hasPostCoreControls = !candidate->bust.empty() ||
                 !candidate->hair.empty() || !candidate->parts.empty();
@@ -432,6 +441,9 @@ namespace motion {
             }
 
             _controllerState.swap(candidate);
+            for(const auto &eye : _controllerState->eyes) {
+                _type4ControllerAnimators.erase(eye.config().label);
+            }
             _progressTransactionOpen = false;
             _progressTransactionDt = 0.0;
             LOGGER->debug(
@@ -546,20 +558,23 @@ namespace motion {
         }
 
         const auto randomSource = [this]() { return random(); };
+        _controllerState->wind.step(_progressTransactionDt, randomSource);
+    }
+
+    void Player::stepEyeControllers(float dt) {
+        if(!_controllerState || !_runtime ||
+           _controllerState->motionGeneration != _runtime->motionGeneration) {
+            return;
+        }
+        const auto randomSource = [this]() { return random(); };
         for(auto &eye : _controllerState->eyes) {
-            const auto &config = eye.config();
-            double currentValue = config.beginFrame;
-            if(const auto it = _variableValues.find(config.label);
-               it != _variableValues.end()) {
-                currentValue = it->second;
-            }
-            if(const auto output =
-                   eye.step(_progressTransactionDt, currentValue,
-                            randomSource)) {
-                writeEvalResultValueLike_0x6C4668(config.label, *output);
+            const float previous = eye.value();
+            const float output = eye.step(dt, randomSource);
+            writeEvalResultValueLike_0x6C4668(eye.config().label, output);
+            if(output != previous) {
+                _emoteDirty = true;
             }
         }
-        _controllerState->wind.step(_progressTransactionDt, randomSource);
     }
 
     void Player::finishProgressTransaction() {

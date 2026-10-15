@@ -990,7 +990,7 @@ namespace motion {
         std::unordered_map<std::string, double> prevTimes;
         preProgressPlayingTimelinesLike_0x671764(actualDelta, &prevTimes);
 
-        double remainingControllerStep = actualDelta;
+        float remainingControllerStep = static_cast<float>(actualDelta);
         const auto stepControllerBucket = [this](auto &bucket,
                                                  double controllerDt) {
             for(auto &[label, state] : bucket) {
@@ -1012,8 +1012,9 @@ namespace motion {
                 }
             }
         };
-        while(remainingControllerStep > 0.0) {
-            const double controllerDt = std::min(remainingControllerStep, 1.1);
+        do {
+            const float controllerDt = std::min(remainingControllerStep, 1.1f);
+            stepEyeControllers(controllerDt);
             // Aligned to 0x67D01C container order: type4 -> type5 -> type6
             // -> type8 -> type7, then generic eval animators.
             stepControllerBucket(_type4ControllerAnimators, controllerDt);
@@ -1023,7 +1024,7 @@ namespace motion {
             stepControllerBucket(_type7ControllerAnimators, controllerDt);
             refreshFixedControllerEvalOutputsLike_0x67D01C();
             remainingControllerStep -= controllerDt;
-        }
+        } while(remainingControllerStep > 0.0f);
 
         applyEvalResultPostProcessLike_0x67CC9C();
 
@@ -1112,11 +1113,8 @@ namespace motion {
         const double dtFrames = deltaMs * kMotionFramesPerMillisecond;
         _frameLastTime = dtFrames;
 
-        // REF EmotePlayer::progress publishes staged physics and EyeControl
-        // before authored timeline controls. Keep that ownership order: the
-        // timeline/controller/post-process chain below is the final writer for
-        // labels it owns, so an automatic blink or prior-frame physics output
-        // cannot overwrite an authored pose in the same frame.
+        // Transfer prior-frame physics before timeline control updates.
+        // Eye controllers step with their routes in the controller loop below.
         beginProgressTransaction(_speed ? dtFrames : 0.0);
 
         // The controller sub-steps, the fixed-controller refresh and the
@@ -1145,7 +1143,7 @@ namespace motion {
 
         // sdl3: clockPassed += mstime/speedRatio（仅 _playing）；立绘树固定
         // progress(0)。
-        if(_speed && dtFrames > 0.0) {
+        if(_speed) {
             _frameLoopTime += dtFrames;
             _loopTime += dtFrames;
             preProgressPlayingTimelinesLike_0x671764(dtFrames, nullptr);
@@ -1156,7 +1154,7 @@ namespace motion {
             // face_mouth and face_talk stay forever at their initial value:
             // the PSB resources are present, but the character keeps the
             // neutral eyes-only face while dialogue is playing.
-            double remainingControllerStep = dtFrames;
+            float remainingControllerStep = static_cast<float>(dtFrames);
             const auto stepControllerBucket = [this](auto &bucket,
                                                      double controllerDt) {
                 for(auto &[label, state] : bucket) {
@@ -1174,9 +1172,10 @@ namespace motion {
                     }
                 }
             };
-            while(remainingControllerStep > 0.0) {
-                const double controllerDt =
-                    std::min(remainingControllerStep, 1.1);
+            do {
+                const float controllerDt =
+                    std::min(remainingControllerStep, 1.1f);
+                stepEyeControllers(controllerDt);
                 stepControllerBucket(_type4ControllerAnimators,
                                      controllerDt);
                 stepControllerBucket(_type5ControllerAnimators,
@@ -1189,7 +1188,7 @@ namespace motion {
                                      controllerDt);
                 refreshFixedControllerEvalOutputsLike_0x67D01C();
                 remainingControllerStep -= controllerDt;
-            }
+            } while(remainingControllerStep > 0.0f);
         }
         // progress(0) 也须 face_talk→talk 与 clamp；否则口型 parameter 不刷新。
         applyEvalResultPostProcessLike_0x67CC9C();

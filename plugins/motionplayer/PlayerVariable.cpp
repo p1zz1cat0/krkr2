@@ -571,6 +571,21 @@ namespace motion {
                 case 5:
                 case 7:
                 case 8: {
+                    if(bindingIt->second.type == 4 && _controllerState &&
+                       _controllerState->motionGeneration ==
+                           _runtime->motionGeneration) {
+                        for(auto &eye : _controllerState->eyes) {
+                            if(eye.config().label == key) {
+                                eye.set(static_cast<float>(value),
+                                        static_cast<float>(transition),
+                                        static_cast<float>(easeWeight),
+                                        _emoteAnimatorFlag);
+                                ensureEvalResultSlotLike_0x686944(key);
+                                _emoteDirty = true;
+                                return;
+                            }
+                        }
+                    }
                     if(bindingIt->second.type == 8 && activeMotion) {
                         const auto selectorIt =
                             activeMotion->selectorControls.find(key);

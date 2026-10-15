@@ -719,7 +719,7 @@ namespace motion::detail {
             }
         }
 
-        // After emotedriver FUN_10011fb0: each eyebrowControl entry carries
+        // After emotedriver FUN_100118e0 / FUN_10011fb0: each eye/brow entry carries
         // "edge" ([a, b] ranges) and "node" (groups of equal-shape points).
         void collectRoutedGraphs(
             const std::shared_ptr<const PSB::PSBDictionary> &base,
@@ -1123,6 +1123,7 @@ namespace motion::detail {
                                    { { "label", "label" } }, snapshot);
             collectControlBindings(metadata, "eyebrowControl", 5,
                                    { { "label", "label" } }, snapshot);
+            collectRoutedGraphs(metadata, "eyeControl", snapshot);
             collectRoutedGraphs(metadata, "eyebrowControl", snapshot);
             collectControlBindings(
                 metadata, "mouthControl", 6,

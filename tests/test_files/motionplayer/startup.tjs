@@ -104,17 +104,13 @@ player.motionKey = Storages.getPlacedPath(
 player.chara = data.metadata.base.chara;
 player.play(data.metadata.base.motion, Motion.PlayFlagForce);
 
-// Make the automatic blink deterministic and short. Eye is a pre-Core
-// controller: progress(0) republishes but does not advance it.
-data.metadata.eyeControl[0].blinkIntervalMin = 0;
-data.metadata.eyeControl[0].blinkIntervalMax = 0;
-data.metadata.eyeControl[0].blinkFrameCount = 2;
+// Use a deterministic blink interval. progress(0) publishes without elapsed time.
+data.metadata.eyeControl[0].blinkIntervalMin = 2;
+data.metadata.eyeControl[0].blinkIntervalMax = 2;
+data.metadata.eyeControl[0].blinkFrameCount = 16;
 player.initPhysics(data.metadata);
 
-// REF writer order: automatic EyeControl publishes before authored timeline
-// controls, so a timeline that owns face_eye_open remains the final writer.
-// sample_全自動_test holds face_eye_open at 0 for its opening segment while
-// the deterministic zero-interval EyeControl tries to start a blink.
+// A timeline that holds the route at zero must keep the independent blink.
 var writerOrderPlayer = new Motion.EmotePlayer(manager);
 writerOrderPlayer.motionKey = Storages.getPlacedPath(
     "../emote/e-mote3.0バニラパジャマa.psb");
@@ -126,8 +122,14 @@ writerOrderPlayer.playTimeline("sample_全自動_test",
 for (var writerFrame = 0; writerFrame < 20; writerFrame++) {
     writerOrderPlayer.progress(1000.0 / 60.0);
 }
-check(Math.abs(writerOrderPlayer.getVariable("face_eye_open")) < 0.001,
-    "authored eye timeline wins over automatic EyeControl");
+check(Math.abs(writerOrderPlayer.getVariable("face_eye_open") - 4.6875) < 0.001,
+    "authored open route preserves automatic EyeControl");
+writerOrderPlayer.setVariable("face_eye_open", 5, 0, 0);
+check(Math.abs(writerOrderPlayer.getVariable("face_eye_open") - 4.6875) < 0.001,
+    "instant eye set keeps the last published value");
+writerOrderPlayer.progress(0);
+check(Math.abs(writerOrderPlayer.getVariable("face_eye_open") - 7.34375) < 0.001,
+    "zero progress publishes the eye route and current blink");
 
 // A01 ABI: REF EmotePlayer members the wrapper historically lacked
 // (ref/emoteplayerclass.h property_marco + clear/assign/setCameraOffset).
@@ -483,9 +485,9 @@ stackPlayer.motionKey = Storages.getPlacedPath(
     "../emote/e-mote3.0バニラパジャマa.psb");
 stackPlayer.chara = stackData.metadata.base.chara;
 stackPlayer.play(stackData.metadata.base.motion, Motion.PlayFlagForce);
-stackData.metadata.eyeControl[0].blinkIntervalMin = 0;
-stackData.metadata.eyeControl[0].blinkIntervalMax = 0;
-stackData.metadata.eyeControl[0].blinkFrameCount = 2;
+stackData.metadata.eyeControl[0].blinkIntervalMin = 30;
+stackData.metadata.eyeControl[0].blinkIntervalMax = 30;
+stackData.metadata.eyeControl[0].blinkFrameCount = 16;
 stackPlayer.initPhysics(stackData.metadata);
 stackPlayer.setCoord(640, 720);
 stackPlayer.setScale(1.0);
@@ -657,8 +659,7 @@ pluginAssertEqual("rebind reuses command layers without stale pixels",
 // variable and writes it back. The talk input must still open the mouth, but
 // read back as its resting value so the write-back closes it again.
 function a10Canvas() {
-    // progress(0) republishes variables without advancing the zero-interval
-    // blink this fixture configures, so frames are comparable.
+    // progress(0) publishes variables without advancing blink time.
     stackPlayer.progress(0);
     stackPlayer.draw(stackAdaptor);
     var out = new Layer(new Window(), null);

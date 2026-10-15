@@ -31,7 +31,8 @@ foreach(name ${TARGETS})
     if(name STREQUAL "motionplayer-physics")
         add_executable(${name}
             ${name}.cpp
-            ${KRKR2PLUGIN_PATH}/motionplayer/MotionPhysics.cpp)
+            ${KRKR2PLUGIN_PATH}/motionplayer/MotionPhysics.cpp
+            ${KRKR2PLUGIN_PATH}/motionplayer/RoutedTransition.cpp)
     elseif(name STREQUAL "motionplayer-routed")
         add_executable(${name}
             ${name}.cpp

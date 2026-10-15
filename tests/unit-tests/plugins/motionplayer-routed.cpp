@@ -267,3 +267,24 @@ TEST_CASE("instant set and repeated target", "[motionplayer][routed]") {
     CHECK(transition.value() == 5);
     CHECK_FALSE(transition.busy());
 }
+
+TEST_CASE("Eye internal nodes preserve the authored exit order", "[motionplayer][routed]") {
+    Graph graph;
+    graph.edges = { { -10, 20 }, { 30, 30 }, { 32, 32 }, { 40, 40 } };
+    graph.nodes = { { 10, 30, 32, 40, 0 } };
+    std::vector<Leg> legs;
+    CHECK(motion::routed::planRoute(graph, 0, 32, legs) == 10);
+    REQUIRE(legs.size() == 2);
+    CHECK(legs[0].from == 0);
+    CHECK(legs[0].to == 10);
+    CHECK(legs[1].to == 32);
+    CHECK(motion::routed::planRoute(graph, 32, 0, legs) == 0);
+    CHECK(motion::routed::planRoute(graph, 32, 5, legs) == 5);
+    REQUIRE(legs.size() == 1);
+    CHECK(legs[0].from == 10);
+    CHECK(motion::routed::planRoute(graph, 32, 1, legs) == 1);
+    CHECK(legs[0].from == 0);
+    CHECK(motion::routed::planRoute(graph, 0, 10, legs) == 10);
+    REQUIRE(legs.size() == 1);
+    CHECK(legs[0].from == 0);
+}

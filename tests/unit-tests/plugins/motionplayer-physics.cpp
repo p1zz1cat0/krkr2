@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <cmath>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -412,118 +413,99 @@ TEST_CASE("Physics rejects non-finite frame inputs") {
         std::invalid_argument);
 }
 
-TEST_CASE("Eye is a pre-Core controller and zero dt republishes its value") {
-    motion::physics::EyeConfig config;
-    config.beginFrame = 0.0;
-    config.endFrame = 10.0;
-    config.blinkIntervalMin = 0.0;
-    config.blinkIntervalMax = 0.0;
-    config.blinkFrameCount = 5.0;
-    config.blinkEnabled = true;
-    config.label = "face_eye_open";
-    motion::physics::EyeControl eye(config);
-
-    REQUIRE(eye.step(0.0, 0.0, [] { return 0.0; }).value() ==
-            Catch::Approx(0.0));
-    REQUIRE(eye.step(1.0, 0.0, [] { return 0.0; }).value() ==
-            Catch::Approx(0.0));
-    REQUIRE(eye.step(1.0, 0.0, [] { return 0.0; }).value() ==
-            Catch::Approx(5.0));
-}
-
-TEST_CASE("Eye closes and opens 2.5x faster than blinkFrameCount") {
-    // NEKOPARA Vanilla eyeControl: 0 -> 10 over blinkFrameCount 16.
-    motion::physics::EyeConfig config;
-    config.beginFrame = 0.0;
-    config.endFrame = 10.0;
-    config.blinkIntervalMin = 0.0;
-    config.blinkIntervalMax = 0.0;
-    config.blinkFrameCount = 16.0;
-    config.blinkEnabled = true;
-    motion::physics::EyeControl eye(config);
+TEST_CASE("Eye route and blink match all After original-driver samples") {
+    auto graph = std::make_shared<motion::routed::Graph>();
+    graph->edges = { { -10, 20 }, { 30, 30 }, { 32, 32 }, { 34, 34 },
+                     { 36, 36 }, { 38, 38 }, { 40, 40 } };
+    graph->nodes = { { 10, 30, 32, 34, 36, 38, 40, 0 } };
+    std::ifstream input(TEST_FILES_PATH "/motionplayer-physics/after-eyecontrol.tsv");
+    REQUIRE(input.good());
+    std::optional<motion::physics::EyeControl> eye;
     const auto random = [] { return 0.0; };
-
-    REQUIRE(eye.step(1.0, 0.0, random).value() == Catch::Approx(0.0));
-    for(int frame = 1; frame <= 6; ++frame) {
-        REQUIRE(eye.step(1.0, 0.0, random).value() ==
-                Catch::Approx(frame * 1.5625));
+    std::string line, id;
+    int cases = 0, reads = 0;
+    while(std::getline(input, line)) {
+        if(line.empty() || line.front() == '#') {
+            continue;
+        }
+        std::istringstream parser(line);
+        std::string command;
+        REQUIRE(parser >> command);
+        if(command == "CASE") {
+            float from;
+            bool aligned, enabled;
+            REQUIRE(parser >> id >> from >> aligned >> enabled);
+            motion::physics::EyeConfig config;
+            config.beginFrame = 0;
+            config.endFrame = 10;
+            config.blinkIntervalMin = config.blinkIntervalMax = 30;
+            config.blinkFrameCount = 16;
+            config.blinkEnabled = enabled;
+            eye.emplace(config, graph);
+            eye->set(from, 0, 1, false);
+            eye->step(0, random);
+            if(aligned) {
+                int wait = 0;
+                while(eye->value() == 0 && wait++ < 300) {
+                    eye->step(1, random);
+                }
+                REQUIRE(eye->value() == 1.5625f);
+            }
+            ++cases;
+        } else {
+            REQUIRE(eye.has_value());
+            INFO(id << ": " << line);
+            if(command == "SET") {
+                float value, duration, ease;
+                REQUIRE(parser >> value >> duration >> ease);
+                const float weight = ease > 0 ? ease + 1 : 1 / (1 - ease);
+                eye->set(value, duration, weight, false);
+            } else if(command == "PROGRESS") {
+                float remaining;
+                REQUIRE(parser >> remaining);
+                do {
+                    const float dt = std::min(remaining, 1.1f);
+                    eye->step(dt, random);
+                    remaining -= dt;
+                } while(remaining > 0);
+            } else {
+                REQUIRE(command == "READ");
+                double expected;
+                REQUIRE(parser >> expected);
+                CHECK(eye->value() == Catch::Approx(expected).margin(0.0001));
+                ++reads;
+            }
+        }
     }
-    REQUIRE(eye.step(1.0, 0.0, random).value() == Catch::Approx(10.0));
-    // Hold is blinkFrameCount / 5 = 3.2 plain frames, not scaled.
-    for(int frame = 0; frame < 4; ++frame) {
-        REQUIRE(eye.step(1.0, 0.0, random).value() == Catch::Approx(10.0));
-    }
-    REQUIRE(eye.step(1.0, 0.0, random).value() ==
-            Catch::Approx(10.0 - 1.5625));
+    CHECK(cases == 35);
+    CHECK(reads == 602);
 }
 
-TEST_CASE("Eye keeps an in-flight blink when a timeline holds the open value") {
+TEST_CASE("Eye metadata disables blink without disabling its route") {
     motion::physics::EyeConfig config;
-    config.beginFrame = 0.0;
-    config.endFrame = 10.0;
-    config.blinkIntervalMin = 10.0;
-    config.blinkIntervalMax = 10.0;
-    config.blinkFrameCount = 5.0;
-    config.blinkEnabled = true;
-    motion::physics::EyeControl eye(config);
-
-    int draws = 0;
-    const auto random = [&draws] {
-        ++draws;
-        return 0.5;
-    };
-    for(int frame = 0; frame < 10; ++frame) {
-        REQUIRE(eye.step(1.0, 0.0, random).value() ==
-                Catch::Approx(0.0));
+    config.endFrame = 10;
+    config.blinkFrameCount = 16;
+    auto graph = std::make_shared<motion::routed::Graph>();
+    graph->edges = { { -10, 20 } };
+    motion::physics::EyeControl eye(config, graph);
+    for(int frame = 0; frame < 300; ++frame) {
+        REQUIRE(eye.step(1, [] { return 0.0; }) == 0);
     }
-    REQUIRE(eye.step(1.0, 0.0, random).value() ==
-            Catch::Approx(5.0));
-    REQUIRE(eye.step(1.0, 0.0, random).value() ==
-            Catch::Approx(10.0));
-    CHECK(draws == 1);
-    REQUIRE(eye.step(1.0, 0.0, random).value() ==
-            Catch::Approx(10.0));
-    CHECK(draws == 2);
-    REQUIRE(eye.step(1.0, 0.0, random).value() ==
-            Catch::Approx(5.0));
-    REQUIRE(eye.step(1.0, 0.0, random).value() ==
-            Catch::Approx(0.0));
-    for(int frame = 0; frame < 9; ++frame) {
-        REQUIRE(eye.step(1.0, 0.0, random).value() ==
-                Catch::Approx(0.0));
-    }
-    CHECK(draws == 2);
+    eye.set(5, 8, 1, false);
+    REQUIRE(eye.value() == 0);
+    REQUIRE(eye.step(1, [] { return 0.0; }) == 0.625f);
 }
 
-TEST_CASE("Eye supports reverse ranges and manual suppression") {
+TEST_CASE("Eye bounds zero-interval cycles and degenerate ranges") {
     motion::physics::EyeConfig config;
-    config.beginFrame = 10.0;
-    config.endFrame = 0.0;
-    config.blinkIntervalMin = 0.0;
-    config.blinkIntervalMax = 0.0;
-    config.blinkFrameCount = 5.0;
     config.blinkEnabled = true;
-    config.label = "face_eye_open";
-    motion::physics::EyeControl eye(config);
-
-    REQUIRE(eye.step(1.0, 10.0, [] { return 0.0; }).value() ==
-            Catch::Approx(10.0));
-    REQUIRE(eye.step(1.0, 10.0, [] { return 0.0; }).value() ==
-            Catch::Approx(5.0));
-    CHECK_FALSE(eye.step(1.0, 7.0, [] { return 0.0; }).has_value());
-    // F04/F05 debounce: a single frame at begin does not unsuppress — the
-    // external writer must hold begin for the required elapsed duration.
-    CHECK_FALSE(eye.step(0.0, 10.0, [] { return 0.0; }).has_value());
-    for(int stable = 1; stable < 8; ++stable) {
-        CHECK_FALSE(eye.step(1.0, 10.0, [] { return 0.0; }).has_value());
-    }
-    REQUIRE(eye.step(1.0, 10.0, [] { return 0.0; }).value() ==
-            Catch::Approx(10.0));
-    // Repeated zero-delta calls do not satisfy the elapsed-time debounce.
-    motion::physics::EyeControl zeroDelta(config);
-    REQUIRE_FALSE(zeroDelta.step(1.0, 7.0, [] { return 0.0; }).has_value());
-    for(int i = 0; i < 16; ++i) {
-        CHECK_FALSE(zeroDelta.step(0.0, 10.0, [] { return 0.0; }).has_value());
+    config.blinkFrameCount = 2;
+    for(const double end : { 0.0, 10.0, -10.0 }) {
+        config.endFrame = end;
+        motion::physics::EyeControl eye(config);
+        for(int frame = 0; frame < 30; ++frame) {
+            CHECK(std::isfinite(eye.step(1, [] { return 0.0; })));
+        }
     }
 }
 

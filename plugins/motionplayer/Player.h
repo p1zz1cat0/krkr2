@@ -582,6 +582,7 @@ namespace motion {
                                                     double transition,
                                                     double easeWeight);
         void resetControllerStateLike_0x66EB8C();
+        void stepEyeControllers(float dt);
         void applyEvalResultPostProcessLike_0x67CC9C();
         void applyClampControlsLike_0x67C8A8();
         bool shouldMirrorEvalLabelLike_0x67C6B0(const std::string &label);
