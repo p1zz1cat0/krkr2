@@ -334,15 +334,39 @@ function a09NewPlayer() {
     }
     return p;
 }
+// The sway must show in the drawing but not in getVariable: the original
+// DLL adds a diff contribution to the evaluated value only (bug 0019; VM
+// oracle after-oracle-trace-pass2 reads -30 for player 5 while the idle
+// diff loop plays). The control player has no diff loop, so a still
+// drawing proves that the sway comes from the loop.
+function a09Digests(p) {
+    var layer = new Layer(new Window(), null);
+    layer.setImageSize(1280, 720);
+    layer.setSize(1280, 720);
+    var adaptor = new Motion.SeparateLayerAdaptor(layer);
+    adaptor.targetLayer = layer;
+    p.setCoord(640, 700);
+    p.setScale(0.6);
+    var digests = [];
+    for (var a09frame = 0; a09frame < 60; a09frame++) {
+        p.progress(1000.0 / 60.0);
+        if (a09frame == 29 || a09frame == 59) {
+            p.draw(adaptor);
+            digests.add(composedCanvasDigest(layer));
+        }
+    }
+    return digests;
+}
+var a09ctl = a09Digests(a09NewPlayer());
 var a09src = a09NewPlayer();
 a09src.playTimeline("差分用_waiting_loop2",
     Motion.TimelinePlayFlagParallel | Motion.TimelinePlayFlagDifference);
 a09src.setTimelineBlendRatio("差分用_waiting_loop2", 1, 0, 0);
-for (var a09frame = 0; a09frame < 60; a09frame++) {
-    a09src.progress(1000.0 / 60.0);
-}
-check(Math.abs(a09src.getVariable("body_LR")) > 1,
-    "A09 diff loop sways body_LR before the copy");
+var a09sway = a09Digests(a09src);
+check(a09ctl[0] == a09ctl[1], "A09 control player without the diff loop stays still");
+check(a09sway[0] != a09sway[1], "A09 diff loop sways the drawing before the copy");
+check(Math.abs(a09src.getVariable("body_LR")) < 0.001,
+    "A09 getVariable reports the script value while the diff loop plays");
 var a09saved = a09src.serialize();
 check(Math.abs(a09saved.variables.body_LR) < 0.001,
     "A09 serialize stores body_LR without the diff offset");

@@ -253,10 +253,10 @@ namespace motion {
             if(binding.label.empty()) {
                 continue;
             }
-            // A diff-timeline track driving this label owns its value while
-            // its contribution is live; republishing the controller
-            // animator's stale snapshot here would overwrite the accumulated
-            // output every substep (idle sway froze at its base value).
+            // A controller bucket already published the stepped value for a
+            // diff-owned label; the post-process adds the contribution on top
+            // of it. Republishing the same snapshot here would only repeat
+            // that write once per substep.
             if(hasActiveDifferenceTimelineOwner(binding.label)) {
                 continue;
             }
@@ -458,25 +458,34 @@ namespace motion {
     }
 
     void Player::applyEvalResultPostProcessLike_0x67CC9C() {
-        // Diff-timeline contributions are REPLACED each frame, not added to
-        // the previous output: subtract the pending offset, re-accumulate
-        // from the recovered base, then publish. Downstream writers (clamp
-        // controls) overwrite entry.value with the final value; pendingDiff
-        // keeps that from integrating into a runaway (body_UD hit ±90).
+        // Diff-timeline contributions layer onto the script-space value every
+        // frame. The variable table holds the base value. Publish the
+        // accumulated output to the eval map and the parameter bindings only.
+        // A contribution that reached the variable table was folded into the
+        // base by the next script write: NEKOPARA After reads each body and
+        // head variable back and re-issues it (getVariable then setVariable),
+        // so the pose drifted and shook while a diff timeline played (bug
+        // 0019; VM oracle after-oracle-trace-pass2 reads -30 forever for
+        // player 5). A label without a variable table entry falls back to the
+        // eval slot, which holds the last base plus contribution.
         for(auto &entry : _evalResultList) {
-            entry.value -= entry.pendingDiff;
-            double outputValue = entry.value;
+            const auto variableIt = _variableValues.find(entry.label);
+            const double base = variableIt != _variableValues.end()
+                ? variableIt->second
+                : entry.value - entry.pendingDiff;
+            double outputValue = base;
             accumulateTimelineContributionLike_0x67C560(entry.label,
                                                         outputValue);
             const double preMirror = outputValue;
-            entry.pendingDiff = preMirror - entry.value;
+            entry.pendingDiff = preMirror - base;
             if(shouldMirrorEvalLabelLike_0x67C6B0(entry.label)) {
                 outputValue = -outputValue;
             }
             g_emoteWriteSite = "postProcess";
-            writeEvalResultValueLike_0x6C4668(entry.label, outputValue);
-            // writeEvalResultValue stored the mirrored final; keep the
-            // unmirrored base+diff so next frame's subtraction matches.
+            publishEvalResultValueKeepingVariableLike_0x6C4668(entry.label, 0,
+                                                               outputValue);
+            // Keep the unmirrored base plus contribution in the eval slot;
+            // serialize reads the script-space base as slot - pendingDiff.
             entry.value = preMirror;
         }
 
@@ -967,14 +976,14 @@ namespace motion {
                 const bool stillAnimating = stepControllerAnimatorLike_0x67D01C(
                     state, controllerDt, steppedValue);
                 g_emoteWriteSite = "bucket";
-                // A live diff-timeline contribution owns this label; the
-                // controller animator's stale snapshot must not fight it
-                // (NEKOPARA posed body_UD=-30 vs accumulate ≈0 ping-ponged
-                // the character between two poses every frame).
-                if(hasActiveDifferenceTimelineOwner(label)) {
-                    state.currentValue = static_cast<float>(steppedValue);
-                    continue;
-                }
+                // The controller animator's output is the label's base value;
+                // the post-process adds a live diff-timeline contribution on
+                // top. Diff-owned labels must publish it too: the original DLL
+                // reports the stepped value through getVariable while the diff
+                // timeline plays (VM oracle after-oracle-trace-pass2, player 16
+                // body_UD), and NEKOPARA feeds that value back with
+                // setVariable. Skipping the write froze the value at the last
+                // script write and the animator restarted from it every frame.
                 writeEvalResultValueLike_0x6C4668(label, steppedValue);
                 if(stillAnimating) {
                     _emoteDirty = true;
@@ -1133,14 +1142,11 @@ namespace motion {
                     const bool stillAnimating =
                         stepControllerAnimatorLike_0x67D01C(
                             state, controllerDt, steppedValue);
-                    // Live diff-timeline contribution owns this label.
-                // The controller animator follows the current accumulated value
-                // while that contribution is live.
-                if(hasActiveDifferenceTimelineOwner(label)) {
-                    state.currentValue = static_cast<float>(steppedValue);
-                    continue;
-                }
-                writeEvalResultValueLike_0x6C4668(label, steppedValue);
+                    // Publish the stepped value even when a live diff-timeline
+                    // contribution owns the label. See the frameProgress copy
+                    // above: the original reports it through getVariable, and
+                    // the post-process adds the contribution on top.
+                    writeEvalResultValueLike_0x6C4668(label, steppedValue);
                     if(stillAnimating) {
                         _emoteDirty = true;
                     }

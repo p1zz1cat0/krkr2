@@ -609,10 +609,11 @@ namespace motion {
                                                int mode, double value);
         // Publishes the evaluated value to the eval map and the parameter
         // bindings only. The script variable table and the eval slot are not
-        // changed. The clamp projection uses this: the motion tree must see
-        // the projected value, but getVariable() must report what the script
-        // set. The post-process starts again from the eval slot on each
-        // progress, so a projected slot is projected again on progress(0).
+        // changed. The clamp projection and the post-process diff-timeline
+        // accumulation use this: the motion tree must see the final value, but
+        // getVariable() must report what the script set. The post-process
+        // reads its base from the variable table on each progress, so a
+        // published value never becomes the next frame's base.
         void publishEvalResultValueKeepingVariableLike_0x6C4668(
             const std::string &label, int mode, double value);
         bool renderToLayer(iTJSDispatch2 *layerObject, bool skipUpdate = false);
@@ -763,6 +764,9 @@ namespace motion {
         bool _hasLastGoodBounds = false;
         bool _needsInternalAssignImages =
             false; // flag +613 for updateLayerAfterDraw
+        // Script-space variable table. getVariable reads it. Display-side
+        // transforms (diff-timeline contributions, the truncation projection)
+        // stay out of it.
         std::unordered_map<std::string, double> _variableValues;
         struct VariableKeyframe {
             float value = 0.0f;
@@ -812,11 +816,12 @@ namespace motion {
         std::unordered_map<std::string, double> _evalResultValues;
         struct EvalResultEntry {
             std::string label;
+            // Unmirrored base plus diff-timeline contribution, as published
+            // by the last post-process.
             double value = 0.0;
-            // Diff-timeline offset currently folded into value. Subtracted
-            // before each frame's accumulation so downstream writers (clamp
-            // controls, mirror) that overwrite value with the final output
-            // cannot turn the contribution into a runaway integral.
+            // Diff-timeline offset folded into value by the last
+            // post-process. serialize reads the script-space base as
+            // value - pendingDiff.
             double pendingDiff = 0.0;
         };
         std::list<EvalResultEntry> _evalResultList;
