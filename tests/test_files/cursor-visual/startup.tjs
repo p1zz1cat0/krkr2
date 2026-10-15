@@ -6,7 +6,11 @@
 var testWindow = new Window();
 var layer = new Layer(testWindow, null);
 layer.setImageSize(400, 300);
+// 命中测试看的是图层大小，不是图像大小，不补这一句图层只有 32x32。
+layer.setSizeToImageSize();
 layer.fillRect(0, 0, 400, 300, 0xff303030);
+// 图层默认不可见，不可见的图层命中不了鼠标，光标就永远不会切换。
+layer.visible = true;
 testWindow.width = 400;
 testWindow.height = 300;
 testWindow.visible = true;
