@@ -746,9 +746,31 @@ namespace motion {
     void Player::resetTimelineControlStateLike_0x671A50(
         detail::TimelineState &state,
         const detail::TimelineControlBinding &binding, double time) {
+        // A re-seek of a running timeline (loop wrap, rewind) keeps the
+        // current diff-track values. The next keyframe then moves on from
+        // the value on screen. Zero values here made an idle loop whose end
+        // differs from 0 jump back to 0 at each wrap (After 待機ループ00
+        // head_slant ends at -3: the head and eyes snapped by 3 every
+        // 421 frames). Only a fresh timeline (playTimeline clears
+        // controlInitialized) starts at 0.
+        std::vector<float> keptValues;
+        if(state.controlInitialized &&
+           state.controlTrackValues.size() == binding.tracks.size()) {
+            keptValues = state.controlTrackValues;
+        }
         state.controlFrameCursor.assign(binding.tracks.size(), -1);
         state.controlTrackValues.assign(binding.tracks.size(), 0.0f);
         state.controlTrackAnimators.assign(binding.tracks.size(), {});
+        if(!keptValues.empty()) {
+            state.controlTrackValues = keptValues;
+            for(size_t trackIndex = 0; trackIndex < keptValues.size();
+                ++trackIndex) {
+                auto &animator = state.controlTrackAnimators[trackIndex];
+                animator.currentValue = keptValues[trackIndex];
+                animator.startValue = keptValues[trackIndex];
+                animator.targetValue = keptValues[trackIndex];
+            }
+        }
         for(size_t trackIndex = 0; trackIndex < binding.tracks.size();
             ++trackIndex) {
             const auto &track = binding.tracks[trackIndex];
