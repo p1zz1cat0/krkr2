@@ -72,6 +72,8 @@ if(MACOS)
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.h
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.h
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtCursor.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtCursor.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtPresentation.mm
             ${YOGHOURT_SPATIAL_PRESENTER_SOURCE}
             ${YOGHOURT_SURFACE_RELAY_SOURCE}
@@ -187,6 +189,27 @@ if(ENABLE_TESTS AND NOT (IOS OR ANDROID))
                 ${YOGHOURT_SPATIAL_PRESENTER_DIR})
         target_link_libraries(window-presentation-component-test PRIVATE "-framework AppKit")
         add_test(NAME window-presentation-component COMMAND window-presentation-component-test)
+
+        # 光标宿主把解码好的游戏光标装到真实 GLFW 窗口上，组件测试读回 AppKit
+        # 的当前光标（映射、像素通道、热点、动画都在这里定住）。
+        find_package(glfw3 CONFIG REQUIRED)
+        find_package(cocos2dx CONFIG REQUIRED)
+        add_executable(cursor-host-component-test
+                ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtCursorComponentTest.mm
+                ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtCursor.mm)
+        target_include_directories(cursor-host-component-test PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos)
+        target_link_libraries(cursor-host-component-test PRIVATE
+                core_visual_module
+                glfw
+                cocos2dx::cocos2d
+                "-framework AppKit")
+        add_test(NAME cursor-host-component
+                COMMAND cursor-host-component-test
+                        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_files/cursor)
+        set_tests_properties(cursor-host-component PROPERTIES LABELS core)
+        # 让质量门的 core-tests 聚合目标也构建它（见 tests/CMakeLists.txt）。
+        set_property(GLOBAL APPEND PROPERTY YOGHOURT_CORE_TEST_TARGETS cursor-host-component-test)
     endif()
     add_subdirectory(tests)
 endif()

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(TestVisualModule LANGUAGES CXX)
 
 set(SOURCES
+        CursorFile
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")

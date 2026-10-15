@@ -8,6 +8,7 @@
 
 #include "cocos2d/MainScene.h"
 #include "Application.h"
+#include "CursorFile.h"
 #include "DInputMgn.h"
 #include "Random.h"
 #include "TickCount.h"
@@ -21,6 +22,7 @@
 #include "vkdefine.h"
 
 #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+#include "YoghourtCursor.h"
 #include "YoghourtSpatialAdapter.h"
 extern "C" void YoghourtSetGameWindowContentSize(int width, int height);
 #endif
@@ -331,6 +333,51 @@ void TVPWindowLayer::SetCursorPos(tjs_int x, tjs_int y) {
         _mouseCursor->setPosition(pt);
         _refadeMouseCursor();
     }
+}
+
+void TVPWindowLayer::SetDefaultMouseCursor() {
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    YoghourtCursorApply(crDefault);
+#endif
+}
+
+void TVPWindowLayer::SetMouseCursor(tjs_int handle) {
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    YoghourtCursorApply(handle);
+#endif
+}
+
+void TVPWindowLayer::SetMouseCursorState(tTVPMouseCursorState mcs) {
+    iWindowLayer::SetMouseCursorState(mcs);
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    switch(mcs) {
+        case mcsVisible:
+            // the layer's cursor is back on the next mouse move at the latest
+            YoghourtCursorSetHidden(0);
+            break;
+        case mcsTempHidden:
+            // visible again as soon as the mouse moves
+            YoghourtCursorHideUntilMouseMoves();
+            break;
+        case mcsHidden:
+            // hidden until a script asks for a visible cursor again
+            YoghourtCursorSetHidden(1);
+            break;
+    }
+#endif
+}
+
+void TVPWindowLayer::HideMouseCursor() {
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    // Window.hideMouseCursor() hides until the mouse moves (Windows behavior)
+    YoghourtCursorHideUntilMouseMoves();
+#endif
+}
+
+void TVPWindowLayer::TickCursor() {
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+    YoghourtCursorTick();
+#endif
 }
 
 void TVPWindowLayer::SetImeMode(tTVPImeMode mode) {

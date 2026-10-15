@@ -13,6 +13,14 @@ extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
 extern "C" void YoghourtKrKrSpatialShutdown() {}
 extern "C" void YoghourtKrKrSetFrameLimit(int) {}
 extern "C" void YoghourtKrKrTelemetryRecordFrameStages(double, double, double) {}
+// 光标宿主（platforms/apple/macos/YoghourtCursor.mm）不链接进测试，补桩。
+extern "C" void *YoghourtCreateRuntimeGLView(const char *, int, int) {
+    return nullptr;
+}
+extern "C" void YoghourtCursorApply(int) {}
+extern "C" void YoghourtCursorSetHidden(int) {}
+extern "C" void YoghourtCursorHideUntilMouseMoves() {}
+extern "C" void YoghourtCursorTick() {}
 #endif
 // 链接锚点桩：与 tests/unit-tests/core/tjs2/spatial_stubs.cpp 一致
 extern "C" void TVPGetLangNamePluginAnchor() {}

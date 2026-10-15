@@ -51,6 +51,7 @@ set(VISUAL_SOURCE_FILES
     ${VISUAL_PATH}/impl/BasicDrawDevice.cpp
     ${VISUAL_PATH}/impl/BitmapBitsAlloc.cpp
     ${VISUAL_PATH}/impl/BitmapInfomation.cpp
+    ${VISUAL_PATH}/impl/CursorFile.cpp
     ${VISUAL_PATH}/impl/DInputMgn.cpp
     ${VISUAL_PATH}/impl/DrawDevice.cpp
 #    ${VISUAL_PATH}/impl/GDIFontRasterizer.cpp

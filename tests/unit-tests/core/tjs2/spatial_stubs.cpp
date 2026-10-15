@@ -15,6 +15,14 @@ extern "C" bool YoghourtKrKrSpatialPresent(void *, void *, void *, void *,
 extern "C" void YoghourtKrKrSpatialShutdown() {}
 extern "C" void YoghourtKrKrSetFrameLimit(int) {}
 extern "C" void YoghourtKrKrTelemetryRecordFrameStages(double, double, double) {}
+// 光标宿主（platforms/apple/macos/YoghourtCursor.mm）不链接进测试，补桩。
+extern "C" void *YoghourtCreateRuntimeGLView(const char *, int, int) {
+    return nullptr;
+}
+extern "C" void YoghourtCursorApply(int) {}
+extern "C" void YoghourtCursorSetHidden(int) {}
+extern "C" void YoghourtCursorHideUntilMouseMoves() {}
+extern "C" void YoghourtCursorTick() {}
 #endif
 // 链接锚点桩：注册型插件是 krkr2plugin 聚合库的 PRIVATE source，core 测试
 // 不链接插件库，PluginImpl.cpp 引用这些锚点时由本文件补全。

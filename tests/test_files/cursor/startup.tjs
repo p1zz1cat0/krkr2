@@ -1,0 +1,43 @@
+// 光标 smoke：Layer.cursor 载入 .cur / .ani、标准光标常量与可见性状态。
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+//
+// 脚本只能验证到"句柄和状态"，屏幕上的系统指针是否真的换了要看截图，见
+// .sbectrum 的 KrKr2 光标文档。
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+var testWindow = new Window();
+var layer = new Layer(testWindow, null);
+layer.setImageSize(8, 8);
+
+// 载入的光标以句柄形式存进 Layer.cursor，句柄区从 0x1000 起。
+layer.cursor = "pointer.cur";
+check(layer.cursor >= 0x1000, "pointer.cur loads into a cursor handle");
+
+// .ani 动画光标走同一条载入路径。
+layer.cursor = "pointer.ani";
+check(layer.cursor >= 0x1000, "pointer.ani loads into a cursor handle");
+
+// 标准光标常量原样保存，由窗口层映射成系统光标。
+layer.cursor = crIBeam;
+check(layer.cursor == crIBeam, "standard cursor id round-trips");
+
+// 载入失败退回窗口默认光标（0），不再抛 TVPCannotLoadCursor。
+layer.cursor = "no_such_cursor.cur";
+check(layer.cursor == 0, "missing cursor file falls back to the default cursor");
+
+// 可见性状态可切换。
+testWindow.mouseCursorState = mcsHidden;
+check(testWindow.mouseCursorState == mcsHidden, "mcsHidden round-trips");
+testWindow.mouseCursorState = mcsVisible;
+check(testWindow.mouseCursorState == mcsVisible, "mcsVisible round-trips");
+
+// 主图层承担同样的光标（鼠标移到它上面时窗口层会去取）。
+testWindow.visible = true;
+layer.cursor = "pointer.cur";
+check(layer.cursor >= 0x1000, "primary layer keeps the cursor");
+
+Debug.message("CURSOR_SMOKE_PASS");
+System.exit(0);

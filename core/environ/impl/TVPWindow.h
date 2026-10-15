@@ -125,13 +125,13 @@ public:
     void SetTrapKey(bool b) {}
     [[nodiscard]] bool GetTrapKey() const { return false; }
     void RemoveMaskRegion() {}
-    void SetMouseCursorState(tTVPMouseCursorState mcs) {
+    virtual void SetMouseCursorState(tTVPMouseCursorState mcs) {
         MouseCursorState = mcs;
     }
     [[nodiscard]] tTVPMouseCursorState GetMouseCursorState() const {
         return MouseCursorState;
     }
-    void HideMouseCursor() {}
+    virtual void HideMouseCursor() {}
     void SetFocusable(bool b) {}
     [[nodiscard]] bool GetFocusable() const { return true; }
     int GetDisplayRotate() { return 0; }
@@ -143,8 +143,9 @@ public:
     void SetInnerSunken(bool b) {}
     [[nodiscard]] bool GetInnerSunken() const { return false; }
 
-    // TODO
-    void SetMouseCursor(tjs_int handle) {}
+    // window cursor of the layer under the mouse, see the cr* ids in
+    // CursorFile.h
+    virtual void SetMouseCursor(tjs_int handle) {}
     void SetHintText(iTJSDispatch2 *sender, const ttstr &text) {}
     void DisableAttentionPoint() {}
     static void GetVideoOffset(tjs_int &ofsx, tjs_int &ofsy) {
@@ -326,7 +327,13 @@ public:
 
     bool GetFormEnabled() override { return isVisible(); }
 
-    void SetDefaultMouseCursor() override {}
+    void SetDefaultMouseCursor() override;
+
+    void SetMouseCursor(tjs_int handle) override;
+
+    void SetMouseCursorState(tTVPMouseCursorState mcs) override;
+
+    void HideMouseCursor() override;
 
     void GetCursorPos(tjs_int &x, tjs_int &y) override {
         x = _LastMouseX;
@@ -489,11 +496,16 @@ public:
         return false;
     }
 
+    void TickCursor();
+
     void TickBeat() override {
         bool focused = _currentWindowLayer == this;
         // mouse key
         if(UseMouseKey && focused) {
             GenerateMouseEvent(false, false, false, false);
         }
+        // animated cursors advance with the game's frame loop
+        if(focused)
+            TickCursor();
     }
 };

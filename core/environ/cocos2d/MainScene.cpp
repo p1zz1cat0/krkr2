@@ -9,6 +9,7 @@
 #include "tjsCommHead.h"
 #include "StorageIntf.h"
 #include "WindowImpl.h"
+#include "CursorFile.h"
 #include "LayerBitmapImpl.h"
 #include "ui/BaseForm.h"
 #include "ui/GameMainMenu.h"
@@ -61,227 +62,6 @@ static cocos2d::Label *_fpsLabel = nullptr;
 #ifndef GL_UNPACK_ROW_LENGTH
 #define GL_UNPACK_ROW_LENGTH 0x0CF2
 #endif
-
-struct tTVPCursor {
-    Node *RootNode;
-    Action *Anim = nullptr;
-};
-
-#pragma pack(push)
-#pragma pack(1)
-enum eIconType { eIconTypeNone, eIconTypeICO, eIconTypeCUR };
-
-struct ICONDIR {
-    uint16_t idReserved; // must be 0
-    uint16_t idType; // eIconType
-    uint16_t idCount;
-};
-
-struct ICODIREntry {
-    uint8_t bWidth; // 0 -> 256
-    uint8_t bHeight; // 0 -> 256
-    uint8_t bColorCount;
-    uint8_t bReserved;
-    union {
-        struct {
-            uint16_t wPlanes;
-            uint16_t wBitCount;
-        };
-        struct {
-            uint16_t wHotSpotX;
-            uint16_t wHotSpotY;
-        };
-    };
-    uint32_t dwBytesInRes;
-    uint32_t dwImageOffset;
-};
-#pragma pack(pop)
-
-Sprite *TVPLoadCursorCUR(tTJSBinaryStream *pStream) {
-    ICONDIR header;
-    pStream->ReadBuffer(&header, sizeof(header));
-    if((header.idReserved != 0) || (header.idType != eIconTypeCUR) ||
-       (header.idCount == 0)) {
-        return nullptr;
-    }
-
-    std::vector<ICODIREntry> cur_dir;
-    cur_dir.resize(header.idCount);
-    pStream->ReadBuffer(&cur_dir[0], sizeof(ICODIREntry) * header.idCount);
-    ICODIREntry bestentry = { 0 };
-    for(auto entry : cur_dir) {
-        if(entry.bHeight > bestentry.bHeight)
-            bestentry = entry;
-    }
-    cur_dir.clear();
-    cur_dir.emplace_back(bestentry);
-
-    for(int i = 0; i < cur_dir.size(); ++i) {
-        const ICODIREntry &entry = cur_dir[i];
-        int bWidth = entry.bWidth;
-        int bHeight = entry.bHeight;
-        int bColorCount = entry.bColorCount;
-        if(!bWidth)
-            bWidth = 256;
-        if(!bHeight)
-            bHeight = 256;
-        if(!bColorCount)
-            bColorCount = 256;
-
-        pStream->SetPosition(entry.dwImageOffset);
-        TVPBITMAPINFOHEADER bmhdr;
-        pStream->ReadBuffer(&bmhdr, sizeof(bmhdr));
-        if(bmhdr.biSize != 40)
-            continue;
-        if(bmhdr.biCompression)
-            continue;
-        int bmpPitch, pad;
-        switch(bmhdr.biBitCount) {
-            case 1:
-                bmpPitch = (bmhdr.biWidth + 7) >> 3;
-                pad = (((bmpPitch) % 4) ? (4 - ((bmpPitch) % 4)) : 0);
-                break;
-            case 4:
-                bmpPitch = (bmhdr.biWidth + 1) >> 1;
-                pad = (((bmpPitch) % 4) ? (4 - ((bmpPitch) % 4)) : 0);
-                break;
-            case 8:
-                bmpPitch = bmhdr.biWidth;
-                pad = (((bmpPitch) % 4) ? (4 - ((bmpPitch) % 4)) : 0);
-                break;
-            case 32:
-                break;
-            default:
-                continue;
-        }
-        bmhdr.biHeight /= 2;
-        std::vector<unsigned char> pixbuf;
-        pixbuf.resize(bmhdr.biWidth * bmhdr.biHeight * 4);
-        tjs_uint32 palette[256];
-        if(bmhdr.biBitCount <= 8) {
-            if(bmhdr.biClrUsed == 0)
-                bmhdr.biClrUsed = 1 << bmhdr.biBitCount;
-            for(unsigned int j = 0; j < bmhdr.biClrUsed; ++j) {
-                union {
-                    tjs_uint32 u32;
-                    tjs_uint8 u8[4];
-                } clr{}, rclr{};
-                pStream->ReadBuffer(&clr.u32, 4);
-                rclr.u8[0] = clr.u8[2];
-                rclr.u8[1] = clr.u8[1];
-                rclr.u8[2] = clr.u8[0];
-                rclr.u8[3] = clr.u8[3];
-                palette[j] = rclr.u32;
-            }
-        }
-        /* Read the surface pixels.  Note that the bmp image is upside
-         * down */
-        int pitch = bmhdr.biWidth * 4;
-        tjs_uint8 *bits = (tjs_uint8 *)&pixbuf[0] + (bmhdr.biHeight * pitch);
-        switch(bmhdr.biBitCount) {
-            case 1:
-            case 4:
-            case 8:
-                while(bits > (tjs_uint8 *)&pixbuf[0]) {
-                    bits -= pitch;
-                    tjs_uint8 pixel = 0;
-                    int shift = (8 - bmhdr.biBitCount);
-                    for(i = 0; i < bmhdr.biWidth; ++i) {
-                        if(i % (8 / bmhdr.biBitCount) == 0) {
-                            pStream->ReadBuffer(&pixel, 1);
-                        }
-                        *((tjs_uint32 *)bits + i) = (palette[pixel >> shift]);
-                        pixel <<= bmhdr.biBitCount;
-                    }
-                }
-                /* Skip padding bytes, ugh */
-                if(pad) {
-                    tjs_uint8 padbyte;
-                    for(i = 0; i < pad; ++i) {
-                        pStream->ReadBuffer(&padbyte, 1);
-                    }
-                }
-                break;
-            case 32:
-                bmpPitch = bmhdr.biWidth * 4;
-                pad = 0;
-                while(bits > (tjs_uint8 *)&pixbuf[0]) {
-                    bits -= pitch;
-                    pStream->ReadBuffer(bits, pitch);
-                }
-                break;
-            default:;
-        }
-
-        /* Read the mask pixels.  Note that the bmp image is upside
-         * down */
-        bits = (tjs_uint8 *)&pixbuf[0] + (bmhdr.biHeight * pitch);
-        bmpPitch = (bmhdr.biWidth + 7) >> 3;
-        pad = (((bmpPitch) % 4) ? (4 - ((bmpPitch) % 4)) : 0);
-        while(bits > (tjs_uint8 *)&pixbuf[0]) {
-            tjs_uint8 pixel = 0;
-            int shift = (8 - 1);
-            bits -= pitch;
-            for(i = 0; i < bmhdr.biWidth; ++i) {
-                if(i % (8 / 1) == 0) {
-                    pStream->ReadBuffer(&pixel, 1);
-                }
-                *((tjs_uint32 *)bits + i) |=
-                    ((pixel >> shift) ? 0 : 0xFF000000);
-                pixel <<= 1;
-            }
-            /* Skip padding bytes, ugh */
-            if(pad) {
-                tjs_uint8 padbyte;
-                for(i = 0; i < pad; ++i) {
-                    pStream->ReadBuffer(&padbyte, 1);
-                }
-            }
-        }
-        cocos2d::Image *surface = new cocos2d::Image;
-        surface->initWithRawData(&pixbuf[0], pixbuf.size(), bmhdr.biWidth,
-                                 bmhdr.biHeight,
-                                 (int)Texture2D::PixelFormat::RGBA8888, false);
-        Texture2D *tex = new Texture2D();
-        tex->initWithImage(surface);
-        Sprite *sprite = Sprite::create();
-        sprite->setTexture(tex);
-        sprite->setTextureRect(
-            cocos2d::Rect(0, 0, bmhdr.biWidth, bmhdr.biHeight));
-        sprite->setAnchorPoint(
-            Vec2((float)entry.wHotSpotX / bmhdr.biWidth,
-                 1.f - (float)entry.wHotSpotY / bmhdr.biHeight));
-        float scale = sqrtf(Device::getDPI() / 150.f);
-        sprite->setScale(scale);
-        return sprite; // only the first one
-    }
-    return nullptr;
-}
-
-tTVPCursor *TVPLoadCursorANI(tTJSBinaryStream *pStream) {
-    // TODO http://www.gdgsoft.com/anituner/help/aniformat.htm
-    return nullptr;
-}
-
-tTVPCursor *TVPLoadCursor(tTJSBinaryStream *stream) {
-    if(!stream)
-        return nullptr;
-    unsigned char sig[4];
-    stream->Read(sig, 4);
-    stream->SetPosition(0);
-    if(memcmp(sig, "RIFF", 4) == 0) { // ani format
-        return TVPLoadCursorANI(stream);
-    } else { // cur format
-        Sprite *cur = TVPLoadCursorCUR(stream);
-        tTVPCursor *ret = nullptr;
-        if(cur) {
-            ret = new tTVPCursor;
-            ret->RootNode = cur;
-            cur->retain();
-        }
-        return ret;
-    }
-}
 
 class TVPWindowManagerOverlay : public iTVPBaseForm {
 public:
@@ -1055,13 +835,36 @@ void TVPMainScene::toggleVirtualMouseCursor() {
         !TVPWindowLayer::TVPWindowLayer::_mouseCursor->isVisible());
 }
 
+//! 把解码好的光标帧做成虚拟指针用的精灵：热点当锚点，按屏幕 DPI 缩放。
+static Sprite *TVPCreateCursorSprite(const tTVPCursorImage &image, int hotSpotX,
+                                     int hotSpotY) {
+    cocos2d::Image *surface = new cocos2d::Image;
+    // kFmtRawData 只支持 RGBA8888，正好是解码器给出的通道顺序。
+    surface->initWithRawData(image.Pixels.data(), image.Pixels.size(),
+                             image.Width, image.Height, 8, false);
+    Texture2D *tex = new Texture2D();
+    tex->initWithImage(surface);
+    surface->release();
+
+    Sprite *sprite = Sprite::create();
+    sprite->setTexture(tex);
+    sprite->setTextureRect(cocos2d::Rect(0, 0, image.Width, image.Height));
+    sprite->setAnchorPoint(Vec2((float)hotSpotX / image.Width,
+                                1.f - (float)hotSpotY / image.Height));
+    sprite->setScale(sqrtf(Device::getDPI() / 150.f));
+    return sprite;
+}
+
 Sprite *TVPCreateCUR() {
     std::string fullPath =
         FileUtils::getInstance()->fullPathForFilename("default.cur");
     Data buf = FileUtils::getInstance()->getDataFromFile(fullPath);
 
-    tTVPMemoryStream stream(buf.getBytes(), buf.getSize());
-    return TVPLoadCursorCUR(&stream);
+    tTVPCursorResource resource;
+    if(!TVPDecodeCursorFile(buf.getBytes(), buf.getSize(), resource))
+        return nullptr;
+    return TVPCreateCursorSprite(resource.Steps.front().Image, resource.HotSpotX,
+                                 resource.HotSpotY);
 }
 
 void TVPMainScene::showVirtualMouseCursor(bool bVisible) {

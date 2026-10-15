@@ -15,9 +15,11 @@
 // #include <d3d9.h>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 #include "MsgIntf.h"
 #include "WindowIntf.h"
+#include "CursorFile.h"
 #include "LayerIntf.h"
 // #include "WindowFormUnit.h"
 #include "SysInitIntf.h"
@@ -73,30 +75,49 @@ tjs_uint32 TVP_TShiftState_From_uint32(tjs_uint32 state) {
 //---------------------------------------------------------------------------
 // Mouse Cursor management
 //---------------------------------------------------------------------------
+//! Cursor files are tiny; a bigger one is a broken file, not a cursor.
+static constexpr tjs_uint64 TVPCursorFileSizeLimit = 4 * 1024 * 1024;
+
 static tTJSHashTable<ttstr, tjs_int> TVPCursorTable;
 tjs_int TVPGetCursor(const ttstr &name) {
-    // get placed path
-    ttstr place(TVPSearchPlacedPath(name));
+    // Decode the cursor file (.cur / .ani) into images and keep it in the
+    // loaded-cursor registry; installing it is the window layer's job, which
+    // resolves the handle back through TVPCursorFind().
+    //
+    // Every step is inside the handler on purpose: a game whose cursor only
+    // exists under a differently spelled name (Windows file systems ignore
+    // case, APFS does not) must not lose the scene over it.
+    ttstr place(name);
+    tjs_int handle = 0;
+    try {
+        place = TVPSearchPlacedPath(name);
 
-    // search in cache
-    tjs_int *in_hash = TVPCursorTable.Find(place);
-    if(in_hash)
-        return *in_hash;
-#if 0
-	// not found
-	tTVPLocalTempStorageHolder file(place);
+        tjs_int *in_hash = TVPCursorTable.Find(place);
+        if(in_hash)
+            return *in_hash;
 
-	HCURSOR handle = ::LoadCursorFromFile(file.GetLocalName().c_str());
+        std::unique_ptr<tTJSBinaryStream> stream(
+            TVPCreateStream(place, TJS_BS_READ));
+        const tjs_uint64 size = stream ? stream->GetSize() : 0;
+        if(size > 0 && size <= TVPCursorFileSizeLimit) {
+            std::vector<tjs_uint8> bytes((size_t)size);
+            stream->ReadBuffer(bytes.data(), (tjs_uint)size);
+            tTVPCursorResource resource;
+            if(TVPDecodeCursorFile(bytes.data(), bytes.size(), resource))
+                handle = TVPCursorRegister(std::move(resource));
+        }
+    } catch(eTJS &) {
+        handle = 0;
+    }
 
-	if(!handle) TVPThrowExceptionMessage(TVPCannotLoadCursor, place);
+    // The Windows build raises TVPCannotLoadCursor here.  A script that cannot
+    // load a cursor is better off with the window default than with a scene
+    // that aborts, so log once and keep going.
+    if(handle == 0)
+        TVPAddLog(TVPFormatMessage(TVPCannotLoadCursor, place));
 
-	int id = MouseCursor::AddCursor( handle );
-
-	TVPCursorTable.Add(place, id);
-
-	return id;
-#endif
-    return 0;
+    TVPCursorTable.Add(place, handle);
+    return handle;
 }
 //---------------------------------------------------------------------------
 

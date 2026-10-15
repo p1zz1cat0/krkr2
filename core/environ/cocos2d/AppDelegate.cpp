@@ -14,6 +14,10 @@
 
 #include "audio/include/AudioEngine.h"
 
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+#include "YoghourtCursor.h"
+#endif
+
 static cocos2d::Size designResolutionSize(960, 640);
 
 extern std::thread::id TVPMainThreadID;
@@ -65,9 +69,18 @@ bool TVPAppDelegate::applicationDidFinishLaunching() {
     (CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
         const char *presentationTitle = std::getenv("YOGHOURT_GAME_TITLE");
         const char *windowTitle = presentationTitle && presentationTitle[0] ? presentationTitle : "krkr2";
+#if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
+        // The cursor host needs the GLFW window handle, which cocos2d-x keeps
+        // protected; YoghourtCreateRuntimeGLView() creates the view and hands
+        // the handle over (see YoghourtCursor.h).
+        glview = static_cast<cocos2d::GLView *>(YoghourtCreateRuntimeGLView(
+            windowTitle, (int)designResolutionSize.width,
+            (int)designResolutionSize.height));
+#else
         glview = cocos2d::GLViewImpl::createWithRect(
             windowTitle, cocos2d::Rect(0, 0, designResolutionSize.width,
                                        designResolutionSize.height));
+#endif
 #else
         glview = cocos2d::GLViewImpl::create("krkr2");
 #endif
