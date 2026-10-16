@@ -4002,6 +4002,16 @@ bool iTVPBaseBitmap::AffineBlt(tTVPRect destrect, const iTVPBaseBitmap *ref,
         { points_in[1].x - points_in[0].x + points_in[2].x,
           points_in[1].y - points_in[0].y + points_in[2].y }, // right-bottom
     };
+    // The points use the software convention: the center of pixel (0,0) is
+    // at (0,0). GL puts that center at (0.5,0.5), and refpt below is in edge
+    // units. Without the shift, each GPU affine copy is half a pixel off and
+    // linear sampling averages 2x2 pixels, which makes the image soft.
+    if(!TVPIsSoftwareRenderManager()) {
+        for(auto &pt : dstpt) {
+            pt.x += 0.5;
+            pt.y += 0.5;
+        }
+    }
     tTVPPointD refpt[6] = {
         { (double)refrect.left, (double)refrect.top },
         { (double)refrect.right, (double)refrect.top },

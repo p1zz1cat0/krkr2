@@ -25,9 +25,12 @@
 namespace {
 
 // Draws a premultiplied-alpha texture onto a straight-alpha target. The
-// geometry is the same as iTVPBaseBitmap::AffineBlt with a matrix: a source
-// pixel (0,0) covers (-0.5,-0.5)-(0.5,0.5). The shared blend-method table has
-// no bmAddAlphaOnAlpha, so this calls the GL method directly.
+// geometry is the same as iTVPBaseBitmap::AffineBlt with a matrix: the matrix
+// moves pixel centers, and source pixel (0,0) covers (-0.5,-0.5)-(0.5,0.5).
+// This path is GPU only. GL puts the center of a pixel at +0.5, so add 0.5 to
+// the screen corners. Without it the frame is half a pixel off and linear
+// sampling makes the model soft. The shared blend-method table has no
+// bmAddAlphaOnAlpha, so this calls the GL method directly.
 void affineBltPremultipliedOnAlpha(tTVPBaseTexture &target, iTVPTexture2D *source,
                                    tjs_int width, tjs_int height,
                                    const t2DAffineMatrix &m, tTVPBBStretchType type) {
@@ -38,8 +41,12 @@ void affineBltPremultipliedOnAlpha(tTVPBaseTexture &target, iTVPTexture2D *sourc
     const auto at = [&m](tjs_real x, tjs_real y) {
         return tTVPPointD{ m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty };
     };
-    const tTVPPointD lt = at(-0.5, -0.5), rt = at(width - 0.5, -0.5),
-                     lb = at(-0.5, height - 0.5), rb = at(width - 0.5, height - 0.5);
+    const auto gl = [&at](tjs_real x, tjs_real y) {
+        auto p = at(x, y);
+        return tTVPPointD{ p.x + 0.5, p.y + 0.5 };
+    };
+    const tTVPPointD lt = gl(-0.5, -0.5), rt = gl(width - 0.5, -0.5),
+                     lb = gl(-0.5, height - 0.5), rb = gl(width - 0.5, height - 0.5);
     const tTVPPointD dst[6] = { lt, rt, lb, rt, lb, rb };
     const tTVPPointD src[6] = {
         { 0.0, 0.0 }, { static_cast<double>(width), 0.0 },
