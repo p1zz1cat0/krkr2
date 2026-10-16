@@ -84,9 +84,8 @@ tjs_int TVPGetCursor(const ttstr &name) {
     // loaded-cursor registry; installing it is the window layer's job, which
     // resolves the handle back through TVPCursorFind().
     //
-    // Every step is inside the handler on purpose: a game whose cursor only
-    // exists under a differently spelled name (Windows file systems ignore
-    // case, APFS does not) must not lose the scene over it.
+    // Every step is inside the handler on purpose: a missing or broken cursor
+    // file must not lose the scene.
     ttstr place(name);
     tjs_int handle = 0;
     try {

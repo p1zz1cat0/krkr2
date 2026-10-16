@@ -20,6 +20,11 @@ check(layer.cursor >= 0x1000, "pointer.cur loads into a cursor handle");
 layer.cursor = "pointer.ani";
 check(layer.cursor >= 0x1000, "pointer.ani loads into a cursor handle");
 
+// Windows 的文件系统不分大小写，游戏脚本里的光标文件名大小写常和磁盘不一致；
+// 存储层逐级忽略大小写找文件，光标同样要能载入。
+layer.cursor = "POINTER.CUR";
+check(layer.cursor >= 0x1000, "cursor file name matches ignoring case");
+
 // 标准光标常量原样保存，由窗口层映射成系统光标。
 layer.cursor = crIBeam;
 check(layer.cursor == crIBeam, "standard cursor id round-trips");

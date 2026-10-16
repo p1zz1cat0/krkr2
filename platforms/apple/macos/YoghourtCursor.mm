@@ -18,6 +18,7 @@
 #include <chrono>
 #include <map>
 #include <new>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,8 @@ struct tAnimatedCursor {
 
 std::map<int, tAnimatedCursor> gLoadedCursors;
 std::map<int, GLFWcursor *> gStandardCursors;
+//! Loaded-cursor handles that could not become native cursors.
+std::set<int> gFailedCursors;
 
 int gFrameIndex = 0;
 int gFrameElapsedMS = 0;
@@ -152,10 +155,16 @@ const tAnimatedCursor *LoadedCursor(int handle) {
     auto it = gLoadedCursors.find(handle);
     if(it != gLoadedCursors.end())
         return &it->second;
+    // A handle that failed once fails again; do not rebuild on every mouse
+    // enter or animation tick.
+    if(gFailedCursors.count(handle))
+        return nullptr;
 
     const tTVPCursorResource *resource = TVPCursorFind(handle);
-    if(!resource || resource->Steps.empty())
+    if(!resource || resource->Steps.empty()) {
+        gFailedCursors.insert(handle);
         return nullptr;
+    }
 
     tAnimatedCursor animated;
     for(const tTVPCursorStep &step : resource->Steps) {
@@ -173,6 +182,7 @@ const tAnimatedCursor *LoadedCursor(int handle) {
     if(animated.Cursors.size() != resource->Steps.size()) {
         for(GLFWcursor *cursor : animated.Cursors)
             glfwDestroyCursor(cursor);
+        gFailedCursors.insert(handle);
         return nullptr;
     }
 
