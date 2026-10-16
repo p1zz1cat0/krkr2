@@ -3,40 +3,22 @@
 #include "tjsCommHead.h"
 
 #include "FontSystem.h"
+#include "FontImpl.h"
 #include "StringUtil.h"
 #include "MsgIntf.h"
 #include <vector>
 #include "ConfigManager/IndividualConfigManager.h"
 
-extern void TVPGetAllFontList(std::vector<ttstr> &list);
 extern const ttstr &TVPGetDefaultFontName();
 
-void FontSystem::InitFontNames() {
-    // enumlate all fonts
-    if(FontNamesInit)
-        return;
-
-    std::vector<ttstr> list;
-    TVPGetAllFontList(list);
-    size_t count = list.size();
-    for(size_t i = 0; i < count; i++) {
-        AddFont(list[i]);
-    }
-
-    FontNamesInit = true;
-}
-//---------------------------------------------------------------------------
-void FontSystem::AddFont(const ttstr &name) { TVPFontNames.Add(name, 1); }
-//---------------------------------------------------------------------------
 bool FontSystem::FontExists(const ttstr &name) {
-    // check existence of font
-    InitFontNames();
-
-    int *t = TVPFontNames.Find(name);
-    return t != nullptr;
+    // Use the live registry. System.addFont adds fonts after startup, and a
+    // copy taken at startup does not know them, so their faces would fall
+    // back to the default font.
+    return TVPFindFont(name) != nullptr;
 }
 
-FontSystem::FontSystem() : FontNamesInit(false), DefaultLOGFONTCreated(false) {
+FontSystem::FontSystem() : DefaultLOGFONTCreated(false) {
     ConstructDefaultFont();
 }
 
