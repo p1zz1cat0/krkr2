@@ -111,7 +111,7 @@ index 74e2ca7..e0b2671 100644
  
  //    // GLFW v3.2 no longer emits "onGLFWWindowSizeFunCallback" at creation time. Force default viewport:
  //    setViewPortInPoints(0, 0, neededWidth, neededHeight);
-@@ -375,6 +403,212 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
+@@ -375,6 +403,223 @@ bool GLViewImpl::initWithRect(const std::string& viewName, Rect rect, float fram
      return true;
  }
  
@@ -214,6 +214,17 @@ index 74e2ca7..e0b2671 100644
 +        fprintf(stderr, "[Yoghourt] ERROR renderer initialization failed: EGL window surface error=0x%x\n",
 +                eglGetError());
 +        return false;
++    }
++
++    // ANGLE adds an opaque-unset CAMetalLayer below the backing layer.
++    // KiriKiri does not keep the framebuffer alpha at 1. Windows ignores
++    // that alpha when it presents. Core Animation uses it and adds the
++    // window background, which makes the full frame look washed out.
++    // Set the layer opaque so that Core Animation ignores the alpha.
++    for (CALayer* sublayer in backingLayer.sublayers)
++    {
++        if ([sublayer isKindOfClass:[CAMetalLayer class]])
++            sublayer.opaque = YES;
 +    }
 +
 +    eglSwapInterval(_eglDisplay, 1);
@@ -324,7 +335,7 @@ index 74e2ca7..e0b2671 100644
  bool GLViewImpl::initWithFullScreen(const std::string& viewName)
  {
      //Create fullscreen window on primary monitor at its current video mode.
-@@ -404,7 +610,14 @@ bool GLViewImpl::initWithFullscreen(const std::string &viewname, const GLFWvidmo
+@@ -404,7 +621,14 @@ bool GLViewImpl::initWithFullscreen(const std::string &viewname, const GLFWvidmo
  
  bool GLViewImpl::isOpenGLReady()
  {
@@ -339,7 +350,7 @@ index 74e2ca7..e0b2671 100644
  }
  
  void GLViewImpl::end()
-@@ -412,6 +625,10 @@ void GLViewImpl::end()
+@@ -412,6 +636,10 @@ void GLViewImpl::end()
      if(_mainWindow)
      {
          glfwSetWindowShouldClose(_mainWindow,1);
@@ -350,7 +361,7 @@ index 74e2ca7..e0b2671 100644
          _mainWindow = nullptr;
      }
      // Release self. Otherwise, GLViewImpl could not be freed.
-@@ -420,8 +634,11 @@ void GLViewImpl::end()
+@@ -420,8 +645,11 @@ void GLViewImpl::end()
  
  void GLViewImpl::swapBuffers()
  {
@@ -364,7 +375,7 @@ index 74e2ca7..e0b2671 100644
  }
  
  bool GLViewImpl::windowShouldClose()
-@@ -642,6 +867,9 @@ Size GLViewImpl::getMonitorSize() const {
+@@ -642,6 +878,9 @@ Size GLViewImpl::getMonitorSize() const {
  
  void GLViewImpl::updateFrameSize()
  {
@@ -374,7 +385,7 @@ index 74e2ca7..e0b2671 100644
      if (_screenSize.width > 0 && _screenSize.height > 0)
      {
          int w = 0, h = 0;
-@@ -675,12 +903,28 @@ void GLViewImpl::updateFrameSize()
+@@ -675,12 +914,28 @@ void GLViewImpl::updateFrameSize()
              _isInRetinaMonitor = false;
          }
      }
@@ -404,7 +415,7 @@ index 74e2ca7..e0b2671 100644
 -
 +
  void GLViewImpl::setViewPortInPoints(float x , float y , float w , float h)
-@@ -727,7 +971,39 @@ void GLViewImpl::onGLFWError(int errorID, const char* errorDesc)
+@@ -727,7 +982,39 @@ void GLViewImpl::onGLFWError(int errorID, const char* errorDesc)
      CCLOGERROR("%s", _glfwError.c_str());
  }
 -
@@ -446,7 +457,7 @@ index 74e2ca7..e0b2671 100644
 +    updateMousePosition(x, y);
      if(GLFW_MOUSE_BUTTON_LEFT == button)
      {
-@@ -769,22 +1045,9 @@ void GLViewImpl::onGLFWMouseCallBack(GLFWwindow* /*window*/, int button, int act
+@@ -769,22 +1056,9 @@ void GLViewImpl::onGLFWMouseCallBack(GLFWwindow* /*window*/, int button, int act
      }
  }
 -
@@ -472,7 +483,7 @@ index 74e2ca7..e0b2671 100644
 +
      if (_captured)
      {
-@@ -888,6 +1164,12 @@ void GLViewImpl::onGLFWWindowPosCallback(GLFWwindow* /*window*/, int /*x*/, int
+@@ -888,6 +1175,12 @@ void GLViewImpl::onGLFWWindowPosCallback(GLFWwindow* /*window*/, int /*x*/, int
  
  void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
  {
@@ -485,7 +496,7 @@ index 74e2ca7..e0b2671 100644
      float frameSizeW = _screenSize.width;
      float frameSizeH = _screenSize.height;
      float factorX = frameSizeW / w * _retinaFactor * _frameZoomFactor;
-@@ -913,6 +1195,7 @@ void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
+@@ -913,6 +1206,7 @@ void GLViewImpl::onGLFWframebuffersize(GLFWwindow* window, int w, int h)
          _retinaFactor = 1;
          glfwSetWindowSize(window, static_cast<int>(frameSizeW * _retinaFactor * _frameZoomFactor), static_cast<int>(frameSizeH * _retinaFactor * _frameZoomFactor));
      }
@@ -493,7 +504,7 @@ index 74e2ca7..e0b2671 100644
  }
  
  void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width, int height)
-@@ -922,9 +1205,13 @@ void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width,
+@@ -922,9 +1216,13 @@ void GLViewImpl::onGLFWWindowSizeFunCallback(GLFWwindow* /*window*/, int width,
          Size baseDesignSize = _designResolutionSize;
          ResolutionPolicy baseResolutionPolicy = _resolutionPolicy;
  
