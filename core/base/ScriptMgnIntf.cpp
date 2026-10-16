@@ -881,8 +881,8 @@ void TVPDumpScriptEngine() {
     try {
         TVPScriptEngine->Dump();
     } catch(...) {
-        TVPTJS2EndDump();
         TVPScriptEngine->SetConsoleOutput(TVPGetTJS2ConsoleOutputGateway());
+        TVPTJS2EndDump();
         throw;
     }
     TVPScriptEngine->SetConsoleOutput(TVPGetTJS2ConsoleOutputGateway());

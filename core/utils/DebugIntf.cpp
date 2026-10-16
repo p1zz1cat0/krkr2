@@ -759,39 +759,34 @@ class tTVPTJS2DumpOutputGateway : public iTJSConsoleOutput {
 
     void Print(const tjs_char *msg) override {
         if(TVPDumpOutFile) {
-            fwrite(msg, 1, TJS_strlen(msg) * sizeof(tjs_char), TVPDumpOutFile);
-#ifdef TJS_TEXT_OUT_CRLF
-            fwrite(TJS_W("\r\n"), 1, 2 * sizeof(tjs_char), TVPDumpOutFile);
-#else
-            fwrite(TJS_W("\n"), 1, 1 * sizeof(tjs_char), TVPDumpOutFile);
-#endif
+            const std::string line = ttstr(msg).AsStdString() + "\n";
+            if(fwrite(line.data(), 1, line.size(), TVPDumpOutFile) != line.size()) {
+                fclose(TVPDumpOutFile);
+                TVPDumpOutFile = nullptr;
+                TVPThrowExceptionMessage(TVPWriteError);
+            }
         }
     }
 } static TVPTJS2DumpOutputGateway;
 
 //---------------------------------------------------------------------------
 void TVPTJS2StartDump() {
-#if 0
-    ttstr filename = ExePath() + TJS_W(".dump.txt");
-    TVPDumpOutFileName = filename;
-    TVPDumpOutFile = _wfopen(filename.c_str(), TJS_W("wb+"));
-    if(TVPDumpOutFile)
-    {
-        // TODO: 32-bit unicode support
-        fwrite(TJS_N("\xff\xfe"), 1, 2, TVPDumpOutFile); // indicate unicode text
-    }
-#endif
+    TVPEnsureDataPathDirectory();
+    TVPDumpOutFileName = TVPNativeDataPath + TJS_W("krkr.dump.txt");
+    TVPDumpOutFile = fopen(TVPDumpOutFileName.AsStdString().c_str(), "wb");
+    if(!TVPDumpOutFile)
+        TVPThrowExceptionMessage(TVPCannotOpenStorage, TVPDumpOutFileName);
 }
 
 //---------------------------------------------------------------------------
 void TVPTJS2EndDump() {
-#if 0
-    if (TVPDumpOutFile)
-    {
-        fclose(TVPDumpOutFile), TVPDumpOutFile = nullptr;
+    if(TVPDumpOutFile) {
+        FILE *file = TVPDumpOutFile;
+        TVPDumpOutFile = nullptr;
+        if(fclose(file) != 0)
+            TVPThrowExceptionMessage(TVPWriteError);
         TVPAddLog(ttstr(TJS_W("Dumped to ")) + TVPDumpOutFileName);
     }
-#endif
 }
 //---------------------------------------------------------------------------
 
