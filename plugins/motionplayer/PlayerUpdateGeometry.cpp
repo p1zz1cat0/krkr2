@@ -329,6 +329,15 @@ namespace motion {
                  vn.meshControlPoints.size() == 32);
             vn.meshCombineEnabled = vn.meshAncestorIndex >= 0 &&
                 (vn.inheritFlags & 0x02000000) == 0;
+            // A node without inherit bit 0x02000000 ignores the parent mesh
+            // deformation (After ココナツ "■腕L_親変形無視"). It starts a new mesh
+            // chain: its descendants stop here and do not apply the arm
+            // patches above it. When the chain continued, hand points outside
+            // the arm patch were extrapolated, and the fingers stretched as
+            // body_LR moved away from 0.
+            if(vn.meshCombineEnabled) {
+                vn.meshAncestorIndex = -1;
+            }
 
             // Check visible (0x6BC700..0x6BC74C)
             if(!vn.accumulated.visible) {
