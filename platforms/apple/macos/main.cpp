@@ -1,6 +1,10 @@
 #include <memory>
+#include <cstdlib>
 #include <cstring>
 #include <cocos2d.h>
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -18,6 +22,14 @@ int main(int argc, char *argv[]) {
 
     if (argc == 2 && std::strcmp(argv[1], "--renderer-self-test") == 0) {
         return YoghourtRunRendererSelfTest();
+    }
+
+    const char* testNoActivate = std::getenv("YOGHOURT_TEST_NO_ACTIVATE");
+    if (testNoActivate && std::strcmp(testNoActivate, "1") == 0) {
+        if (!glfwInit()) return 1;
+        // Set these hints after initialization and before Cocos creates a window.
+        glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+        glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
     }
 
     spdlog::set_level(spdlog::level::info);

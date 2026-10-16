@@ -726,6 +726,8 @@ int YoghourtRunRendererSelfTest() {
                 std::fprintf(stderr, "[Yoghourt] ERROR renderer self-test: GLFW initialization failed\n");
                 break;
             }
+            glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+            glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
             glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
             glfwWindow = glfwCreateWindow(64, 64, "KrKr2 Renderer Self-Test", nullptr, nullptr);
@@ -739,7 +741,6 @@ int YoghourtRunRendererSelfTest() {
             contentView.wantsLayer = YES;
             [contentView layoutSubtreeIfNeeded];
             [cocoaWindow orderFrontRegardless];
-            [NSApp activateIgnoringOtherApps:NO];
             CALayer* backingLayer = contentView.layer;
             if (!backingLayer) {
                 std::fprintf(stderr, "[Yoghourt] ERROR renderer self-test: drawable backing CALayer unavailable\n");

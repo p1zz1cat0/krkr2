@@ -25,7 +25,8 @@ failure_pattern='PLUGIN_ASSERT_FAIL|script exception|An exception occurred|Membe
 print "smoke_executable=$executable"
 print "smoke_fixture=$fixture"
 print "smoke_logs=$log_dir"
-"$executable" "$fixture" >"$stdout_log" 2>"$stderr_log" &
+YOGHOURT_TEST_NO_ACTIVATE="${YOGHOURT_TEST_NO_ACTIVATE:-1}" \
+  "$executable" "$fixture" >"$stdout_log" 2>"$stderr_log" &
 process_id=$!
 deadline=$(( SECONDS + timeout_seconds ))
 verdict=""
