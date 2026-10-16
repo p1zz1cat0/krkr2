@@ -707,6 +707,10 @@ bool RunSpatialRingTest(EGLState &state, GLFWwindow *window, NSWindow *cocoaWind
 } // namespace
 
 int YoghourtRunRendererSelfTest() {
+    [NSUserDefaults.standardUserDefaults
+        setVolatileDomain:@{@"ApplePersistenceIgnoreState": @YES}
+        forName:NSArgumentDomain];
+
     auto completed = std::make_shared<std::atomic_bool>(false);
     std::thread([completed] {
         std::this_thread::sleep_for(kSelfTestTimeout);
