@@ -27,6 +27,7 @@ extern "C" void TVPGetLangNamePluginAnchor() {}
 extern "C" void TVPShrinkCopyPluginAnchor() {}
 extern "C" void TVPLayerExRasterPluginAnchor() {}
 extern "C" void TVPLayerExAreaAveragePluginAnchor() {}
+extern "C" void TVPLayerExShimmerPluginAnchor() {}
 extern "C" void TVPLayerExSavePluginAnchor() {}
 extern "C" void TVPFstatPluginAnchor() {}
 extern "C" void TVPLayerExBtoAPluginAnchor() {}

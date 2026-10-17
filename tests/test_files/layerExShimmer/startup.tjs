@@ -1,0 +1,39 @@
+// layerExShimmer.dll smoke test.
+// Usage: krkr2 <this dir>. The script ends the process with System.exit(0).
+// Expected hashes come from the original DLL on krkrz 20150817 (Windows),
+// see oracle-startup.tjs. Each hash is FNV-style over the 0xAARRGGBB pixels.
+Scripts.execStorage("../common/plugin_assert.tjs");
+Plugins.link("layerExShimmer.dll");
+Scripts.execStorage("cases.tjs");
+
+var expected = %[
+    "src" => 0x21caf480,
+    "shimmer-nomask" => 0x255147e4,
+    "shimmer-mask-overflow" => 0xe391460f,
+    "shimmer-clip" => 0x81af7721,
+    "shimmer-negclip" => 0x6ab0afd0,
+    "shimmer-small" => 0x1cd12321,
+    "buildmap-one" => 0xd1766d77,
+    "buildmap-two" => 0x9dd5d07b,
+    "buildmap-two-aligned" => 0xeb84da18
+];
+// Set to true to print every pixel (SHIMMER_PX) for a diff with the oracle.
+var dumpAll = false;
+
+var win = new Window();
+var prim = new Layer(win, null);
+prim.setImageSize(32, 32);
+shimmerRunCases(win, function(name, l, w, h) {
+    var hash = 2166136261;
+    for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++) {
+            var p = shimmerGetPixel(l, x, y);
+            hash = ((hash ^ p) * 16777619) & 0xFFFFFFFF;
+            if (dumpAll)
+                Debug.message("SHIMMER_PX " + name + " " + x + " " + y + " " + "%08x".sprintf(p));
+        }
+    Debug.message("SHIMMER_HASH " + name + " " + "%08x".sprintf(hash));
+    pluginAssertEqual(name, expected[name], hash);
+});
+pluginSmokePass("layerExShimmer.dll");
+System.exit(0);

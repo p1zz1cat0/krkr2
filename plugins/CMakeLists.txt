@@ -54,6 +54,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     shrinkCopy/shrinkCopy.cpp
     layerExRaster/layerExRaster.cpp
     layerExAreaAverage/layerExAreaAverage.cpp
+    layerExShimmer/layerExShimmer.cpp
     alphamovie/AlphaMovie.cpp
     wuvorbis/WuVorbisShim.cpp
     windowMessageChannel/windowMessageChannel.cpp

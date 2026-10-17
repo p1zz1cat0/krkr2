@@ -1,0 +1,114 @@
+// layerExShimmer cases shared by the krkr2 fixture and the Windows oracle.
+// Keep this file ASCII: the oracle host (krkrz 2015) reads it as UTF-16LE.
+//
+// shimmerRunCases(emit) calls emit(name, layer, width, height) after each
+// case. Pixels are read as 0xAARRGGBB through normalized getMainPixel and
+// getMaskPixel, so both hosts give the same values. Pixels are written with
+// fillRect: krkrz 20150817 setMainPixel writes 0 for a color with an alpha
+// byte, and krkr2 setMainPixel writes alpha 0 for a 24-bit color.
+
+var shimmerSeed = 12345;
+function shimmerRand() {
+    shimmerSeed = (shimmerSeed * 1103515245 + 12345) & 0x7FFFFFFF;
+    return shimmerSeed >> 16;
+}
+
+// krkr2 getMainPixel returns 0x00BBGGRR, krkrz returns 0x00RRGGBB.
+var shimmerSwapRB = false;
+function shimmerCalibrate(win) {
+    var l = new Layer(win, win.primaryLayer);
+    l.setImageSize(1, 1);
+    l.fillRect(0, 0, 1, 1, 0xFF112233);
+    shimmerSwapRB = (l.getMainPixel(0, 0) & 0xFFFFFF) == 0x332211;
+    invalidate l;
+}
+
+function shimmerGetPixel(l, x, y) {
+    var c = l.getMainPixel(x, y) & 0xFFFFFF;
+    if (shimmerSwapRB)
+        c = ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF);
+    return (l.getMaskPixel(x, y) << 24) | c;
+}
+
+// Random opaque-ish pixels. R, G and B differ, so a channel mix-up shows.
+function shimmerFillRandom(l, w, h) {
+    l.setImageSize(w, h);
+    for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++) {
+            var r = shimmerRand() & 0xFF, g = shimmerRand() & 0xFF;
+            var b = shimmerRand() & 0xFF, a = shimmerRand() & 0xFF;
+            l.fillRect(x, y, 1, 1, (a << 24) | (r << 16) | (g << 8) | b);
+        }
+}
+
+// Fixed background, so pixels that a case does not write are known.
+function shimmerFillPattern(l, w, h) {
+    l.setImageSize(w, h);
+    for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++) {
+            l.fillRect(x, y, 1, 1, ((0x80 + x + y) << 24) | (x * 8 << 16) | (y * 8 << 8) | 0x55);
+        }
+}
+
+function shimmerRunCases(win, emit) {
+    shimmerCalibrate(win);
+    var W = 24, H = 20;
+    var parent = win.primaryLayer;
+    var src = new Layer(win, parent); shimmerFillRandom(src, W, H);
+    var map = new Layer(win, parent); shimmerFillRandom(map, W, H);
+    var msk = new Layer(win, parent); shimmerFillRandom(msk, W, H);
+    var dst = new Layer(win, parent);
+    emit("src", src, W, H);
+
+    // The source KThreadPool does not initialize the worker state. The
+    // first shimmer call on a layer can drop the worker half of the rows.
+    // Warm up dst once so the oracle output is deterministic.
+    shimmerFillPattern(dst, W, H);
+    dst.shimmer(src, map, void, 0.0, 0.0, 0, 0, 0, 0);
+
+    // Full layer, no mask. scaley 0.5 gives .5 ties (round to even).
+    shimmerFillPattern(dst, W, H);
+    dst.shimmer(src, map, void, 0.25, 0.5, 0, 0, 0, 0);
+    emit("shimmer-nomask", dst, W, H);
+
+    // Mask, large scale: the ring math overflows int32 in the source.
+    shimmerFillPattern(dst, W, H);
+    dst.shimmer(src, map, msk, 3.0, -2.5, 0, 0, 0, 0);
+    emit("shimmer-mask-overflow", dst, W, H);
+
+    // Inner clip rectangle with mask.
+    shimmerFillPattern(dst, W, H);
+    dst.shimmer(src, map, msk, 0.7, 1.3, 3, 2, 15, 11);
+    emit("shimmer-clip", dst, W, H);
+
+    // Negative clip origin, cliph 0 means source height, clipped by dst.
+    shimmerFillPattern(dst, W, H);
+    dst.shimmer(src, map, void, -1.75, 0.375, -2, 1, 10, 0);
+    emit("shimmer-negclip", dst, W, H);
+
+    // Small clip: 3x3 (one interior pixel) and 2x5 (ring only).
+    // The source SSE2 mask loop has no zero-count check and does not stop
+    // for an interior width < 4, so the 3x3 case has no mask.
+    shimmerFillPattern(dst, W, H);
+    dst.shimmer(src, map, void, 1.0, 1.0, 5, 5, 3, 3);
+    dst.shimmer(src, map, msk, 2.0, 2.0, 12, 4, 2, 5);
+    emit("shimmer-small", dst, W, H);
+
+    var m1 = new Layer(win, parent); shimmerFillRandom(m1, 12, 8);
+    var m2 = new Layer(win, parent); shimmerFillRandom(m2, 8, 12);
+    var bm = new Layer(win, parent);
+
+    shimmerFillPattern(bm, 22, 18);
+    bm.shimmerBuildMap(m1, 5, -3, void, 0, 0);
+    emit("buildmap-one", bm, 22, 18);
+
+    shimmerFillPattern(bm, 22, 18);
+    bm.shimmerBuildMap(m1, 3, 7, m2, -6, 30);
+    emit("buildmap-two", bm, 22, 18);
+
+    // Both offsets are multiples of 4: the source skips width % 4 columns.
+    // Width 20 keeps rows 16-byte aligned for movdqa/movntdq on the oracle.
+    shimmerFillPattern(bm, 20, 18);
+    bm.shimmerBuildMap(m1, 4, 2, m2, -8, 5);
+    emit("buildmap-two-aligned", bm, 20, 18);
+}
