@@ -260,6 +260,10 @@ extern "C" void YoghourtCursorHideUntilMouseMoves(void) {
 }
 
 extern "C" void YoghourtCursorTick(void) {
+    YoghourtCursorTickAt(NowMilliseconds());
+}
+
+extern "C" void YoghourtCursorTickAt(long long now) {
     if(!gWindow || gHidden || gHandle < TVPCursorHandleBase)
         return;
 
@@ -267,7 +271,6 @@ extern "C" void YoghourtCursorTick(void) {
     if(!animated || animated->Cursors.size() < 2)
         return;
 
-    const long long now = NowMilliseconds();
     if(!gTicking) {
         gTicking = true;
         gLastTick = now;

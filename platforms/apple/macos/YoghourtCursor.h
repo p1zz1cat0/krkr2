@@ -32,4 +32,8 @@ void YoghourtCursorHideUntilMouseMoves(void);
 
 //! Advances an animated cursor.  Call once per frame.
 void YoghourtCursorTick(void);
+
+//! Advances an animated cursor at a monotonic timestamp in milliseconds.
+//! Component checks supply timestamps here; the runtime uses Tick().
+void YoghourtCursorTickAt(long long now);
 }

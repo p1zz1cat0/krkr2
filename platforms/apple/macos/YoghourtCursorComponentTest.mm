@@ -14,7 +14,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -184,15 +183,23 @@ int main(int argc, char **argv) {
     ExpectColor([NSCursor currentCursor], 255, 0, 255,
                 "mcsVisible restores the loaded cursor");
 
-    // 动画光标：按 rate 从洋红切到青色（每帧 200 ms）。
+    // Each frame lasts 200 ms. Supply timestamps to check frame boundaries.
     YoghourtCursorApply(animation);
     ExpectColor([NSCursor currentCursor], 255, 0, 255,
                 "animated cursor starts on its first frame");
-    YoghourtCursorTick();
-    usleep(250 * 1000);
-    YoghourtCursorTick();
+    YoghourtCursorTickAt(1000);
+    YoghourtCursorTickAt(1199);
+    ExpectColor([NSCursor currentCursor], 255, 0, 255,
+                "animated cursor keeps its frame before the duration elapses");
+    YoghourtCursorTickAt(1200);
     ExpectColor([NSCursor currentCursor], 0, 255, 255,
                 "animated cursor advances to the next frame");
+    YoghourtCursorTickAt(1399);
+    ExpectColor([NSCursor currentCursor], 0, 255, 255,
+                "animated cursor keeps the second frame for its duration");
+    YoghourtCursorTickAt(1400);
+    ExpectColor([NSCursor currentCursor], 255, 0, 255,
+                "animated cursor loops back to the first frame");
 
     glfwDestroyWindow(window);
     glfwTerminate();
