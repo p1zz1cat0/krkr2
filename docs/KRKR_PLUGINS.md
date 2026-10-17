@@ -28,6 +28,17 @@ The Yoghourt bootstrap's `--unsafe-skip-quality-gate` mode is development-only:
 it retains staging output in a temporary build directory and must never replace
 `Vendor/Engines/KrKr2`.
 
+## Link-only module names
+
+`plugins/linkstubs/LinkStubs.cpp` declares module names that this build does not
+ship as DLL files. Each name makes `Plugins.link` succeed. Old KAG scripts
+select a branch from the link result. The file registers no TJS class and no TJS
+member.
+
+Add a name only when the core backs the module. A name whose TJS class is
+missing makes the script fail later with a TJS error. Do not add
+`dmmcloud.dll`, `krkrsteam.dll` or `win32ole.dll`.
+
 ## Known plugin origins
 
 | DLL name               | Source or binary location                                                                               |
@@ -59,7 +70,11 @@ it retains staging output in a temporary build directory and must never replace
 | getabout.dll           | nan                                                                                                     |
 | gfxEffect.dll          | http://kaede-software.com/krlm/plugin/gfx_effect.zip                                                    |
 | json.dll               | https://github.com/wtnbgo/json                                                                          |
+| k2compat.dll           | in-tree: plugins/linkstubs (link-only name; the core registers no matching TJS class)                    |
+| kagexopt.dll           | in-tree: plugins/linkstubs (link-only name; KAG parsing lives in the core)                               |
 | kirikiroid2.dll        | nan                                                                                                     |
+| krmovie.dll            | in-tree: plugins/linkstubs (link-only name; movie playback lives in the core)                            |
+| kztouch.dll            | in-tree: plugins/linkstubs (link-only name; the core registers no matching TJS class)                    |
 | layerExAlpha.dll       | nan                                                                                                     |
 | layerExAreaAverage.dll | https://github.com/wtnbgo/layerExAreaAverage                                                            |
 | layerExBTOA.dll        | https://github.com/wtnbgo/layerExBTOA                                                                   |
@@ -68,6 +83,7 @@ it retains staging output in a temporary build directory and must never replace
 | layerExRaster.dll      | https://github.com/wtnbgo/layerExRaster                                                                 |
 | layerExShimmer.dll     | http://keepcreating.g2.xrea.com/krkrplugins/ShimmerPlugin/layerExShimmer.zip                            |
 | lzfs.dll               | in-tree: plugins/lzfs (clean-room LZ4F media; spec from Kirakira reverse notes)                    |
+| menu.dll               | in-tree: plugins/linkstubs (link-only name; MenuItem is a core class)                                    |
 | minizip.dll            | https://github.com/wtnbgo/minizip                                                                       |
 | motionplayer.dll       | nan                                                                                                     |
 | multiimage.dll         | nan                                                                                                     |
@@ -82,5 +98,6 @@ it retains staging output in a temporary build directory and must never replace
 | varfile.dll            | https://github.com/wtnbgo/varfile                                                                       |
 | win32dialog.dll        | https://github.com/wtnbgo/win32dialog                                                                   |
 | windowEx.dll           | https://github.com/wtnbgo/windowEx                                                                      |
+| wuopus.dll             | in-tree: plugins/linkstubs (link-only name; Opus decoding lives in the core)                             |
 | wutcwf.dll             | https://github.com/krkrz/SamplePlugin/tree/master/wutcwf                                                |
 | xp3filter.dll          | nan                                                                                                     |

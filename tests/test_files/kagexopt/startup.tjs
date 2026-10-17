@@ -1,0 +1,14 @@
+// kagexopt.dll 链接空壳 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+// 断言：本构建不携带 kagexopt.dll 文件。Plugins.link 必须成功，
+// Plugins.CanLoadPlugin 必须为 true。旧脚本用这个结果选分支。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+// CanLoadPlugin 由 PackinOne 模块附在 Plugins 上。先链接它，再探测。
+Plugins.link("PackinOne.dll");
+Plugins.link("kagexopt.dll");
+pluginAssertTrue("CanLoadPlugin reports kagexopt",
+    Plugins.CanLoadPlugin("kagexopt.dll"));
+
+pluginSmokePass("kagexopt.dll");
+System.exit(0);

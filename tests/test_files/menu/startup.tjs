@@ -1,0 +1,17 @@
+// menu.dll 链接空壳 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+// 断言：本构建不携带 menu.dll 文件。Plugins.link 必须成功，
+// Plugins.CanLoadPlugin 必须为 true。旧脚本用这个结果选分支。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+// CanLoadPlugin 由 PackinOne 模块附在 Plugins 上。先链接它，再探测。
+Plugins.link("PackinOne.dll");
+Plugins.link("menu.dll");
+pluginAssertTrue("CanLoadPlugin reports menu",
+    Plugins.CanLoadPlugin("menu.dll"));
+
+// menu.dll 的 MenuItem 在本构建里是核心类。链接不重复注册它。
+pluginAssertTrue("MenuItem stays a core class", MenuItem != void);
+
+pluginSmokePass("menu.dll");
+System.exit(0);

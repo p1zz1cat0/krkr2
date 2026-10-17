@@ -46,6 +46,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     DrawDeviceD3D/DrawDeviceD3D.cpp
     DrawDeviceD3D/DrawDeviceD3DZAlias.cpp
     lzfs/lzfs.cpp
+    linkstubs/LinkStubs.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
