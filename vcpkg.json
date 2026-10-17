@@ -86,6 +86,7 @@
       "default-features": false
     },
     "spdlog",
+    "sqlite3",
     "uchardet",
     "unrar",
     {

@@ -45,18 +45,24 @@ int xp3Read(sqlite3_file *id, void *buffer, int amount, sqlite3_int64 offset) {
     if(!file->stream)
         return SQLITE_IOERR_READ;
 
-    const tjs_uint64 pos = file->stream->Seek(
-        static_cast<tjs_uint64>(offset), TJS_BS_SEEK_SET);
-    if(pos != static_cast<tjs_uint64>(offset))
-        return SQLITE_IOERR_SEEK;
+    // Storage 的 Seek/Read 会抛 TJS 异常（解密失败等）。异常不能穿过
+    // SQLite 的 C 栈帧，否则内部状态会坏掉，所以在这里收住。
+    try {
+        const tjs_uint64 pos = file->stream->Seek(
+            static_cast<tjs_uint64>(offset), TJS_BS_SEEK_SET);
+        if(pos != static_cast<tjs_uint64>(offset))
+            return SQLITE_IOERR_SEEK;
 
-    const tjs_uint read = file->stream->Read(buffer, amount);
-    if(read == static_cast<tjs_uint>(amount))
-        return SQLITE_OK;
+        const tjs_uint read = file->stream->Read(buffer, amount);
+        if(read == static_cast<tjs_uint>(amount))
+            return SQLITE_OK;
 
-    if(read < static_cast<tjs_uint>(amount))
-        std::memset(static_cast<char *>(buffer) + read, 0,
-                    static_cast<size_t>(amount) - read);
+        if(read < static_cast<tjs_uint>(amount))
+            std::memset(static_cast<char *>(buffer) + read, 0,
+                        static_cast<size_t>(amount) - read);
+    } catch(...) {
+        return SQLITE_IOERR_READ;
+    }
     return SQLITE_IOERR_SHORT_READ;
 }
 
@@ -72,7 +78,11 @@ int xp3FileSize(sqlite3_file *id, sqlite3_int64 *size) {
     auto *file = reinterpret_cast<Xp3SqliteFile *>(id);
     if(!file->stream)
         return SQLITE_IOERR_FSTAT;
-    *size = static_cast<sqlite3_int64>(file->stream->GetSize());
+    try {
+        *size = static_cast<sqlite3_int64>(file->stream->GetSize());
+    } catch(...) {
+        return SQLITE_IOERR_FSTAT;
+    }
     return SQLITE_OK;
 }
 
@@ -143,8 +153,13 @@ int xp3Delete(sqlite3_vfs *, const char *, int) { return SQLITE_READONLY; }
 
 int xp3Access(sqlite3_vfs *, const char *name, int flags, int *result) {
     bool exists = false;
-    if(flags == SQLITE_ACCESS_EXISTS || flags == SQLITE_ACCESS_READ)
-        exists = TVPIsExistentStorage(fromUtf8(name));
+    if(flags == SQLITE_ACCESS_EXISTS || flags == SQLITE_ACCESS_READ) {
+        try {
+            exists = TVPIsExistentStorage(fromUtf8(name));
+        } catch(...) {
+            return SQLITE_IOERR_ACCESS;
+        }
+    }
     if(result)
         *result = exists ? 1 : 0;
     return SQLITE_OK;

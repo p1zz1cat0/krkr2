@@ -39,7 +39,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     kirikiroid2/kirikiroid2.cpp
     sqlite/sqlite.cpp
     sqlite/sqliteXp3Vfs.cpp
-    sqlite/sqlite3.c
 )
 
 # These registration translation units belong only to the aggregate plugin
@@ -144,7 +143,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${EXPAT_LIBRARY})
 find_package(minizip-ng CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE MINIZIP::minizip-ng)
 
-# SQLite amalgamation: Apple 需要绕开 zone allocator。
-if(APPLE)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE SQLITE_WITHOUT_ZONEMALLOC)
-endif()
+# sqlite3.dll 用 vcpkg 的 sqlite3 端口。端口自带 official/unofficial 两套
+# 导出；unofficial-sqlite3 是它的 CMake 目标名，随 manifest 一起安装。
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::sqlite3::sqlite3)
