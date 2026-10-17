@@ -1,0 +1,61 @@
+// KAGParserExb.dll smoke test
+// KAGParserExb is a link alias: ExtKAGParser owns the KAGParser class.
+// This fixture verifies the KAGParserExb-only AttribNameMacros surface.
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("KAGParserExb.dll");
+
+var parser = new KAGParser();
+check(parser.attribNameMacros !== void, "attribNameMacros dictionary exists");
+
+var scenarioText = "";
+parser.onScenarioLoad = function(name) {
+    return scenarioText;
+};
+function loadScenario(text) {
+    parser.clear();
+    scenarioText = text;
+    parser.loadScenario("smoke.ks");
+}
+
+// @amacro registers an attribute alias. The alias tag itself is consumed.
+loadScenario("@amacro name=t target=time\n@wait t=1000\n");
+var tag = parser.getNextTag();
+check(tag.tagname == "wait", "amacro does not emit a tag");
+check(tag.time == 1000, "amacro expands the attribute name");
+check(tag.t === void, "amacro does not keep the alias key");
+check(parser.attribNameMacros.t == "time", "alias is registered");
+
+// Aliases can chain.
+loadScenario("@amacro name=tt target=t\n@wait tt=2000\n");
+var chained = parser.getNextTag();
+check(chained.time == 2000, "amacro chaining resolves to the target");
+
+// store/restore keeps the alias dictionary.
+loadScenario("@amacro name=t target=time\n");
+var saved = parser.store();
+check(saved.attribNameMacros !== void, "store contains attribNameMacros");
+check(saved.attribNameMacros.t == "time", "store keeps the alias");
+loadScenario("@eraseamacro name=t\n");
+parser.getNextTag();
+check(parser.attribNameMacros.t === void, "alias removed before restore");
+parser.restore(saved);
+check(parser.attribNameMacros.t == "time", "restore keeps the alias");
+
+// @eraseamacro removes the alias; the name is then a normal attribute.
+loadScenario("@eraseamacro name=t\n@wait t=3000\n");
+var erased = parser.getNextTag();
+check(erased.t == 3000, "eraseamacro removes the alias");
+check(erased.time === void, "erased alias no longer expands");
+
+// Linking the full module afterwards must not replace the class again.
+Plugins.link("ExtKAGParser.dll");
+var both = new KAGParser();
+check(both.attribNameMacros !== void, "ExtKAGParser link keeps attrib aliases");
+check(both.pmacros !== void, "ExtKAGParser link keeps parameter macros");
+
+pluginSmokePass("KAGParserExb.dll");
+System.exit(0);

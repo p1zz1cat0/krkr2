@@ -12,9 +12,13 @@
 
 extern tTJSNativeClass* TVPCreateNativeClass_ExtKAGParser();
 static iTJSDispatch2* origKAGParser = NULL;
+static bool extkagparser_installed = false;
 
 void extkagparser_init()
 {
+    if (extkagparser_installed)
+        return;
+
     iTJSDispatch2* global = TVPGetScriptDispatch();
     if (global)
     {
@@ -29,11 +33,14 @@ void extkagparser_init()
         tjsclass->Release();
         global->PropSet(TJS_MEMBERENSURE, TVP_KAGPARSER_EX_CLASSNAME, NULL, &val, global);
         global->Release();
+        extkagparser_installed = true;
     }
 }
 
 void extkagparser_done()
 {
+    if (!extkagparser_installed)
+        return;
 
     iTJSDispatch2* global = TVPGetScriptDispatch();
     if (global)
@@ -48,6 +55,7 @@ void extkagparser_done()
         }
         global->Release();
     }
+    extkagparser_installed = false;
 }
 
 NCB_PRE_REGIST_CALLBACK(extkagparser_init);

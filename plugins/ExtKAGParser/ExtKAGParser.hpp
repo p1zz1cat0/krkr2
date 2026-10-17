@@ -171,6 +171,7 @@ private:
 
 	tTJSDic Macros; // Macro Dictionary Object
 	tTJSDic ParamMacros; // Parameter Macro Dictionary Object
+	tTJSDic AttribNameMacros; // Attribute Name Macro Dictionary Object
 
 	std::vector<tTJSDic*> MacroArgs; // Macro arguments
 	tjs_uint MacroArgStackDepth;
@@ -412,6 +413,7 @@ public:
 	tTJSVariant GetCurrentLocalVariables() { return LocalVariables.GetLast(); }
 	tTJSVariant GetPreviousLocalVariables() { return LocalVariables.GetPrev(); }
 	tTJSVariant GetParamMacros() { return ParamMacros; }
+	tTJSVariant GetAttribNameMacros() { return AttribNameMacros; }
 };
 
 //---------------------------------------------------------------------------

@@ -506,6 +506,9 @@ void tTJSNI_ExtKAGParser::operator=(const tTJSNI_ExtKAGParser& ref)
     // copy ParamMacros
     ParamMacros.Assign(ref.ParamMacros.GetDicNoAddRef()); // GetDicNoAddRef() is const
 
+    // copy AttribNameMacros
+    AttribNameMacros.Assign(ref.AttribNameMacros.GetDicNoAddRef());
+
     // copy MacroArgs
     {
         ClearMacroArgs();
@@ -597,6 +600,7 @@ iTJSDispatch2* tTJSNI_ExtKAGParser::Store()
 
         // store MacroArgs
         ParamMacros.Store(dic, TJS_W("paramMacros"));
+        AttribNameMacros.Store(dic, TJS_W("attribNameMacros"));
 
         // create and assign macro dictionary
         Macros.Store(dic, TJS_W("macros"));
@@ -872,6 +876,11 @@ void tTJSNI_ExtKAGParser::Restore(iTJSDispatch2* dic)
 
     // restore ParamMacros
     ParamMacros.Restore(dic, TJS_W("paramMacros"));
+
+    // restore AttribNameMacros. Older KAGParserExb saves used the
+    // capital spelling, so accept both.
+    AttribNameMacros.Restore(dic, TJS_W("attribNameMacros"));
+    AttribNameMacros.Restore(dic, TJS_W("AttribNameMacros"));
 
     // restore macros
     Macros.Restore(dic, TJS_W("macros"));
@@ -2445,6 +2454,8 @@ iTJSDispatch2* tTJSNI_ExtKAGParser::_GetNextTag()
             tag_macropop,
             tag_erasemacro,
             tag_erasepmacro,
+            tag_amacro,
+            tag_eraseamacro,
             tag_jump,
             tag_call,
             tag_return,
@@ -2475,6 +2486,8 @@ iTJSDispatch2* tTJSNI_ExtKAGParser::_GetNextTag()
             special_tags_hash.Add(ttstr(TJS_W("macropop")), (tjs_int)tag_macropop);
             special_tags_hash.Add(ttstr(TJS_W("erasemacro")), (tjs_int)tag_erasemacro);
             special_tags_hash.Add(ttstr(TJS_W("erasepmacro")), (tjs_int)tag_erasepmacro);
+            special_tags_hash.Add(ttstr(TJS_W("amacro")), (tjs_int)tag_amacro);
+            special_tags_hash.Add(ttstr(TJS_W("eraseamacro")), (tjs_int)tag_eraseamacro);
             special_tags_hash.Add(ttstr(TJS_W("jump")), (tjs_int)tag_jump);
             special_tags_hash.Add(ttstr(TJS_W("call")), (tjs_int)tag_call);
             special_tags_hash.Add(ttstr(TJS_W("return")), (tjs_int)tag_return);
@@ -2554,6 +2567,25 @@ iTJSDispatch2* tTJSNI_ExtKAGParser::_GetNextTag()
             ttstr attribname(GetAttributeName(ldelim));
             // now attribname is the attribution name, as "attr1" in [tagname attr1=value1]
             // and CurLineStr[CurPos] is on the next to the "attr1"
+
+            // Attribute name macros (KAGParserExb). Expand before the
+            // value and parameter macro lookups so the alias behaves
+            // exactly like the target attribute.
+            for (tjs_int macro_depth = 0; macro_depth < 16; ++macro_depth)
+            {
+                tTJSVariant macro_target = AttribNameMacros[attribname];
+                if (macro_target.Type() != tvtString)
+                    break;
+                ttstr expanded(macro_target.AsStringNoAddRef());
+                if (expanded == attribname)
+                    break;
+                attribname = expanded;
+                if (macro_depth == 15)
+                    TVPThrowExceptionMessage(
+                        TVPExtKAGSyntaxError,
+                        TJS_W("属性名マクロが循環しています"),
+                        TVPCurPosErrorString);
+            }
 
             // searching '='
             SkipWhiteSpace();
@@ -3360,6 +3392,25 @@ iTJSDispatch2* tTJSNI_ExtKAGParser::_GetNextTag()
             goto tag_last; // last check and go to next tag
         }
 
+        else if (tagkind == tag_amacro)
+        {
+            // for [amacro name=alias target=attribute]
+            ttstr macroname = DicObj.GetProp(__name);
+            tTJSVariant target = DicObj.GetProp(__target_name);
+            AttribNameMacros.SetProp(macroname, target);
+
+            goto tag_last; // last check and go to next tag
+        }
+
+        else if (tagkind == tag_eraseamacro)
+        {
+            ttstr macroname = DicObj.GetProp(__name);
+            if (TJS_FAILED(AttribNameMacros.DelProp(macroname)))
+                TVPThrowExceptionMessage(TVPExtUnknownMacroName, macroname);
+
+            goto tag_last; // last check and go to next tag
+        }
+
         else if (tagkind == tag_pmacro)
         {
             // for [pmacro name=xxx arg1=#1 arg2=#2]
@@ -3899,6 +3950,17 @@ TJS_END_NATIVE_PROP_GETTER
 TJS_DENY_NATIVE_PROP_SETTER
 }
 TJS_END_NATIVE_PROP_DECL(pmacros)
+//----------------------------------------------------------------------
+TJS_BEGIN_NATIVE_PROP_DECL(attribNameMacros){TJS_BEGIN_NATIVE_PROP_GETTER{
+    TJS_GET_NATIVE_INSTANCE(/*var. name*/ _this, /*var. type*/ tTJSNI_ExtKAGParser);
+*result = _this->GetAttribNameMacros();
+return TJS_S_OK;
+}
+TJS_END_NATIVE_PROP_GETTER
+
+TJS_DENY_NATIVE_PROP_SETTER
+}
+TJS_END_NATIVE_PROP_DECL(attribNameMacros)
 //----------------------------------------------------------------------
 TJS_BEGIN_NATIVE_PROP_DECL(ifLevel){TJS_BEGIN_NATIVE_PROP_GETTER{
     TJS_GET_NATIVE_INSTANCE(/*var. name*/ _this, /*var. type*/ tTJSNI_ExtKAGParser);

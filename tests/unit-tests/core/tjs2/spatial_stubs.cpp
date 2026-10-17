@@ -50,6 +50,7 @@ extern "C" void TVPFftGraphPluginAnchor() {}
 extern "C" void TVPGetAboutPluginAnchor() {}
 extern "C" void TVPGetSamplePluginAnchor() {}
 extern "C" void TVPKAGParserExPluginAnchor() {}
+extern "C" void TVPKAGParserExbPluginAnchor() {}
 extern "C" void TVPJsonPluginAnchor() {}
 extern "C" void TVPExtKAGParserPluginAnchor() {}
 extern "C" void TVPMultiImagePluginAnchor() {}

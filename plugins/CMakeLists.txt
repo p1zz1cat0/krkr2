@@ -8,6 +8,7 @@ add_library(${PROJECT_NAME} STATIC)
 # plugin a second time (which can duplicate ncbind registrations).
 target_sources(${PROJECT_NAME} PRIVATE
     KAGParser/kagparserex.cpp
+    KAGParserExb/kagparserexb.cpp
     EmotePlayer/EmotePlayer.cpp
     TextRender/TextRender.cpp
     ScriptsEx/scriptsEx.cpp
