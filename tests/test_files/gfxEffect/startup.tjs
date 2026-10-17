@@ -1,0 +1,15 @@
+// gfxEffect.dll smoke test: the compatibility shim only exposes the gfxFire
+// class. The original plugin is closed source, so no drawing surface exists.
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("gfxEffect.dll");
+
+var fire = new gfxFire();
+check(fire != void, "gfxFire constructs");
+fire.finalize();
+
+pluginSmokePass("gfxEffect.dll");
+System.exit(0);

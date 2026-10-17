@@ -1,0 +1,52 @@
+// multiimage.dll smoke test: queue surface plus the two Layer callbacks.
+// The callbacks delegate to core Layer.affineCopy / operateAffine. The
+// headless affine path samples half a pixel off at the right and bottom
+// edges, so a solid source color keeps the assertions independent of that
+// sampling detail.
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("multiimage.dll");
+
+var win = new Window();
+var top = new Layer(win, null);
+var src = new Layer(win, top);
+src.setImageSize(3, 2);
+src.fillRect(0, 0, 3, 2, 0xFF336699);
+var srcColor = src.getMainPixel(0, 0);
+
+var dst = new Layer(win, top);
+dst.setImageSize(8, 8);
+var untouched = dst.getMainPixel(0, 0);
+
+var mi = new MultiImage();
+check(mi.count == 0, "new MultiImage is empty");
+mi.push(src, 0, 0);
+check(mi.count == 1, "push adds one entry");
+mi.addZoom(1.0, 1.0, 0);
+
+dst.multiAffineCopy(mi, 1.0, 0.0, 0.0, 1.0, 2, 3, 255, 0, 0);
+check(dst.getMainPixel(2, 3) == srcColor,
+      "multiAffineCopy writes the source color at the translation");
+check(dst.getMainPixel(0, 0) == untouched,
+      "multiAffineCopy leaves other pixels");
+
+var dst2 = new Layer(win, top);
+dst2.setImageSize(8, 8);
+dst2.fillRect(0, 0, 8, 8, 0xFFFFFFFF);
+
+var mi2 = new MultiImage();
+mi2.push(src, 1, 1);
+dst2.operateMultiAffine(mi2, 1.0, 0.0, 0.0, 1.0, 4, 4, 255, 2, 1);
+check(dst2.getMainPixel(5, 5) == srcColor,
+      "operateMultiAffine blends the source color at the translation");
+
+mi.clear();
+check(mi.count == 0, "clear empties the queue");
+mi.divisionLayer(2);
+mi.calcMultiAffine(1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 8, 8, 255, 0);
+
+pluginSmokePass("multiimage.dll");
+System.exit(0);

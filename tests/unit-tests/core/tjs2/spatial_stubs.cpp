@@ -52,6 +52,8 @@ extern "C" void TVPGetSamplePluginAnchor() {}
 extern "C" void TVPKAGParserExPluginAnchor() {}
 extern "C" void TVPJsonPluginAnchor() {}
 extern "C" void TVPExtKAGParserPluginAnchor() {}
+extern "C" void TVPMultiImagePluginAnchor() {}
+extern "C" void TVPGfxEffectPluginAnchor() {}
 extern "C" void TVPExpatPluginAnchor() {}
 extern "C" void TVPMinizipPluginAnchor() {}
 extern "C" void TVPKirikiroid2PluginAnchor() {}

@@ -30,6 +30,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     Extrans/ExtransMath.cpp
     xp3filter/xp3filter.cpp
     json/json.cpp
+    multiimage/multiimage.cpp
+    gfxEffect/gfxEffect.cpp
     expat/expat.cpp
     minizip/minizip.cpp
     kirikiroid2/kirikiroid2.cpp

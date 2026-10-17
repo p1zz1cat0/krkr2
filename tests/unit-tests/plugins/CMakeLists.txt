@@ -18,6 +18,7 @@ set(SOURCES
         motionplayer-source-dialect.cpp
         lzfs-dll.cpp
         json-dll.cpp
+        multiimage-dll.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")
