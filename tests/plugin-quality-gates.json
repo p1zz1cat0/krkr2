@@ -10,7 +10,9 @@
     {"path": "plugins/DrawDeviceD3D/origin/**", "classification": "third-party", "reason": "Ignored reference source snapshots; current CMake builds only the maintained DrawDeviceD3D files"},
     {"path": "plugins/psbfile/**", "classification": "third-party", "reason": "Upstream FreeMote PSB implementation"},
     {"path": "plugins/varfile/**", "classification": "third-party", "reason": "Upstream compatibility plugin"},
-    {"path": "plugins/wutcwf/**", "classification": "third-party", "reason": "Upstream compatibility plugin"}
+    {"path": "plugins/wutcwf/**", "classification": "third-party", "reason": "Upstream compatibility plugin"},
+    {"path": "plugins/sqlite/sqlite3.c", "classification": "third-party", "reason": "SQLite 3.7.14.1 amalgamation (public domain) from AetherKrkr"},
+    {"path": "plugins/sqlite/sqlite3.h", "classification": "third-party", "reason": "SQLite 3.7.14.1 amalgamation header (public domain) from AetherKrkr"}
   ],
   "plugins": [
     {"name": "drawdeviceD3D", "dll": "drawdeviceD3D.dll", "sourceRoots": ["plugins/DrawDeviceD3D"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/drawdeviceD3D", "marker": "PLUGIN_SMOKE_PASS plugin=drawdeviceD3D.dll", "timeoutSeconds": 30, "anchor": "TVPDrawDeviceD3DPluginAnchor", "smokeKind": "gui"},
@@ -36,6 +38,7 @@
     {"name": "ExtKAGParser", "dll": "ExtKAGParser.dll", "sourceRoots": ["plugins/ExtKAGParser"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/ExtKAGParser", "marker": "PLUGIN_SMOKE_PASS plugin=ExtKAGParser.dll", "timeoutSeconds": 30, "anchor": "TVPExtKAGParserPluginAnchor"},
     {"name": "expat", "dll": "expat.dll", "sourceRoots": ["plugins/expat"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/expat", "marker": "PLUGIN_SMOKE_PASS plugin=expat.dll", "timeoutSeconds": 30, "anchor": "TVPExpatPluginAnchor"},
     {"name": "minizip", "dll": "minizip.dll", "sourceRoots": ["plugins/minizip"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/minizip", "marker": "PLUGIN_SMOKE_PASS plugin=minizip.dll", "timeoutSeconds": 45, "anchor": "TVPMinizipPluginAnchor"},
-    {"name": "kirikiroid2", "dll": "kirikiroid2.dll", "sourceRoots": ["plugins/kirikiroid2"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/kirikiroid2", "marker": "PLUGIN_SMOKE_PASS plugin=kirikiroid2.dll", "timeoutSeconds": 30, "anchor": "TVPKirikiroid2PluginAnchor"}
+    {"name": "kirikiroid2", "dll": "kirikiroid2.dll", "sourceRoots": ["plugins/kirikiroid2"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/kirikiroid2", "marker": "PLUGIN_SMOKE_PASS plugin=kirikiroid2.dll", "timeoutSeconds": 30, "anchor": "TVPKirikiroid2PluginAnchor"},
+    {"name": "sqlite3", "dll": "sqlite3.dll", "sourceRoots": ["plugins/sqlite"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/sqlite", "marker": "PLUGIN_SMOKE_PASS plugin=sqlite3.dll", "timeoutSeconds": 60, "anchor": "TVPSqlitePluginAnchor"}
   ]
 }

@@ -33,6 +33,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     expat/expat.cpp
     minizip/minizip.cpp
     kirikiroid2/kirikiroid2.cpp
+    sqlite/sqlite.cpp
+    sqlite/sqliteXp3Vfs.cpp
+    sqlite/sqlite3.c
 )
 
 # These registration translation units belong only to the aggregate plugin
@@ -135,3 +138,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${EXPAT_LIBRARY})
 # minizip.dll：写走 external/minizip，读走 core 已在用的 cocos2d ext_unzip。
 find_package(cocos2dx CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE minizip cocos2dx::ext_unzip)
+
+# SQLite amalgamation: Apple 需要绕开 zone allocator。
+if(APPLE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SQLITE_WITHOUT_ZONEMALLOC)
+endif()

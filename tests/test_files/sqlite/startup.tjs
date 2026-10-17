@@ -1,0 +1,98 @@
+// sqlite3.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("sqlite3.dll");
+Plugins.link("minizip.dll");
+check(typeof Sqlite != "undefined", "Sqlite class exists");
+check(typeof SqliteStatement != "undefined", "SqliteStatement class exists");
+
+var db = new Sqlite(":memory:");
+check(db.exec("CREATE TABLE item (id INTEGER PRIMARY KEY, name TEXT)"),
+      "create table");
+check(db.exec("INSERT INTO item (name) VALUES (?)", ["alice"]),
+      "insert array bind");
+check(db.lastInsertRowId == 1, "lastInsertRowId");
+check(db.exec("INSERT INTO item (name) VALUES (:name)",
+              %[":name" => "bob"]),
+      "insert named bind");
+check(db.execValue("SELECT name FROM item WHERE id = ?", [1]) == "alice",
+      "execValue array bind");
+check(db.execValue("SELECT count(*) FROM item") == 2, "row count");
+
+var stmt = new SqliteStatement(db, "SELECT id, name FROM item ORDER BY id");
+check(stmt.columnCount == 2, "statement columnCount");
+check(stmt.step(), "statement first row");
+check(stmt.count == 2, "statement data count");
+check(stmt.getName(1) == "name", "statement column name");
+check(stmt.getType(0) == SqliteStatement.SQLITE_INTEGER, "integer type");
+check(!stmt.isNull(1), "text is not null");
+var row = stmt.get();
+check(row[0] == 1 && row[1] == "alice", "statement get row");
+check(stmt.get("name") == "alice", "statement get by name");
+check(stmt.step(), "statement second row");
+check(stmt.get(1) == "bob", "statement get column index");
+check(!stmt.step(), "statement exhausted");
+stmt.close();
+
+var bound = new SqliteStatement(db, "SELECT name FROM item WHERE id = ?");
+check(bound.bindAt(2) == Sqlite.SQLITE_OK, "bindAt");
+check(bound.exec() == Sqlite.SQLITE_ROW, "statement exec row");
+check(bound.get(0) == "bob", "bindAt value");
+bound.close();
+
+var reopened = new SqliteStatement(db);
+check(reopened.open("SELECT name FROM item WHERE id = ?", [1]) == Sqlite.SQLITE_OK,
+      "statement open with params");
+check(reopened.exec() == Sqlite.SQLITE_ROW, "reopened exec");
+check(reopened.get(0) == "alice", "reopened value");
+reopened.close();
+
+check(db.begin(), "begin");
+check(db.exec("INSERT INTO item (name) VALUES ('charlie')"), "insert rollback");
+check(db.rollback(), "rollback");
+check(db.execValue("SELECT count(*) FROM item") == 2, "rollback removed row");
+
+check(db.begin(), "begin second");
+check(db.exec("INSERT INTO item (name) VALUES ('dave')"), "insert commit");
+check(db.commit(), "commit");
+check(db.execValue("SELECT count(*) FROM item") == 3, "commit kept row");
+
+check(!db.exec("SELECT * FROM missing_table"), "bad SQL returns false");
+check(db.errorCode != Sqlite.SQLITE_OK, "bad SQL sets error code");
+check(db.errorMessage != "", "bad SQL sets error message");
+
+// 本地文件数据库：写连接保持打开，另开只读连接。
+var outDir = Storages.extractStoragePath(Storages.getPlacedPath("startup.tjs"));
+var stamp = Math.floor(Math.random() * 1000000000);
+var dbPath = outDir + "smoke-" + stamp + ".sqlite";
+var fileDb = new Sqlite(dbPath);
+check(fileDb.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"),
+      "file create");
+check(fileDb.exec("INSERT INTO t (name) VALUES ('file')"), "file insert");
+
+var readDb = new Sqlite(dbPath, true);
+check(readDb.execValue("SELECT name FROM t WHERE id = 1") == "file",
+      "readonly file query");
+
+// XP3 VFS：把数据库放进 zip，再用只读连接通过 zip:// 打开。
+var zipPath = outDir + "sqlite_smoke-" + stamp + ".zip";
+var zip = new Zip();
+zip.open(zipPath, 1);
+check(zip.add(dbPath, "data.sqlite"), "zip add database");
+zip.close();
+check(Storages.mountZip("sqltest", zipPath), "mount zip database");
+
+var archived = new Sqlite("zip://sqltest/data.sqlite", true);
+check(archived.execValue("SELECT name FROM t WHERE id = 1") == "file",
+      "xp3 vfs readonly query");
+check(!archived.exec("INSERT INTO t (name) VALUES ('blocked')"),
+      "xp3 vfs rejects write");
+Storages.unmountZip("sqltest");
+
+pluginSmokePass("sqlite3.dll");
+System.exit(0);

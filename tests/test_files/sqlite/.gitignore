@@ -1,0 +1,3 @@
+smoke-*.sqlite
+smoke-*.sqlite-journal
+sqlite_smoke-*.zip
