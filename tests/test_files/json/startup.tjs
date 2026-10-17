@@ -27,6 +27,14 @@ check(loose.x == 8, "'=>' separator");
 check(loose.list.count == 2, "array trailing comma");
 check(loose.bare == "y", "bare key");
 
+// 空列：分隔符之间没有值时，数组补 void，对象跳过。
+var gaps = Scripts.evalJSON("[1,,2]");
+check(gaps.count == 3 && gaps[1] === void && gaps[2] == 2, "array empty column");
+var lead = Scripts.evalJSON("[,1]");
+check(lead.count == 2 && lead[0] === void && lead[1] == 1, "array leading comma");
+var objGaps = Scripts.evalJSON("{,\"a\":1,,\"b\":2}");
+check(objGaps.a == 1 && objGaps.b == 2, "object empty member");
+
 // 代理对转义：只验证能解析且非空（TJS 源字符串没有 \u 转义）。
 check(Scripts.evalJSON("\"\\ud83d\\ude00\"") != "", "surrogate pair");
 
@@ -54,8 +62,11 @@ check(Scripts.saveJSON(outPath, value, true), "saveJSON returns true");
 var reloaded = Scripts.evalJSONStorage(outPath, true);
 check(reloaded.s == value.s && reloaded.a[1] == 2, "save/eval round trip");
 
-// 默认（UTF-16LE）路径只验证不抛异常。
-check(Scripts.saveJSON(outPath + ".utf16", value), "saveJSON utf16 returns true");
+// 默认（UTF-16LE）写入，再用默认参数读回。
+check(Scripts.saveJSON(outPath + ".utf16", %["s" => "あいう漢字"]),
+      "saveJSON utf16 returns true");
+check(Scripts.evalJSONStorage(outPath + ".utf16").s == "あいう漢字",
+      "utf16 default round trip");
 
 // 非法输入必须抛出。
 try {

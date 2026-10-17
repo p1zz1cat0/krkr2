@@ -12,8 +12,9 @@
 //
 // 本 fork 的 tjs_char 是 UTF-16，原实现的字节流读写改成：
 //   - 读取走 TVPCreateTextStreamForRead，由核心处理编码检测。
-//   - 写入 utf8=true 时为 UTF-8；false 时为 UTF-16LE。两者都不写 BOM，
-//     与 Windows 版 json.dll 的行为一致。
+//   - 写入 utf8=true 时为 UTF-8，不写 BOM；false 时为 UTF-16LE，写 BOM。
+//     核心文本流靠 BOM 识别 UTF-16。没有 BOM 时，默认参数的
+//     evalJSONStorage 读不回 saveJSON 写的文件。
 
 #include "tp_stub.h"
 #include "ncbind.hpp"
@@ -181,7 +182,10 @@ private:
             if(ch == TJS_W('}'))
                 return;
 
-            if(ch != TJS_W(',') && ch != TJS_W(';')) {
+            if(ch == TJS_W(',') || ch == TJS_W(';')) {
+                // An empty member. Put the separator back for the tail check.
+                unget();
+            } else {
                 unget();
                 tTJSVariant key;
                 parseKey(key);
@@ -244,7 +248,9 @@ private:
             if(ch == TJS_W(']'))
                 return;
             if(ch == TJS_W(',') || ch == TJS_W(';')) {
-                // Preserve the original plugin's empty-column behavior.
+                // An empty column is void. Put the separator back for the
+                // tail check.
+                unget();
                 tTJSVariant empty;
                 array->PropSetByNum(TJS_MEMBERENSURE, index++, &empty, array);
             } else {
@@ -657,15 +663,15 @@ void saveText(const ttstr &filename, const ttstr &text, bool utf8) {
         return;
     }
 
-    // Legacy behavior: UTF-16LE without a BOM.
+    // UTF-16LE with a BOM. Without the BOM, the core text reader cannot
+    // detect the encoding and evalJSONStorage cannot read the file back.
     const tjs_uint length = text.GetLen();
-    if(length) {
-        std::unique_ptr<tjs_uint16[]> buffer(new tjs_uint16[length]);
-        const tjs_char *src = text.c_str();
-        for(tjs_uint i = 0; i < length; ++i)
-            buffer[i] = static_cast<tjs_uint16>(src[i]);
-        stream->Write(buffer.get(), length * sizeof(tjs_uint16));
-    }
+    std::unique_ptr<tjs_uint16[]> buffer(new tjs_uint16[length + 1]);
+    buffer[0] = kUnicodeBom;
+    const tjs_char *src = text.c_str();
+    for(tjs_uint i = 0; i < length; ++i)
+        buffer[i + 1] = static_cast<tjs_uint16>(src[i]);
+    stream->Write(buffer.get(), (length + 1) * sizeof(tjs_uint16));
 }
 
 //----------------------------------------------------------------------------
