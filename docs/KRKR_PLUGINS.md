@@ -37,7 +37,8 @@ member.
 
 Add a name only when the core backs the module. A name whose TJS class is
 missing makes the script fail later with a TJS error. Do not add
-`dmmcloud.dll`, `krkrsteam.dll` or `win32ole.dll`.
+`dmmcloud.dll`, `krkrsteam.dll`, `win32ole.dll`, `k2compat.dll` or
+`kztouch.dll`.
 
 ## Known plugin origins
 
@@ -70,11 +71,9 @@ missing makes the script fail later with a TJS error. Do not add
 | getabout.dll           | nan                                                                                                     |
 | gfxEffect.dll          | http://kaede-software.com/krlm/plugin/gfx_effect.zip                                                    |
 | json.dll               | https://github.com/wtnbgo/json                                                                          |
-| k2compat.dll           | in-tree: plugins/linkstubs (link-only name; the core registers no matching TJS class)                    |
 | kagexopt.dll           | in-tree: plugins/linkstubs (link-only name; KAG parsing lives in the core)                               |
 | kirikiroid2.dll        | nan                                                                                                     |
 | krmovie.dll            | in-tree: plugins/linkstubs (link-only name; movie playback lives in the core)                            |
-| kztouch.dll            | in-tree: plugins/linkstubs (link-only name; the core registers no matching TJS class)                    |
 | layerExAlpha.dll       | nan                                                                                                     |
 | layerExAreaAverage.dll | https://github.com/wtnbgo/layerExAreaAverage                                                            |
 | layerExBTOA.dll        | https://github.com/wtnbgo/layerExBTOA                                                                   |
