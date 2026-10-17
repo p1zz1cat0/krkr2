@@ -14,6 +14,7 @@
 #include "MsgIntf.h"
 #include "FontSystem.h"
 #include <complex>
+#include <spdlog/spdlog.h>
 
 extern void TVPUninitializeFreeFont();
 extern FontSystem *TVPFontSystem;
@@ -21,7 +22,12 @@ extern const ttstr &TVPGetDefaultFontName();
 void FreeTypeFontRasterizer::ApplyFallbackFace() {
     if(!FaceFallback && Face &&
        Face->GetFontName() != TVPGetDefaultFontName()) {
-        FaceFallback = new tFreeTypeFace(TVPGetDefaultFontName(), 0);
+        // The options word carries the TTC face index; passing 0 would open
+        // face 0 of the default collection instead of its chosen face.
+        FaceFallback = new tFreeTypeFace(
+            TVPGetDefaultFontName(),
+            TVP_FACE_OPTIONS_FACE_INDEX(
+                TVPGetFontFaceIndex(TVPGetDefaultFontName())));
     }
     if(!FaceFallback)
         return;
@@ -194,7 +200,18 @@ FreeTypeFontRasterizer::GetBitmap(const tTVPFontAndCharacterData &font,
         data = Face->GetGlyphFromCharcode(Face->GetFirstChar());
     }
     if(data == nullptr) {
-        TVPThrowExceptionMessage(TVPFontRasterizeError);
+        // A missing glyph must not abort the whole text draw. Return an empty
+        // glyph that still advances one em, so the layout grid stays intact.
+        static bool reported = false;
+        if(!reported) {
+            reported = true;
+            spdlog::warn("font {} has no glyph for U+{:04X}; drawing blank",
+                         Face->GetFontName().AsStdString(),
+                         static_cast<unsigned>(font.Character));
+        }
+        tGlyphMetrics blank{};
+        blank.CellIncX = blank.CellIncY = Face->GetHeight();
+        data = new tTVPCharacterData(nullptr, 0, 0, 0, 0, 0, blank);
     }
 
     int cx = data->Metrics.CellIncX;
