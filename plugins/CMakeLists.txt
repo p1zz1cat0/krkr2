@@ -34,6 +34,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     gfxEffect/gfxEffect.cpp
     expat/expat.cpp
     minizip/minizip.cpp
+    minizip/storage.cpp
+    minizip/ioapi.cpp
     kirikiroid2/kirikiroid2.cpp
     sqlite/sqlite.cpp
     sqlite/sqliteXp3Vfs.cpp
@@ -137,9 +139,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE lz4::lz4)
 find_library(EXPAT_LIBRARY expat REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${EXPAT_LIBRARY})
 
-# minizip.dll：写走 external/minizip，读走 core 已在用的 cocos2d ext_unzip。
-find_package(cocos2dx CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE minizip cocos2dx::ext_unzip)
+# minizip.dll：移植自 wamsoft/minizip，读写都走 vcpkg 的 minizip-ng。
+# 只用 mz_* 原生 API，不引用兼容层，不会和核心的 external/minizip 撞符号。
+find_package(minizip-ng CONFIG REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE MINIZIP::minizip-ng)
 
 # SQLite amalgamation: Apple 需要绕开 zone allocator。
 if(APPLE)

@@ -30,8 +30,8 @@ for (var i = 0; i < entries.count; i++)
     byName[entries[i].filename] = entries[i];
 check(typeof byName["payload.tjs"] != "undefined", "list text entry");
 check(typeof byName["data/payload.bin"] != "undefined", "list stored entry");
-check(byName["payload.tjs"].deflated === true, "text entry deflated");
-check(byName["data/payload.bin"].deflated === false, "stored entry not deflated");
+check(byName["payload.tjs"].deflated, "text entry deflated");
+check(!byName["data/payload.bin"].deflated, "stored entry not deflated");
 check(byName["payload.tjs"].uncompressed_size == 11, "text size");
 check(byName["data/payload.bin"].compressed_size == 23, "stored size");
 

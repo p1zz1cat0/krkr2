@@ -67,6 +67,7 @@
       "name": "miniaudio",
       "platform": "android"
     },
+    "minizip-ng",
     "oniguruma",
     "openal-soft",
     {

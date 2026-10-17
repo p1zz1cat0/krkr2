@@ -1,498 +1,600 @@
-// minizip.dll: Zip/Unzip script classes and a "zip" storage media.
-// Ported from AetherKrkr plugins/minizip.cpp.
+// minizip.dll: Zip / Unzip script classes and the "zip" storage media.
 //
-// Writing uses the core's bundled minizip zip implementation. Reading uses the
-// cocos2dx ext_unzip library already linked by core_archive_zip, so this file
-// does not vendor a second copy of minizip.
+// Ported from https://github.com/wamsoft/minizip (Go Watanabe, zlib license),
+// upstream commit b804911 (2026-10-13). Uses minizip-ng from vcpkg.
+//
+// krkr2 port changes:
+//   - iTJSBinaryStream -> tTJSBinaryStream, Destruct() -> delete.
+//   - NCB_MODULE_NAME added; string literals use TJS_W.
+//   - getFileMTime uses TVPGetLocallyAccessibleName + stat().
+//   - storage.cpp locks on every platform (std::recursive_mutex).
+//   - License registration (TVPRegisterLicense) removed: the core has no API.
 
-#include "ncbind.hpp"
-#include "tp_stub.h"
-#include "UtilStreams.h"
+/*
+ * zip/unzip plugin
+ * Copyright (C) 2007 Go Watanabe
+ *
+ * original copyright
+ *  minizip.c
+ *  miniunz.c
+ *  Version 1.01e, February 12th, 2005
+ * Copyright (C) 1998-2005 Gilles Vollant
+*/
 
-#include <array>
-#include <ctime>
-#include <map>
-#include <memory>
-#include <set>
-#include <string>
-#include <vector>
+static const char *copyright =
+"\n----- MiniZip Copyright START -----\n"
+"Condition of use and distribution are the same as zlib:\n"
+"https://github.com/zlib-ng/minizip-ng\n"
+"----- MiniZip Copyright END -----\n";
 
-#include <minizip/zip.h>
-#include <unzip/unzip.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <string.h>
+
+#include <sys/stat.h>
 
 #define NCB_MODULE_NAME TJS_W("minizip.dll")
+#include "ncbind.hpp"
 
-namespace {
-
-constexpr tjs_uint kBufferSize = 64 * 1024;
-constexpr uint16_t kUtf8Flag = 1 << 11;
-
-std::string toUtf8(const ttstr &value) {
-    std::string out;
-    const tjs_int len = TVPWideCharToUtf8String(value.c_str(), nullptr);
-    if(len <= 0)
-        return out;
-    out.resize(static_cast<size_t>(len));
-    TVPWideCharToUtf8String(value.c_str(), out.data());
-    return out;
+extern "C" {
+#include "mz.h"
+#include "mz_os.h"
+#include "mz_strm.h"
+#include "mz_zip.h"
+#include "mz_zip_rw.h"
 }
 
-ttstr utf8ToTtstr(const char *bytes) {
-    if(!bytes)
-        return ttstr(TJS_W(""));
-    const tjs_int len =
-        TVPUtf8ToWideCharString(bytes, static_cast<tjs_uint>(strlen(bytes)),
-                                static_cast<tjs_char *>(nullptr));
-    if(len <= 0)
-        return ttstr(TJS_W(""));
-    std::vector<tjs_char> wide(static_cast<size_t>(len) + 1, 0);
-    TVPUtf8ToWideCharString(bytes, static_cast<tjs_uint>(strlen(bytes)),
-                            wide.data());
-    return ttstr(wide.data());
+#include "ioapi.h"
+#include "narrow.h"
+
+#define BUFFERSIZE (16384)
+#define CASESENSITIVITY (0)
+
+// Date クラスメンバ
+static iTJSDispatch2 *dateClass = NULL;    // Date のクラスオブジェクト
+static iTJSDispatch2 *dateSetTime = NULL;  // Date.setTime メソッド
+
+// オブジェクトに数値を格納
+static void setIntProp(iTJSDispatch2 *obj, const tjs_char *name, tjs_int64 value)
+{
+    tTJSVariant var = (tTVInteger)value;
+    obj->PropSet(TJS_MEMBERENSURE, name,  NULL, &var, obj);
 }
 
-ttstr localPathForRead(const ttstr &name) {
-    ttstr placed = TVPGetPlacedPath(name);
-    if(placed.IsEmpty())
-        TVPThrowExceptionMessage((name + TJS_W(" not exists.")).c_str());
-    return TVPGetLocallyAccessibleName(placed);
+// オブジェクトに文字列を格納
+static void setStrProp(iTJSDispatch2 *obj, const tjs_char *name, ttstr &value)
+{
+    tTJSVariant var = value;
+    obj->PropSet(TJS_MEMBERENSURE, name,  NULL, &var, obj);
 }
 
-ttstr localPathForWrite(const ttstr &name) {
-    ttstr local = TVPNormalizeStorageName(name);
-    TVPGetLocalName(local);
-    return local;
+// オブジェクトに日時を格納 (UNIX time から Date オブジェクトを生成)
+static void setDateProp(iTJSDispatch2 *obj, const tjs_char *name, time_t unixtime)
+{
+    if (unixtime <= 0) return;
+    iTJSDispatch2 *date;
+    if (TJS_SUCCEEDED(dateClass->CreateNew(0, NULL, NULL, &date, 0, NULL, obj))) {
+        // Date.setTime はミリ秒
+        tjs_int64 msec = (tjs_int64)unixtime * 1000;
+        tTJSVariant time(msec);
+        tTJSVariant *param[] = { &time };
+        dateSetTime->FuncCall(0, NULL, NULL, NULL, 1, param, date);
+
+        tTJSVariant var = date;
+        date->Release();
+        obj->PropSet(TJS_MEMBERENSURE, name, NULL, &var, obj);
+    }
 }
 
-bool splitZipStorageName(const ttstr &name, ttstr &domain, ttstr &path) {
-    const tjs_char *raw = name.c_str();
-    const tjs_char *slash = TJS_strchr(raw, TJS_W('/'));
-    if(!slash)
-        return false;
-    domain = ttstr(raw, slash - raw);
-    path = ttstr(slash + 1);
-    return !domain.IsEmpty() && !path.IsEmpty();
+// ファイル名変換処理 (UTF-8 narrow → ttstr)
+void
+storeFilename(ttstr &name, const char *narrowName, bool utf8)
+{
+    if (utf8) {
+        int wlen = TVPUtf8ToWideCharString(narrowName, NULL);
+        if (wlen > 0) {
+            tjs_char *wbuf = new tjs_char[wlen + 1];
+            TVPUtf8ToWideCharString(narrowName, wbuf);
+            wbuf[wlen] = 0;
+            name = wbuf;
+            delete[] wbuf;
+        } else {
+            name = narrowName;
+        }
+    } else {
+        name = narrowName;
+    }
 }
 
-void setProp(iTJSDispatch2 *object, const tjs_char *name,
-             const tTJSVariant &value) {
-    tTJSVariant copy(value);
-    object->PropSet(TJS_MEMBERENSURE, name, nullptr, &copy, object);
+// Return the mtime of a storage as time_t. Return 0 when the storage is not
+// a local file. (krkr2 port: the core has no TVPLastModifiedFileTimeStorage.)
+static time_t
+getFileMTime(const ttstr &filename)
+{
+    ttstr local;
+    try {
+        local = TVPGetLocallyAccessibleName(filename);
+    } catch(...) {
+        return 0;
+    }
+    if (local.IsEmpty()) return 0;
+    NarrowString path(local, true);
+    struct stat st;
+    if (!path.data() || stat(path.data(), &st) != 0) return 0;
+    return st.st_mtime;
 }
 
-uint32_t toDosDate(const std::tm &localTime) {
-    const uint32_t year =
-        static_cast<uint32_t>(localTime.tm_year + 1900 - 1980);
-    return (year << 25) | (static_cast<uint32_t>(localTime.tm_mon + 1) << 21) |
-           (static_cast<uint32_t>(localTime.tm_mday) << 16) |
-           (static_cast<uint32_t>(localTime.tm_hour) << 11) |
-           (static_cast<uint32_t>(localTime.tm_min) << 5) |
-           (static_cast<uint32_t>(localTime.tm_sec) / 2);
-}
-
+/**
+ * ZIP圧縮処理クラス
+ */
 class Zip {
+
+protected:
+    void *zw;        // mz_zip_writer ハンドル
+    void *zwstream;  // 出力先 tTJSBinaryStream をラップした mz_stream
+
 public:
-    Zip() = default;
-    ~Zip() { close(); }
 
-    static tjs_error open(tTJSVariant *, tjs_int numparams, tTJSVariant **param,
-                          Zip *self) {
-        if(numparams < 1)
-            return TJS_E_BADPARAMCOUNT;
-        if(!self)
-            return TJS_E_NATIVECLASSCRASH;
-
-        self->close();
-        ttstr filename = param[0]->GetString();
-        const int overwrite =
-            numparams > 1 ? static_cast<tjs_int>(*param[1]) : 0;
-        if(overwrite == 0 && !TVPGetPlacedPath(filename).IsEmpty())
-            TVPThrowExceptionMessage((filename + TJS_W(" exists.")).c_str());
-
-        const int append =
-            overwrite == 2 ? APPEND_STATUS_ADDINZIP : APPEND_STATUS_CREATE;
-        self->path = localPathForWrite(filename);
-        self->zip = zipOpen64(toUtf8(self->path).c_str(), append);
-        if(!self->zip)
-            TVPThrowExceptionMessage((filename + TJS_W(" can't open.")).c_str());
-        return TJS_S_OK;
+    Zip() : zw(NULL), zwstream(NULL) {
     }
 
-    void close() {
-        if(zip) {
-            zipClose(zip, nullptr);
-            zip = nullptr;
-        }
+    ~Zip(){
+        close();
     }
 
-    static tjs_error add(tTJSVariant *result, tjs_int numparams,
-                         tTJSVariant **param, Zip *self) {
-        if(numparams < 2)
-            return TJS_E_BADPARAMCOUNT;
-        if(!self)
-            return TJS_E_NATIVECLASSCRASH;
-        if(!self->zip)
-            TVPThrowExceptionMessage(TJS_W("don't open zipfile"));
+public:
 
-        ttstr src = param[0]->GetString();
-        ttstr dest = param[1]->GetString();
-        const int level =
-            numparams > 2 && param[2]->Type() != tvtVoid
-                ? static_cast<tjs_int>(*param[2])
-                : Z_DEFAULT_COMPRESSION;
-        if(numparams > 3 && param[3]->Type() == tvtString)
-            TVPThrowExceptionMessage(
-                TJS_W("minizip password encryption is not supported"));
+    /**
+     * ZIPファイルを開く
+     * @param filename ファイル名
+     * @param overwrite 上書き指定 0:エラー 1:上書き 2:追加
+     */
+    static tjs_error open(tTJSVariant *result,
+                                          tjs_int numparams,
+                                          tTJSVariant **param,
+                                          Zip *self) {
 
-        std::unique_ptr<tTJSBinaryStream> input(
-            TVPCreateStream(TVPGetPlacedPath(src), TJS_BS_READ));
-        if(!input)
-            TVPThrowExceptionMessage((src + TJS_W(" not exists.")).c_str());
+        if (numparams < 1) return TJS_E_BADPARAMCOUNT;
 
-        zip_fileinfo info{};
-        const std::time_t now = std::time(nullptr);
-        std::tm localTime{};
-        localtime_r(&now, &localTime);
-        info.dos_date = toDosDate(localTime);
+        ttstr filename = *param[0];
+        int overwrite = numparams > 1 ? (int)*param[1] : 0;
 
-        const std::string destUtf8 = toUtf8(dest);
-        bool ok = zipOpenNewFileInZip4_64(
-                      self->zip, destUtf8.c_str(), &info, nullptr, 0, nullptr,
-                      0, nullptr, level != 0 ? Z_DEFLATED : 0, level, 0,
-                      -MAX_WBITS, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY, nullptr, 0,
-                      0, kUtf8Flag, 0) == ZIP_OK;
-        if(ok) {
-            std::array<tjs_uint8, kBufferSize> buffer{};
-            tjs_uint read = 0;
-            while((read = input->Read(buffer.data(), buffer.size())) > 0) {
-                if(zipWriteInFileInZip(self->zip, buffer.data(), read) != ZIP_OK) {
-                    ok = false;
-                    break;
-                }
+        bool append = false;
+        ttstr existing = TVPGetPlacedPath(filename);
+        if (overwrite == 2) {
+            // 追記。存在しなければ新規作成
+            append = existing.length() != 0;
+        } else if (overwrite == 0) {
+            if (existing.length()) {
+                // 既に存在している
+                ttstr msg = filename + " exists.";
+                TVPThrowExceptionMessage(msg.c_str());
             }
-            zipCloseFileInZip(self->zip);
+        }
+        // overwrite == 1 は新規作成 (上書き)
+
+        // 出力ストリームを開いて mz_stream にラップ
+        tTJSBinaryStream *bs = NULL;
+        try {
+            bs = TVPCreateStream(filename, append ? TJS_BS_APPEND : TJS_BS_WRITE);
+        } catch(...) {
+            bs = NULL;
+        }
+        if (!bs) {
+            ttstr msg = filename + " can't open.";
+            TVPThrowExceptionMessage(msg.c_str());
         }
 
-        if(result)
-            *result = ok;
+        self->zwstream = mz_stream_tvp_create();
+        mz_stream_tvp_attach(self->zwstream, bs, 1);
+
+        self->zw = mz_zip_writer_create();
+        if (mz_zip_writer_open(self->zw, self->zwstream, append ? 1 : 0) != MZ_OK) {
+            mz_zip_writer_delete(&self->zw);
+            mz_stream_tvp_delete(&self->zwstream);
+            ttstr msg = filename + " can't open.";
+            TVPThrowExceptionMessage(msg.c_str());
+        }
+
         return TJS_S_OK;
     }
 
-private:
-    zipFile zip = nullptr;
-    ttstr path;
+    /**
+     * ファイルを閉じる
+     */
+    void close() {
+        if (zw) {
+            mz_zip_writer_close(zw);
+            mz_zip_writer_delete(&zw);
+            zw = NULL;
+        }
+        if (zwstream) {
+            mz_stream_close(zwstream);
+            mz_stream_tvp_delete(&zwstream);
+            zwstream = NULL;
+        }
+    }
+
+    /**
+     * ファイルの追加
+     * @param srcname  追加するファイル
+     * @param destname 登録名（パスを含む）
+     * @param compressLevel 圧縮レベル
+     * @param password パスワード指定
+     * @param compressionMethod 圧縮方法
+     * @param ignoreDate 日付情報を保存しない
+     * @return 追加に成功したら true
+     */
+    static tjs_error add(tTJSVariant *result,
+                                         tjs_int numparams,
+                                         tTJSVariant **param,
+                                         Zip *self) {
+
+        if (numparams < 2) return TJS_E_BADPARAMCOUNT;
+        if (!self->zw) {
+            TVPThrowExceptionMessage(TJS_W("don't open zipfile"));
+        }
+
+        ttstr srcname  = *param[0];
+        ttstr destname = *param[1];
+        int   compressLevel = MZ_COMPRESS_LEVEL_DEFAULT;
+        if (numparams > 2 && param[2]->Type() == tvtInteger) {
+            compressLevel = (int)*param[2];
+        }
+        bool usePassword = false;
+        ttstr password;
+        if (numparams > 3 && param[3]->Type() == tvtString) {
+            usePassword = true;
+            password = *param[3];
+        }
+        int compressionMethod = MZ_COMPRESS_METHOD_DEFLATE;
+        if (numparams > 4 && param[4]->Type() == tvtInteger) {
+            compressionMethod = (int)*param[4];
+        }
+        bool ignoreDate = false;
+        if (numparams > 5 && param[5]->Type() == tvtInteger) {
+            ignoreDate = (int)*param[5] != 0;
+        }
+
+        ttstr filename = TVPGetPlacedPath(srcname);
+        if (filename.length() == 0) {
+            ttstr msg = srcname + " not exists.";
+            TVPThrowExceptionMessage(msg.c_str());
+        }
+
+        // 入力ストリームを開く
+        tTJSBinaryStream *in = NULL;
+        try {
+            in = TVPCreateStream(filename, TJS_BS_READ);
+        } catch(...) {
+            in = NULL;
+        }
+        if (!in) {
+            ttstr msg = filename + " can't open.";
+            TVPThrowExceptionMessage(msg.c_str());
+        }
+
+        // ファイル時刻情報取得
+        time_t modified = 0;
+        if (!ignoreDate) {
+            modified = getFileMTime(filename);
+            if (modified == 0) {
+                modified = time(NULL);
+            }
+        }
+
+        // mz_zip_writer の設定
+        mz_zip_writer_set_compress_method(self->zw, (uint16_t)((compressLevel != 0) ? compressionMethod : MZ_COMPRESS_METHOD_STORE));
+        mz_zip_writer_set_compress_level(self->zw, (int16_t)compressLevel);
+        if (usePassword) {
+            NarrowString npass(password);
+            mz_zip_writer_set_password(self->zw, (const char*)npass);
+        } else {
+            mz_zip_writer_set_password(self->zw, NULL);
+        }
+
+        // エントリ情報
+        NarrowString nname(destname, true);
+        mz_zip_file file_info;
+        memset(&file_info, 0, sizeof file_info);
+        file_info.version_madeby = MZ_VERSION_MADEBY;
+        file_info.flag = MZ_ZIP_FLAG_UTF8;
+        file_info.compression_method = (uint16_t)((compressLevel != 0) ? compressionMethod : MZ_COMPRESS_METHOD_STORE);
+        file_info.modified_date = modified;
+        file_info.accessed_date = modified;
+        file_info.creation_date = modified;
+        file_info.filename = (const char*)nname;
+        file_info.filename_size = (uint16_t)(nname.data() ? strlen((const char*)nname) : 0);
+        file_info.uncompressed_size = (int64_t)in->GetSize();
+        file_info.zip64 = MZ_ZIP64_AUTO;
+
+        // 入力ストリームを mz_stream でラップ
+        void *src_stream = mz_stream_tvp_create();
+        mz_stream_tvp_attach(src_stream, in, 0); // 所有権は外側 (in) に残す
+
+        bool ret = false;
+        int32_t err = mz_zip_writer_add_info(self->zw, src_stream, mz_stream_read, &file_info);
+        ret = (err == MZ_OK);
+
+        mz_stream_close(src_stream);
+        mz_stream_tvp_delete(&src_stream);
+        delete in;
+
+        if (result) {
+            *result = ret;
+        }
+        return TJS_S_OK;
+    }
 };
 
-class Unzip {
-public:
-    Unzip() = default;
-    ~Unzip() { close(); }
+#include <vector>
 
-    void open(const tjs_char *filename) {
-        close();
-        ttstr local = localPathForRead(filename);
-        zip = cocos2d::unzOpen64(toUtf8(local).c_str());
-        if(!zip)
-            TVPThrowExceptionMessage((ttstr(filename) + TJS_W(" can't open."))
-                                         .c_str());
+/**
+ * Zip 展開クラス
+ */
+class Unzip {
+
+protected:
+    void *zr;       // mz_zip_reader
+    void *zrstream; // 入力 mz_stream
+    bool utf8;
+
+public:
+    Unzip() : zr(NULL), zrstream(NULL), utf8(false) {
     }
 
+    ~Unzip() {
+        close();
+    }
+
+    /**
+     * ZIPファイルを開く
+     * @param filename ファイル名
+     * @param force_utf8 UTF8強制指定 0:自動判定 1:強制
+     */
+    static tjs_error open(tTJSVariant *result,
+                                          tjs_int numparams,
+                                          tTJSVariant **param,
+                                          Unzip *self) {
+        if (numparams < 1) return TJS_E_BADPARAMCOUNT;
+
+        ttstr filename = *param[0];
+
+        tTJSBinaryStream *bs = NULL;
+        try {
+            bs = TVPCreateStream(filename, TJS_BS_READ);
+        } catch(...) {
+            bs = NULL;
+        }
+        if (!bs) {
+            ttstr msg = filename + TJS_W(" can't open.");
+            TVPThrowExceptionMessage(msg.c_str());
+        }
+
+        self->zrstream = mz_stream_tvp_create();
+        mz_stream_tvp_attach(self->zrstream, bs, 1);
+
+        self->zr = mz_zip_reader_create();
+        if (mz_zip_reader_open(self->zr, self->zrstream) != MZ_OK) {
+            mz_zip_reader_delete(&self->zr);
+            mz_stream_tvp_delete(&self->zrstream);
+            ttstr msg = filename + TJS_W(" can't open.");
+            TVPThrowExceptionMessage(msg.c_str());
+        }
+
+        // UTF-8 ファイル名フラグ判定
+        if (numparams > 1 && (int)*param[1]) {
+            self->utf8 = true;
+        } else {
+            if (mz_zip_reader_goto_first_entry(self->zr) == MZ_OK) {
+                mz_zip_file *file_info = NULL;
+                if (mz_zip_reader_entry_get_info(self->zr, &file_info) == MZ_OK && file_info) {
+                    self->utf8 = (file_info->flag & MZ_ZIP_FLAG_UTF8) != 0;
+                }
+            }
+        }
+
+        return TJS_S_OK;
+    }
+
+    /**
+     * ZIP ファイルを閉じる
+     */
     void close() {
-        if(zip) {
-            cocos2d::unzClose(zip);
-            zip = nullptr;
+        if (zr) {
+            mz_zip_reader_close(zr);
+            mz_zip_reader_delete(&zr);
+            zr = NULL;
+        }
+        if (zrstream) {
+            mz_stream_close(zrstream);
+            mz_stream_tvp_delete(&zrstream);
+            zrstream = NULL;
         }
     }
 
-    static tjs_error list(tTJSVariant *result, tjs_int, tTJSVariant **,
-                          Unzip *self) {
-        if(!self)
-            return TJS_E_NATIVECLASSCRASH;
-        if(!self->zip)
+    /**
+     * ファイルリスト取得
+     * @return ファイル情報（辞書）の配列
+     */
+    static tjs_error list(tTJSVariant *result,
+                                          tjs_int numparams,
+                                          tTJSVariant **param,
+                                          Unzip *self) {
+
+        if (!self->zr) {
             TVPThrowExceptionMessage(TJS_W("don't open zipfile"));
+        }
 
         iTJSDispatch2 *array = TJSCreateArrayObject();
-        tjs_int index = 0;
-        if(cocos2d::unzGoToFirstFile(self->zip) == UNZ_OK) {
-            do {
-                char filename[1024] = {};
-                cocos2d::unz_file_info64 info{};
-                if(cocos2d::unzGetCurrentFileInfo64(
-                       self->zip, &info, filename, sizeof(filename), nullptr, 0,
-                       nullptr, 0) == UNZ_OK) {
-                    iTJSDispatch2 *dict = TJSCreateDictionaryObject();
-                    setProp(dict, TJS_W("filename"),
-                            tTJSVariant(utf8ToTtstr(filename)));
-                    setProp(dict, TJS_W("uncompressed_size"),
-                            tTJSVariant(static_cast<tjs_int64>(
-                                info.uncompressed_size)));
-                    setProp(dict, TJS_W("compressed_size"),
-                            tTJSVariant(static_cast<tjs_int64>(
-                                info.compressed_size)));
-                    setProp(dict, TJS_W("crypted"),
-                            tTJSVariant((info.flag & 1) != 0));
-                    setProp(dict, TJS_W("deflated"),
-                            tTJSVariant(info.compression_method == Z_DEFLATED));
-                    setProp(dict, TJS_W("deflateLevel"),
-                            tTJSVariant(static_cast<tjs_int>(
-                                (info.flag & 0x6) / 2)));
-                    setProp(dict, TJS_W("crc"),
-                            tTJSVariant(static_cast<tjs_int64>(info.crc)));
-                    tTJSVariant item(dict, dict);
-                    array->PropSetByNum(TJS_MEMBERENSURE, index++, &item,
-                                        array);
-                    dict->Release();
+
+        int err = mz_zip_reader_goto_first_entry(self->zr);
+        while (err == MZ_OK) {
+            mz_zip_file *file_info = NULL;
+            if (mz_zip_reader_entry_get_info(self->zr, &file_info) == MZ_OK && file_info) {
+                iTJSDispatch2 *obj = TJSCreateDictionaryObject();
+                if (obj) {
+                    ttstr filename;
+                    storeFilename(filename, file_info->filename ? file_info->filename : "", self->utf8);
+
+                    setStrProp(obj, TJS_W("filename"), filename);
+                    setIntProp(obj, TJS_W("uncompressed_size"), file_info->uncompressed_size);
+                    setIntProp(obj, TJS_W("compressed_size"),   file_info->compressed_size);
+                    setIntProp(obj, TJS_W("crypted"),           (file_info->flag & MZ_ZIP_FLAG_ENCRYPTED) ? 1 : 0);
+                    setIntProp(obj, TJS_W("deflated"),          (file_info->compression_method == MZ_COMPRESS_METHOD_DEFLATE) ? 1 : 0);
+                    setIntProp(obj, TJS_W("deflateLevel"),      (file_info->flag & 0x6) / 2);
+                    setIntProp(obj, TJS_W("crc"),               file_info->crc);
+                    setDateProp(obj, TJS_W("date"), file_info->modified_date);
+
+                    tTJSVariant var(obj), *p = &var;
+                    array->FuncCall(0, TJS_W("add"), NULL, 0, 1, &p, array);
+                    obj->Release();
                 }
-            } while(cocos2d::unzGoToNextFile(self->zip) == UNZ_OK);
-        }
-
-        if(result)
-            *result = tTJSVariant(array, array);
-        array->Release();
-        return TJS_S_OK;
-    }
-
-    static tjs_error extract(tTJSVariant *result, tjs_int numparams,
-                             tTJSVariant **param, Unzip *self) {
-        if(numparams < 2)
-            return TJS_E_BADPARAMCOUNT;
-        if(!self)
-            return TJS_E_NATIVECLASSCRASH;
-        if(!self->zip)
-            TVPThrowExceptionMessage(TJS_W("don't open zipfile"));
-        if(numparams > 2 && param[2]->Type() == tvtString)
-            TVPThrowExceptionMessage(
-                TJS_W("minizip password encryption is not supported"));
-
-        const std::string source = toUtf8(param[0]->GetString());
-        bool ok = false;
-        if(cocos2d::unzLocateFile(self->zip, source.c_str(), nullptr) ==
-               UNZ_OK &&
-           cocos2d::unzOpenCurrentFile(self->zip) == UNZ_OK) {
-            std::unique_ptr<tTJSBinaryStream> output(
-                TVPCreateStream(param[1]->GetString(), TJS_BS_WRITE));
-            if(!output)
-                TVPThrowExceptionMessage(
-                    (ttstr(param[1]->GetString()) + TJS_W(" can't open."))
-                        .c_str());
-            std::array<tjs_uint8, kBufferSize> buffer{};
-            int read = 0;
-            while((read = cocos2d::unzReadCurrentFile(
-                       self->zip, buffer.data(), buffer.size())) > 0) {
-                output->WriteBuffer(buffer.data(), static_cast<tjs_uint>(read));
             }
-            ok = read == 0;
-            cocos2d::unzCloseCurrentFile(self->zip);
+            err = mz_zip_reader_goto_next_entry(self->zr);
         }
 
-        if(result)
-            *result = ok;
+        if (result) {
+            tTJSVariant ret(array, array);
+            *result = ret;
+        }
+        array->Release();
+
         return TJS_S_OK;
     }
 
-private:
-    unzFile zip = nullptr;
-};
-
-class ZipStorageMedia : public iTVPStorageMedia {
-public:
-    void AddRef() override { ++refCount; }
-
-    void Release() override {
-        if(refCount == 1)
-            delete this;
-        else
-            --refCount;
-    }
-
-    void GetName(ttstr &name) override { name = TJS_W("zip"); }
-    void NormalizeDomainName(ttstr &) override {}
-    void NormalizePathName(ttstr &) override {}
-
-    bool CheckExistentStorage(const ttstr &name) override {
-        ttstr domain;
-        ttstr path;
-        if(!splitZipStorageName(name, domain, path))
-            return false;
-        return locate(domain, path);
-    }
-
-    tTJSBinaryStream *Open(const ttstr &name, tjs_uint32 flags) override {
-        if((flags & TJS_BS_ACCESS_MASK) != TJS_BS_READ)
-            TVPThrowExceptionMessage(TJS_W("zip storage is read-only"));
-
-        ttstr domain;
-        ttstr path;
-        if(!splitZipStorageName(name, domain, path))
-            TVPThrowExceptionMessage(TJS_W("invalid zip storage path"));
-
-        std::vector<tjs_uint8> data = readEntry(domain, path);
-        // tTVPMemoryStream(const void*, size) references the caller's block.
-        // `data` dies when this function returns, so copy it into an owning
-        // stream instead of handing it a dangling pointer.
-        auto *stream = new tTVPMemoryStream();
-        if(!data.empty())
-            stream->WriteBuffer(data.data(), static_cast<tjs_uint>(data.size()));
-        stream->Seek(0, TJS_BS_SEEK_SET);
-        return stream;
-    }
-
-    void GetListAt(const ttstr &name, iTVPStorageLister *lister) override {
-        ttstr domain;
-        ttstr path;
-        if(!splitZipStorageName(name, domain, path))
-            return;
-
-        auto it = mounts.find(domain);
-        if(it == mounts.end())
-            return;
-
-        unzFile zip = cocos2d::unzOpen64(toUtf8(it->second).c_str());
-        if(!zip)
-            return;
-
-        ttstr prefix = path;
-        if(!prefix.IsEmpty() && prefix[prefix.GetLen() - 1] != TJS_W('/'))
-            prefix += TJS_W('/');
-
-        std::set<ttstr> names;
-        if(cocos2d::unzGoToFirstFile(zip) == UNZ_OK) {
-            do {
-                char filename[1024] = {};
-                cocos2d::unz_file_info64 info{};
-                if(cocos2d::unzGetCurrentFileInfo64(
-                       zip, &info, filename, sizeof(filename), nullptr, 0,
-                       nullptr, 0) == UNZ_OK) {
-                    ttstr item = utf8ToTtstr(filename);
-                    if(prefix.IsEmpty() ||
-                       TJS_strncmp(item.c_str(), prefix.c_str(),
-                                   prefix.GetLen()) == 0) {
-                        const tjs_char *rest =
-                            item.c_str() +
-                            (prefix.IsEmpty() ? 0 : prefix.GetLen());
-                        const tjs_char *slash = TJS_strchr(rest, TJS_W('/'));
-                        if(!slash && *rest)
-                            names.insert(ttstr(rest));
-                    }
-                }
-            } while(cocos2d::unzGoToNextFile(zip) == UNZ_OK);
+    /**
+     * ファイルの展開
+     * @param srcname 展開元ファイル
+     * @param destfile 展開先ファイル
+     * @param password パスワード指定
+     */
+    static tjs_error extract(tTJSVariant *result,
+                                             tjs_int numparams,
+                                             tTJSVariant **param,
+                                             Unzip *self) {
+        if (numparams < 2) return TJS_E_BADPARAMCOUNT;
+        if (!self->zr) {
+            TVPThrowExceptionMessage(TJS_W("don't open zipfile"));
         }
-        cocos2d::unzClose(zip);
-
-        for(const auto &item : names)
-            lister->Add(item);
-    }
-
-    void GetLocallyAccessibleName(ttstr &name) override { name = TJS_W(""); }
-
-    bool mount(const ttstr &domain, const ttstr &zipfile) {
-        if(domain.IsEmpty())
-            return false;
-        mounts[domain] = localPathForRead(zipfile);
-        return true;
-    }
-
-    bool unmount(const ttstr &domain) { return mounts.erase(domain) != 0; }
-
-private:
-    bool locate(const ttstr &domain, const ttstr &path) {
-        auto it = mounts.find(domain);
-        if(it == mounts.end())
-            return false;
-        unzFile zip = cocos2d::unzOpen64(toUtf8(it->second).c_str());
-        if(!zip)
-            return false;
-        const std::string entry = toUtf8(path);
-        const bool found =
-            cocos2d::unzLocateFile(zip, entry.c_str(), nullptr) == UNZ_OK;
-        cocos2d::unzClose(zip);
-        return found;
-    }
-
-    std::vector<tjs_uint8> readEntry(const ttstr &domain, const ttstr &path) {
-        auto it = mounts.find(domain);
-        if(it == mounts.end())
-            TVPThrowExceptionMessage(TJS_W("zip domain is not mounted"));
-
-        unzFile zip = cocos2d::unzOpen64(toUtf8(it->second).c_str());
-        if(!zip)
-            TVPThrowExceptionMessage(TJS_W("zip archive can't open"));
-
-        std::vector<tjs_uint8> data;
-        const std::string entry = toUtf8(path);
-        if(cocos2d::unzLocateFile(zip, entry.c_str(), nullptr) != UNZ_OK ||
-           cocos2d::unzOpenCurrentFile(zip) != UNZ_OK) {
-            cocos2d::unzClose(zip);
-            TVPThrowExceptionMessage((path + TJS_W(" not found in zip")).c_str());
+        ttstr srcname  = *param[0];
+        ttstr destname = *param[1];
+        bool usePassword = false;
+        ttstr password;
+        if (numparams > 2 && param[2]->Type() == tvtString) {
+            usePassword = true;
+            password = *param[2];
         }
 
-        std::array<tjs_uint8, kBufferSize> buffer{};
-        int read = 0;
-        while((read = cocos2d::unzReadCurrentFile(zip, buffer.data(),
-                                                  buffer.size())) > 0) {
-            data.insert(data.end(), buffer.begin(), buffer.begin() + read);
+        bool ret = false;
+
+        NarrowString nsrc(srcname, self->utf8);
+        if (mz_zip_reader_locate_entry(self->zr, (const char*)nsrc, CASESENSITIVITY ? 0 : 1) == MZ_OK) {
+            if (usePassword) {
+                NarrowString npass(password);
+                mz_zip_reader_set_password(self->zr, (const char*)npass);
+            } else {
+                mz_zip_reader_set_password(self->zr, NULL);
+            }
+
+            tTJSBinaryStream *out = NULL;
+            try {
+                out = TVPCreateStream(destname, TJS_BS_WRITE);
+            } catch(...) {
+                out = NULL;
+            }
+            if (out) {
+                void *out_stream = mz_stream_tvp_create();
+                mz_stream_tvp_attach(out_stream, out, 0);
+
+                int32_t err = mz_zip_reader_entry_save(self->zr, out_stream, mz_stream_write);
+                ret = (err == MZ_OK);
+
+                mz_stream_close(out_stream);
+                mz_stream_tvp_delete(&out_stream);
+                delete out;
+            } else {
+                ttstr msg = destname + " can't open.";
+                TVPThrowExceptionMessage(msg.c_str());
+            }
         }
-        cocos2d::unzCloseCurrentFile(zip);
-        cocos2d::unzClose(zip);
-        return data;
+
+        if (result) {
+            *result = ret;
+        }
+
+        return TJS_S_OK;
     }
 
-    tjs_uint refCount = 1;
-    std::map<ttstr, ttstr> mounts;
 };
-
-ZipStorageMedia *g_zipStorage = nullptr;
-
-class StoragesZip {
-public:
-    static bool mountZip(const tjs_char *name, const tjs_char *zipfile) {
-        return g_zipStorage && g_zipStorage->mount(name, zipfile);
-    }
-
-    static bool unmountZip(const tjs_char *name) {
-        return g_zipStorage && g_zipStorage->unmount(name);
-    }
-};
-
-void InitZipStorage() {
-    if(!g_zipStorage) {
-        g_zipStorage = new ZipStorageMedia();
-        TVPRegisterStorageMedia(g_zipStorage);
-    }
-}
-
-void DoneZipStorage() {
-    if(g_zipStorage) {
-        TVPUnregisterStorageMedia(g_zipStorage);
-        g_zipStorage->Release();
-        g_zipStorage = nullptr;
-    }
-}
-
-} // namespace
 
 NCB_REGISTER_CLASS(Zip) {
     Constructor();
-    RawCallback(TJS_W("open"), &Class::open, 0);
+    RawCallback(TJS_W("open"), &ClassT::open, 0);
     NCB_METHOD(close);
-    RawCallback(TJS_W("add"), &Class::add, 0);
+    RawCallback(TJS_W("add"), &ClassT::add, 0);
+    Variant(TJS_W("CompressionMethodStore"),   MZ_COMPRESS_METHOD_STORE);
+    Variant(TJS_W("CompressionMethodDeflate"), MZ_COMPRESS_METHOD_DEFLATE);
+    Variant(TJS_W("CompressionMethodBzip2"),   MZ_COMPRESS_METHOD_BZIP2);
+    Variant(TJS_W("CompressionMethodLzma"),    MZ_COMPRESS_METHOD_LZMA);
 }
 
 NCB_REGISTER_CLASS(Unzip) {
     Constructor();
-    NCB_METHOD(open);
+    RawCallback(TJS_W("open"),    &ClassT::open, 0);
     NCB_METHOD(close);
-    RawCallback(TJS_W("list"), &Class::list, 0);
-    RawCallback(TJS_W("extract"), &Class::extract, 0);
+    RawCallback(TJS_W("list"),    &ClassT::list, 0);
+    RawCallback(TJS_W("extract"), &ClassT::extract, 0);
 }
 
-NCB_ATTACH_CLASS(StoragesZip, Storages) {
-    NCB_METHOD(mountZip);
-    NCB_METHOD(unmountZip);
+extern void initZipStorage();
+extern void doneZipStorage();
+
+/**
+ * 登録処理前
+ */
+static void PreRegistCallback()
+{
+    TVPAddImportantLog(ttstr(copyright));
+    initZipStorage();
 }
 
-NCB_PRE_REGIST_CALLBACK(InitZipStorage);
-NCB_POST_UNREGIST_CALLBACK(DoneZipStorage);
+/**
+ * 登録処理後
+ */
+static void PostRegistCallback()
+{
+    tTJSVariant var;
+    TVPExecuteExpression(TJS_W("Date"), &var);
+    dateClass = var.AsObject();
+    TVPExecuteExpression(TJS_W("Date.setTime"), &var);
+    dateSetTime = var.AsObject();
+}
+
+#define RELEASE(name) name->Release();name= NULL
+
+/**
+ * 開放処理前
+ */
+static void PreUnregistCallback()
+{
+    RELEASE(dateClass);
+    RELEASE(dateSetTime);
+}
+
+/**
+ * 開放処理後
+ */
+static void PostUnregistCallback()
+{
+    doneZipStorage();
+}
+
+NCB_PRE_REGIST_CALLBACK(PreRegistCallback);
+NCB_POST_REGIST_CALLBACK(PostRegistCallback);
+NCB_PRE_UNREGIST_CALLBACK(PreUnregistCallback);
+NCB_POST_UNREGIST_CALLBACK(PostUnregistCallback);
 
 // Registration-only translation units in static libraries need an explicit
 // reference from PluginImpl.cpp, otherwise the linker drops this object.
