@@ -9,7 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include "json/jsonPlugin.cpp"
+#include "json/json.cpp"
 
 TEST_CASE("json encodeUtf8 handles all byte widths") {
     const tjs_char ascii[] = { TJS_W('A'), 0 };

@@ -29,10 +29,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     Extrans/Extrans.cpp
     Extrans/ExtransMath.cpp
     xp3filter/xp3filter.cpp
-    json/jsonPlugin.cpp
-    expat/expatPlugin.cpp
-    minizip/minizipPlugin.cpp
-    kirikiroid2/kirikiroid2Plugin.cpp
+    json/json.cpp
+    expat/expat.cpp
+    minizip/minizip.cpp
+    kirikiroid2/kirikiroid2.cpp
 )
 
 # These registration translation units belong only to the aggregate plugin
