@@ -9,6 +9,9 @@ add_library(${PROJECT_NAME} STATIC)
 target_sources(${PROJECT_NAME} PRIVATE
     KAGParser/kagparserex.cpp
     KAGParserExb/kagparserexb.cpp
+    KaichoTrans/KaichoTrans.cpp
+    KaichoTrans/blur.cpp
+    KaichoTrans/dim.cpp
     EmotePlayer/EmotePlayer.cpp
     TextRender/TextRender.cpp
     ScriptsEx/scriptsEx.cpp

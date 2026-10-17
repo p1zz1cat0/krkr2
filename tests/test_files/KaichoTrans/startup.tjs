@@ -1,0 +1,55 @@
+// KaichoTrans.dll smoke test: register blur and dim, then exercise the
+// transition API. Headless smoke does not render frames, so the pixel
+// result is verified manually; the dim rule check below proves that the
+// plugin provider is selected instead of the crossfade fallback.
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("KaichoTrans.dll");
+Plugins.link("kaichotrans.dll");
+
+var win = new Window();
+var dest = new Layer(win, null);
+var src = new Layer(win, dest);
+var rule = new Layer(win, src);
+dest.setImageSize(32, 32);
+src.setImageSize(32, 32);
+rule.setImageSize(32, 32);
+dest.visible = true;
+src.visible = true;
+win.visible = true;
+
+for (var y = 0; y < 32; y++) {
+    for (var x = 0; x < 32; x++) {
+        dest.setMainPixel(x, y, 0xFF000000 | (x << 8) | y);
+        src.setMainPixel(x, y, 0xFF000000 | (y << 16) | x);
+        rule.setMainPixel(x, y, 0xFF000000 | (x << 16) | (y << 8) |
+                            ((x + y) & 0xFF));
+    }
+}
+
+var outDir = Storages.extractStoragePath(Storages.getPlacedPath("startup.tjs"));
+rule.saveLayerImage(outDir + "kaicho_rule.png", "png");
+
+var missingRule = null;
+try {
+    dest.beginTransition("dim", false, src, %[time: 80, blur: 2]);
+} catch (e) {
+    missingRule = e;
+}
+check(missingRule != null, "dim provider requires rule");
+
+dest.beginTransition("blur", false, src,
+    %[time: 80, blur1: 2, blur2: 2, accel: 1.0]);
+dest.stopTransition();
+
+dest.beginTransition("dim", false, src,
+    %[time: 80, rule: outDir + "kaicho_rule.png", blur: 2, xblur: 2,
+      yblur: 2, vague: 8]);
+dest.stopTransition();
+
+pluginSmokePass("KaichoTrans.dll");
+win.visible = false;
+System.exit(0);
