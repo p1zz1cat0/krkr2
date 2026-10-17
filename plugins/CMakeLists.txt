@@ -29,6 +29,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     Extrans/Extrans.cpp
     Extrans/ExtransMath.cpp
     xp3filter/xp3filter.cpp
+    json/jsonPlugin.cpp
 )
 
 # These registration translation units belong only to the aggregate plugin
@@ -87,8 +88,8 @@ add_subdirectory(layerExSave)
 add_subdirectory(layerExDraw)
 add_subdirectory(layerExBtoA)
 add_subdirectory(motionplayer)
+add_subdirectory(ExtKAGParser)
 
-#add_subdirectory(json)
 add_subdirectory(fstat)
 add_subdirectory(packinone)
 add_subdirectory(extNagano)
@@ -101,10 +102,11 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         layerExDraw
         layerExBtoA
         motionplayer
+        extkagparser
         fstat
         packinone
         extNagano
-#        json steam DrawDeviceForSteam
+#        steam DrawDeviceForSteam
 )
 
 find_package(fmt CONFIG REQUIRED)

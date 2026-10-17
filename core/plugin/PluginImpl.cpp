@@ -62,6 +62,8 @@ extern "C" void TVPWindowExPluginAnchor();
 extern "C" void TVPLayerExPerspectivePluginAnchor();
 extern "C" void TVPFftGraphPluginAnchor();
 extern "C" void TVPKAGParserExPluginAnchor();
+extern "C" void TVPJsonPluginAnchor();
+extern "C" void TVPExtKAGParserPluginAnchor();
 extern "C" void TVPDrawDeviceD3DPluginAnchor();
 extern "C" void TVPDrawDeviceD3DZAliasPluginAnchor();
 extern "C" void TVPLzfsPluginAnchor();
@@ -164,6 +166,8 @@ void TVPLoadInternalPlugins() {
     TVPLayerExPerspectivePluginAnchor();
     TVPFftGraphPluginAnchor();
     TVPKAGParserExPluginAnchor();
+    TVPJsonPluginAnchor();
+    TVPExtKAGParserPluginAnchor();
     TVPDrawDeviceD3DPluginAnchor();
     TVPDrawDeviceD3DZAliasPluginAnchor();
     TVPLzfsPluginAnchor();

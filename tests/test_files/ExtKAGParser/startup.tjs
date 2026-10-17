@@ -1,0 +1,71 @@
+// ExtKAGParser.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("ExtKAGParser.dll");
+
+// 插件把 KAGParser 全局类替换为扩展实现。
+var parser = new KAGParser();
+check(parser.multiLineTagEnabled === false, "multiLineTagEnabled defaults false");
+parser.multiLineTagEnabled = true;
+check(parser.multiLineTagEnabled === true, "multiLineTagEnabled can be set");
+check(parser.pmacros !== void, "pmacros dictionary exists");
+
+var scenarioText = "";
+parser.onScenarioLoad = function(name) {
+    return scenarioText;
+};
+function loadScenario(text) {
+    parser.clear();
+    scenarioText = text;
+    parser.loadScenario("smoke.ks");
+}
+
+// 多行标签：行尾 '\' + 下一行开头的 ';' 折叠成同一个标签。
+loadScenario("@tag a=1 b=2 \\\n; c=3\n");
+var tag = parser.getNextTag();
+check(tag.tagname == "tag", "multiline tagname");
+check(tag.a == 1 && tag.b == 2 && tag.c == 3, "multiline attributes");
+check(tag.taglist !== void && tag.taglist.count == 4, "taglist count");
+check(tag.taglist[0] == "tagname" && tag.taglist[1] == "a" &&
+      tag.taglist[2] == "b" && tag.taglist[3] == "c", "taglist order");
+
+// 普通文本与 ch 标签。
+loadScenario("hello");
+var ch = parser.getNextTag();
+check(ch.tagname == "ch" && ch.text == "h", "ch tag");
+check(parser.getNextTag().text == "e", "ch advances by character");
+
+// 参数宏：pmacro 注册到 pmacros，作为属性名使用时展开。
+loadScenario("@pmacro name=pm x=10 y=20\n@tag pm\n");
+var expanded = parser.getNextTag();
+check(expanded.tagname == "tag", "pmacro does not emit a tag");
+check(expanded.x == 10 && expanded.y == 20, "pmacro expands attributes");
+check(parser.pmacros.pm !== void, "pmacro registered");
+check(parser.pmacros.pm.x == 10, "pmacro value");
+
+// erasepmacro 删除注册。
+loadScenario("@pmacro name=pm x=1\n@erasepmacro name=pm\n@tag pm\n");
+var afterErase = parser.getNextTag();
+check(afterErase.tagname == "tag" && afterErase.x === void, "erasepmacro removes macro");
+
+// 跳转标签：jump 到 *other 后继续解析后面的标签。
+loadScenario("*start\n@jump target=*other\n*other\n@tag done=1\n");
+var target = parser.getNextTag();
+check(target.tagname == "tag" && target.done == 1, "jump resolves label");
+
+// 多行标签关闭时，'\' 结尾必须报错。
+parser.multiLineTagEnabled = false;
+loadScenario("@tag a=1 \\\n; c=3\n");
+try {
+    parser.getNextTag();
+    pluginAssertTrue("multiline disabled throws", false);
+} catch (e) {
+    pluginAssertTrue("multiline disabled throws", true);
+}
+
+pluginSmokePass("ExtKAGParser.dll");
+System.exit(0);

@@ -47,6 +47,8 @@ extern "C" void TVPFftGraphPluginAnchor() {}
 extern "C" void TVPGetAboutPluginAnchor() {}
 extern "C" void TVPGetSamplePluginAnchor() {}
 extern "C" void TVPKAGParserExPluginAnchor() {}
+extern "C" void TVPJsonPluginAnchor() {}
+extern "C" void TVPExtKAGParserPluginAnchor() {}
 extern "C" void TVPDrawDeviceD3DPluginAnchor() {}
 extern "C" void TVPDrawDeviceD3DZAliasPluginAnchor() {}
 extern "C" void TVPLayerExMoviePluginAnchor() {}

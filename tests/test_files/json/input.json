@@ -1,0 +1,5 @@
+{
+  "message": "from storage",
+  "values": [10, 20, 30],
+  "nested": { "ok": true }
+}

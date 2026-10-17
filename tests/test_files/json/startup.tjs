@@ -1,0 +1,69 @@
+// json.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程
+Scripts.execStorage("../common/plugin_assert.tjs");
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("json.dll");
+
+// 标准 JSON 值：整数、实数、转义、布尔、null、数组、嵌套对象。
+var value = Scripts.evalJSON(
+    "{\"n\":1,\"r\":1.5,\"s\":\"a\\u0042\\n\",\"b\":true,\"z\":null," +
+    "\"a\":[1,2,3],\"o\":{\"k\":\"v\"}}");
+check(value.n == 1, "integer");
+check(value.r == 1.5, "real");
+check(value.s == "aB\n", "unicode escape");
+check(value.b === true, "true");
+check(value.z === null || value.z === void, "null");
+check(value.a[0] == 1 && value.a[2] == 3 && value.a.count == 3, "array");
+check(value.o.k == "v", "nested object");
+
+// 宽松语法：注释、单引号、'=' / '=>'、分号、裸键。
+var loose = Scripts.evalJSON(
+    "# comment\n{ 'k' = 7; x => 8, list: [1, 2,], bare: \"y\" }");
+check(loose.k == 7, "single quote and '='");
+check(loose.x == 8, "'=>' separator");
+check(loose.list.count == 2, "array trailing comma");
+check(loose.bare == "y", "bare key");
+
+// 代理对转义：只验证能解析且非空（TJS 源字符串没有 \u 转义）。
+check(Scripts.evalJSON("\"\\ud83d\\ude00\"") != "", "surrogate pair");
+
+// 由 Storage 读取 UTF-8 文件。
+var fromFile = Scripts.evalJSONStorage("input.json", true);
+check(fromFile.message == "from storage", "evalJSONStorage string");
+check(fromFile.values.count == 3 && fromFile.values[1] == 20, "evalJSONStorage array");
+check(fromFile.nested.ok === true, "evalJSONStorage nested");
+
+// 序列化后再解析。
+var encoded = Scripts.toJSONString(value, 1);
+check(encoded.indexOf("\"n\":1") >= 0, "toJSONString integer");
+check(encoded.indexOf("\"s\":\"aB\\n\"") >= 0, "toJSONString escape");
+check(encoded.indexOf("\n") >= 0 && encoded.indexOf("\r") < 0, "newline mode 1");
+
+var roundTrip = Scripts.evalJSON(encoded);
+check(roundTrip.s == value.s, "round trip string");
+check(roundTrip.a.count == 3 && roundTrip.a[2] == 3, "round trip array");
+check(roundTrip.o.k == "v", "round trip nested");
+
+// 写盘再读回（UTF-8）。
+var outDir = Storages.extractStoragePath(Storages.getPlacedPath("startup.tjs"));
+var outPath = outDir + "json_smoke.json";
+check(Scripts.saveJSON(outPath, value, true), "saveJSON returns true");
+var reloaded = Scripts.evalJSONStorage(outPath, true);
+check(reloaded.s == value.s && reloaded.a[1] == 2, "save/eval round trip");
+
+// 默认（UTF-16LE）路径只验证不抛异常。
+check(Scripts.saveJSON(outPath + ".utf16", value), "saveJSON utf16 returns true");
+
+// 非法输入必须抛出。
+try {
+    Scripts.evalJSON("{broken");
+    pluginAssertTrue("malformed json throws", false);
+} catch (e) {
+    pluginAssertTrue("malformed json throws", true);
+}
+
+pluginSmokePass("json.dll");
+System.exit(0);
