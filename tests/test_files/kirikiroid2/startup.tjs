@@ -1,0 +1,28 @@
+// kirikiroid2.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+// CanLoadPlugin 由 PackinOne 模块附在 Plugins 上。先链接它，再探测。
+Plugins.link("PackinOne.dll");
+Plugins.link("kirikiroid2.dll");
+check(Plugins.CanLoadPlugin("kirikiroid2.dll"),
+      "CanLoadPlugin reports kirikiroid2");
+
+check(_str_ord("A") == 65, "ascii ordinal");
+check(_str_ord("あ") == 12354, "BMP ordinal");
+check(_str_ord("😀") == 128512, "surrogate pair ordinal");
+check(_str_ord("") == 0, "empty string ordinal");
+check(_str_ord(42) == 42, "non-string passthrough");
+check(_str_ord("AB") == 65, "first character only");
+
+Storages.setTextEncoding("UTF-8");
+check(Scripts.textEncoding == "UTF-8", "setTextEncoding updates Scripts");
+Storages.setTextEncoding("Shift_JIS");
+check(Scripts.textEncoding == "cp932", "setTextEncoding accepts Shift_JIS");
+
+pluginSmokePass("kirikiroid2.dll");
+System.exit(0);

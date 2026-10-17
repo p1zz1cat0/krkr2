@@ -30,6 +30,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     Extrans/ExtransMath.cpp
     xp3filter/xp3filter.cpp
     json/jsonPlugin.cpp
+    expat/expatPlugin.cpp
+    minizip/minizipPlugin.cpp
+    kirikiroid2/kirikiroid2Plugin.cpp
 )
 
 # These registration translation units belong only to the aggregate plugin
@@ -124,3 +127,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)
 # lzfs 的 LZ4 frame 解码用 vcpkg 的官方 LZ4F（与真 lzfs.dll 同族库）。
 find_package(lz4 CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE lz4::lz4)
+
+# expat.dll 用系统 libexpat。macOS SDK 自带头文件与 tbd，不需要 vcpkg 端口。
+find_library(EXPAT_LIBRARY expat REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${EXPAT_LIBRARY})
+
+# minizip.dll：写走 external/minizip，读走 core 已在用的 cocos2d ext_unzip。
+find_package(cocos2dx CONFIG REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE minizip cocos2dx::ext_unzip)

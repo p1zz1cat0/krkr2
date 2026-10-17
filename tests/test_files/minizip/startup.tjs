@@ -1,0 +1,65 @@
+// minizip.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("minizip.dll");
+check(typeof Zip != "undefined", "Zip class exists");
+check(typeof Unzip != "undefined", "Unzip class exists");
+
+var outDir = Storages.extractStoragePath(Storages.getPlacedPath("startup.tjs"));
+var zipPath = outDir + "smoke.zip";
+var outPath = outDir + "out.tjs";
+
+var zip = new Zip();
+zip.open(zipPath, 1);
+check(zip.add("payload.tjs", "payload.tjs"), "add text entry");
+check(zip.add("payload.bin", "data/payload.bin", 0), "add stored entry");
+zip.close();
+
+var unzip = new Unzip();
+unzip.open(zipPath);
+var entries = unzip.list();
+check(entries.count == 2, "list entry count");
+
+var byName = %[];
+for (var i = 0; i < entries.count; i++)
+    byName[entries[i].filename] = entries[i];
+check(typeof byName["payload.tjs"] != "undefined", "list text entry");
+check(typeof byName["data/payload.bin"] != "undefined", "list stored entry");
+check(byName["payload.tjs"].deflated === true, "text entry deflated");
+check(byName["data/payload.bin"].deflated === false, "stored entry not deflated");
+check(byName["payload.tjs"].uncompressed_size == 11, "text size");
+check(byName["data/payload.bin"].compressed_size == 23, "stored size");
+
+check(unzip.extract("payload.tjs", outPath), "extract text entry");
+unzip.close();
+
+// 解出的内容重新求值，证明字节完整。
+check(Scripts.evalStorage(outPath) == "roundtrip",
+      "extracted content round trip");
+
+// zip:// 存储媒体挂载后可直接读取包内脚本。
+check(Storages.mountZip("mounted", zipPath), "mountZip returns true");
+check(Storages.isExistentStorage("zip://mounted/payload.tjs"),
+      "mounted entry exists");
+check(Scripts.evalStorage("zip://mounted/payload.tjs") == "roundtrip",
+      "mounted content reads");
+check(Storages.unmountZip("mounted"), "unmountZip returns true");
+// Storages caches successful placements; do not assert that the cached
+// zip:// path disappears after unmount.
+
+// 已存在的文件不覆盖：open 默认 overwrite=0 必须抛出。
+var duplicate = new Zip();
+try {
+    duplicate.open(zipPath, 0);
+    pluginAssertTrue("duplicate open throws", false);
+} catch (e) {
+    pluginAssertTrue("duplicate open throws", true);
+}
+
+pluginSmokePass("minizip.dll");
+System.exit(0);

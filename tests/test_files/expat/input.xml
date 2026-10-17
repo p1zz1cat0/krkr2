@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--top-comment-->
+<?smoke fixture?>
+<root id="7" kind="test">
+  <child>hello</child>
+  <empty/>
+</root>

@@ -1,0 +1,79 @@
+// expat.dll 插件 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+function check(cond, msg) {
+    pluginAssertTrue(msg, cond);
+}
+
+Plugins.link("expat.dll");
+check(typeof XMLParser != "undefined", "XMLParser exists");
+
+class Handler {
+    var names = [];
+    var text = "";
+    var attrs = %[];
+    var commentText = "";
+    var piTarget = "";
+    var piData = "";
+
+    function startElement(name, attributes) {
+        names.add(name);
+        if (name == "root")
+            attrs = attributes;
+    }
+    function endElement(name) {
+        names.add("/" + name);
+    }
+    function characterData(data) {
+        text += data;
+    }
+    function comment(data) {
+        commentText = data;
+    }
+    function processingInstruction(target, data) {
+        piTarget = target;
+        piData = data;
+    }
+}
+
+var handler = new Handler();
+var parser = new XMLParser(handler);
+var source =
+    "<?xml version=\"1.0\"?><!--top-comment--><?smoke fixture?>" +
+    "<root id=\"7\" kind=\"test\"><child>hello</child><empty/></root>";
+
+check(parser.parse(source), "parse returns true");
+check(handler.names[0] == "root", "startElement root");
+check(handler.names[1] == "child", "startElement child");
+check(handler.names[2] == "/child", "endElement child");
+check(handler.names[3] == "empty", "startElement empty");
+check(handler.attrs.id == "7", "attribute id");
+check(handler.attrs.kind == "test", "attribute kind");
+check(handler.text.indexOf("hello") >= 0, "character data");
+check(handler.commentText == "top-comment", "comment callback");
+check(handler.piTarget == "smoke" && handler.piData == "fixture",
+      "processing instruction callback");
+check(parser.errorCode == 0, "no parse error");
+check(parser.errorString == "", "empty error string");
+check(parser.currentLineNumber > 0, "line number");
+check(parser.currentByteIndex >= 0, "byte index");
+check(parser.currentButeCount == parser.currentByteCount,
+      "misspelled alias stays bound");
+
+// parseStorage 走 Storage 层。
+var storageParser = new XMLParser(handler);
+handler.names = [];
+handler.text = "";
+check(storageParser.parseStorage("input.xml"), "parseStorage returns true");
+check(handler.names[0] == "root", "parseStorage root");
+check(handler.text.indexOf("hello") >= 0, "parseStorage character data");
+
+// 非法 XML 必须返回 false，并留下错误码和错误文本。
+var badParser = new XMLParser(handler);
+check(!badParser.parse("<root><child></root>"), "malformed parse returns false");
+check(badParser.errorCode != 0, "malformed sets error code");
+check(badParser.errorString != "", "malformed sets error string");
+
+pluginSmokePass("expat.dll");
+System.exit(0);
