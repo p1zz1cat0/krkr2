@@ -1,0 +1,23 @@
+// KirikiriSteam.dll smoke test: global setAchievement(id), nothing is stored.
+// Usage: krkr2 <this dir>. The script ends the process with System.exit(0).
+Scripts.execStorage("../common/plugin_assert.tjs");
+pluginAssertEqual("before link", "undefined", typeof global.setAchievement);
+Plugins.link("KirikiriSteam.dll");
+pluginAssertEqual("setAchievement type", "Object", typeof global.setAchievement);
+
+// The original DLL never sets a result.
+pluginAssertEqual("result", "void", typeof setAchievement("PROLOGUE"));
+
+// Game call shape from the scene postevals.
+pluginAssertEqual("comma eval", "void", typeof Scripts.eval("setAchievement('ALL'), void"));
+
+// Any parameter count other than 1 throws, as in the original DLL.
+var err = null;
+try { setAchievement(); } catch (e) { err = e; }
+pluginAssertTrue("no params throws", err != null);
+err = null;
+try { setAchievement("A", "B"); } catch (e) { err = e; }
+pluginAssertTrue("two params throws", err != null);
+
+pluginSmokePass("KirikiriSteam.dll");
+System.exit(0);

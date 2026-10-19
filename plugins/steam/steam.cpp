@@ -6,16 +6,6 @@
 #include "ncbind.hpp"
 #include "tjs.h"
 
-// 成就信息结构
-struct AchievementInfo {
-    std::string ach; // 成就标识名
-    std::string name; // 显示名称
-    std::string desc; // 描述
-    bool hidden; // 是否隐藏
-    bool achieved; // 是否已解锁
-    tjs_int unlockTime; // 解锁时间（Unix 时间戳）
-};
-
 // 云存储容量信息结构
 struct CloudQuotaInfo {
     tjs_int total; // 总容量
@@ -64,13 +54,9 @@ public:
 
     static tjs_error getAchievement(tTJSVariant *r, tjs_int n, tTJSVariant **,
                                     iTJSDispatch2 *) {
-        if(r) {
-            AchievementInfo info = {
-                "ach1", "Achievement 1", "Description 1", false,
-                true,   1633072800
-            };
-            *r = info.name; // 示例：返回成就名称
-        }
+        // 官方实现在未知成就时返回 void。不保存成就，因此总是 void。
+        if(r)
+            r->Clear();
         return TJS_S_OK;
     }
 
@@ -100,7 +86,8 @@ public:
     }
 
     // 云存储
-    static bool getCloudEnabled() { return true; }
+    // 返回 false。返回 true 时，steam.tjs 在没有云存档时会询问是否上传本地存档。
+    static bool getCloudEnabled() { return false; }
     static tjs_error setCloudEnabled(tTJSVariant *r, tjs_int, tTJSVariant **,
                                      iTJSDispatch2 *) {
         return TJS_S_OK;
@@ -252,3 +239,7 @@ NCB_REGISTER_CLASS(Steam) {
     RawCallback("getDLCCount", &Steam::getDLCCount, TJS_STATICMEMBER);
     RawCallback("getDLCData", &Steam::getDLCData, TJS_STATICMEMBER);
 }
+
+// Registration-only translation units in static libraries need an explicit
+// reference from PluginImpl.cpp, otherwise the linker drops this object.
+extern "C" void TVPKrkrSteamPluginAnchor() {}

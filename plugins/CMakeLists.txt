@@ -61,6 +61,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     DrawDeviceD3D/DrawDeviceD3D.cpp
     DrawDeviceD3D/DrawDeviceD3DZAlias.cpp
     lzfs/lzfs.cpp
+    steam/steam.cpp
+    steam/KirikiriSteam.cpp
     linkstubs/LinkStubs.cpp
 )
 
@@ -107,7 +109,6 @@ add_subdirectory(ExtKAGParser)
 add_subdirectory(fstat)
 add_subdirectory(packinone)
 add_subdirectory(extNagano)
-#add_subdirectory(steam)
 #add_subdirectory(DrawDeviceForSteam)
 target_link_libraries(${PROJECT_NAME} PUBLIC
         psdfile
@@ -120,7 +121,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         fstat
         packinone
         extNagano
-#        steam DrawDeviceForSteam
+#        DrawDeviceForSteam
 )
 
 find_package(fmt CONFIG REQUIRED)

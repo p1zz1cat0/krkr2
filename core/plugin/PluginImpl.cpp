@@ -76,6 +76,8 @@ extern "C" void TVPSqlitePluginAnchor();
 extern "C" void TVPDrawDeviceD3DPluginAnchor();
 extern "C" void TVPDrawDeviceD3DZAliasPluginAnchor();
 extern "C" void TVPLzfsPluginAnchor();
+extern "C" void TVPKrkrSteamPluginAnchor();
+extern "C" void TVPKirikiriSteamPluginAnchor();
 extern "C" void TVPKagexoptPluginAnchor();
 extern "C" void TVPKrmoviePluginAnchor();
 extern "C" void TVPMenuPluginAnchor();
@@ -189,6 +191,8 @@ void TVPLoadInternalPlugins() {
     TVPDrawDeviceD3DPluginAnchor();
     TVPDrawDeviceD3DZAliasPluginAnchor();
     TVPLzfsPluginAnchor();
+    TVPKrkrSteamPluginAnchor();
+    TVPKirikiriSteamPluginAnchor();
     TVPKagexoptPluginAnchor();
     TVPKrmoviePluginAnchor();
     TVPMenuPluginAnchor();

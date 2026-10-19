@@ -1,0 +1,19 @@
+// krkrsteam.dll smoke test: placeholder Steam class, nothing is stored.
+// Usage: krkr2 <this dir>. The script ends the process with System.exit(0).
+Scripts.execStorage("../common/plugin_assert.tjs");
+Plugins.link("krkrsteam.dll");
+pluginAssertEqual("Steam type", "Object", typeof global.Steam);
+
+pluginAssertTrue("initialized", Steam.initialized);
+pluginAssertEqual("requestInitialize", 1, Steam.requestInitialize());
+pluginAssertEqual("achievementsCount", 0, Steam.achievementsCount);
+pluginAssertEqual("setAchievement", 1, Steam.setAchievement("NEW_ACHIEVEMENT_1_0"));
+pluginAssertEqual("getAchievement", "void", typeof Steam.getAchievement("NEW_ACHIEVEMENT_1_0"));
+pluginAssertEqual("clearAchievement", 1, Steam.clearAchievement("NEW_ACHIEVEMENT_1_0"));
+// steam.tjs asks to upload local saves when the cloud is enabled.
+pluginAssertTrue("cloudEnabled off", !Steam.cloudEnabled);
+pluginAssertEqual("cloudFileCount", 0, Steam.cloudFileCount);
+pluginAssertEqual("getLanguage", "String", typeof Steam.getLanguage());
+
+pluginSmokePass("krkrsteam.dll");
+System.exit(0);
