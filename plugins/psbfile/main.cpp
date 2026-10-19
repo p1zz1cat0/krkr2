@@ -61,7 +61,8 @@ static tjs_error load(tTJSVariant *r, tjs_int count, tTJSVariant **p,
                 LOGGER->error("cannot load psb file : {}", path.AsStdString());
                 loadSuccess = false;
             } else {
-                PSB::registerRootResources(path, *self);
+                PSB::registerRootResources(
+                    { path, TVPExtractStorageName(path) }, *self);
             }
         } else if((*p)->Type() == tvtOctet) {
             LOGGER->error("PSBFile::load stream is not implemented");
@@ -133,7 +134,8 @@ static tjs_error PSBFileFactory(PSBFile **result, tjs_int count,
                 delete psbFile;
                 return TJS_E_FAIL;
             }
-            PSB::registerRootResources(path, *psbFile);
+            PSB::registerRootResources(
+                { path, TVPExtractStorageName(path) }, *psbFile);
         } else {
             return TJS_E_INVALIDPARAM;
         }

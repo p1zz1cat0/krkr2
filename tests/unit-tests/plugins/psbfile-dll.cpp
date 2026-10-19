@@ -11,6 +11,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "psbfile/PSBFile.h"
+#include "psbfile/PSBMediaRegistry.h"
+#include "StorageIntf.h"
 #include "test_config.h"
 
 TEST_CASE("read psbfile ezsave.pimg") {
@@ -218,4 +220,23 @@ TEST_CASE("read psbfile e-mote3.0 psb") {
     REQUIRE(f.getType() == PSB::PSBType::Motion);
     auto objs = f.getObjects();
     REQUIRE(objs != nullptr);
+}
+
+// Bug 0027: a save restores "psb://<name>/<id>.tlg" before any script loads
+// the container. Scripts lower-case the domain and drop its directory.
+TEST_CASE("psb media loads an unregistered container on demand") {
+    PSB::initPSBMedia();
+    // The engine starts with "file" as the current media. Do the same here,
+    // so that a bare container name resolves through the auto path.
+    TVPSetCurrentDirectory(TJS_W("file://.") TEST_FILES_PATH "/");
+    const ttstr dir{ TJS_W("file://.") TEST_FILES_PATH "/emote/" };
+    TVPAddAutoPath(dir);
+
+    REQUIRE(TVPIsExistentStorage(TJS_W("psb://EzSave.PIMG/2036.tlg")));
+    REQUIRE(TVPIsExistentStorage(TJS_W("psb://ezsave.pimg/2138.tlg")));
+    REQUIRE_FALSE(TVPIsExistentStorage(TJS_W("psb://ezsave.pimg/1.tlg")));
+    REQUIRE_FALSE(TVPIsExistentStorage(TJS_W("psb://missing.pimg/1.tlg")));
+
+    TVPRemoveAutoPath(dir);
+    PSB::deInitPSBMedia();
 }

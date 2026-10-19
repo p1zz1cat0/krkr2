@@ -6,6 +6,8 @@
 #include "PSBValue.h"
 #include "StorageIntf.h"
 
+#include <unordered_set>
+
 namespace PSB {
     class PSBMedia : public iTVPStorageMedia {
     public:
@@ -40,7 +42,10 @@ namespace PSB {
                  const std::shared_ptr<PSBResource> &resource);
 
     private:
+        void loadContainerOnce(const ttstr &name);
+
         int _ref = 0;
         std::unordered_map<std::string, PSBResource> _resources;
+        std::unordered_set<std::string> _triedContainers;
     };
 } // namespace PSB
