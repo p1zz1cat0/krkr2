@@ -470,6 +470,10 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                 }
 
                 switch(ch) {
+                    case ';':
+                        m_state.fontSize = m_default.fontSize;
+                        updateFont();
+                        break;
                     case 't': {
                         ttstr faceName{};
 
