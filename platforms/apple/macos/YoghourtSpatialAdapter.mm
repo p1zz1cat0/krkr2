@@ -77,13 +77,6 @@ id<MTLDevice> gDevice = nil;
 CAMetalLayer *gOverlayLayer = nil;
 std::unique_ptr<IOSurfaceRing> gRing;
 
-struct CopyTarget {
-    EGLSurface surface = EGL_NO_SURFACE;
-    GLuint texture = 0;
-    GLuint framebuffer = 0;
-    bool bound = false;
-};
-std::array<CopyTarget, 3> gCopyTargets{};
 IOSurfaceRing::Slot *gLastSubmittedSlot = nullptr;
 
 // Session performance telemetry (YOGHOURT_TELEMETRY=1 only). The collector is
@@ -214,28 +207,12 @@ void MarkFallback(const char *reason) {
     HideOverlay();
 }
 
-void ReleaseCopyTargets() {
-    const bool ownsCurrentContext = eglGetCurrentContext() == gContext;
-    for (auto &target : gCopyTargets) {
-        if (target.bound && gDisplay != EGL_NO_DISPLAY) {
-            eglReleaseTexImage(gDisplay, target.surface, EGL_BACK_BUFFER);
-        }
-        if (ownsCurrentContext) {
-            if (target.framebuffer) glDeleteFramebuffers(1, &target.framebuffer);
-            if (target.texture) glDeleteTextures(1, &target.texture);
-        }
-        // A retired context releases its own GL objects.
-        target = {};
-    }
-    gLastSubmittedSlot = nullptr;
-}
-
 void ReleaseResources() {
     if (gPresenter) {
         gPresenter->drain();
     }
     gPresenter.reset();
-    ReleaseCopyTargets();
+    gLastSubmittedSlot = nullptr;
     if (gRing) {
         gRing->reset();
     }
@@ -405,7 +382,7 @@ bool CreateSharedResources(EGLDisplay display,
             gPresenter->drain();
         }
         gPresenter.reset();
-        ReleaseCopyTargets();
+        gLastSubmittedSlot = nullptr;
         gPresenterWidth = 0;
         gPresenterHeight = 0;
     }
@@ -508,36 +485,6 @@ void RestoreGLState(const GLState &state) {
     glBindBuffer(GL_ARRAY_BUFFER, state.arrayBuffer);
 }
 
-GLuint EnsureCopyTarget(EGLSurface surface) {
-    for (auto &target : gCopyTargets) {
-        if (target.surface == surface) return target.framebuffer;
-    }
-    for (auto &target : gCopyTargets) {
-        if (target.surface != EGL_NO_SURFACE) continue;
-        target.surface = surface;
-        glGenTextures(1, &target.texture);
-        glBindTexture(GL_TEXTURE_2D, target.texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        if (!target.texture || !eglBindTexImage(gDisplay, surface, EGL_BACK_BUFFER)) {
-            return 0;
-        }
-        target.bound = true;
-        glGenFramebuffers(1, &target.framebuffer);
-        glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, target.texture, 0);
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE ||
-            glGetError() != GL_NO_ERROR) {
-            return 0;
-        }
-        return target.framebuffer;
-    }
-    return 0;
-}
-
 bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot) {
     if (!EnsureProgram()) {
         std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: GL program\n");
@@ -551,8 +498,9 @@ bool CopySourceToIOSurface(IOSurfaceRing::Slot &slot) {
         return false;
     }
     // Keep the window surface current. Surface changes make ANGLE wait for
-    // Metal scheduling; an IOSurface texture attachment needs no such wait.
-    const GLuint framebuffer = EnsureCopyTarget(gRing->pbufferOf(&slot));
+    // Metal scheduling; the slot framebuffer needs no surface change.
+    // CreateSharedResources makes a new ring when the context changes.
+    const GLuint framebuffer = gRing->framebufferOf(&slot);
     if (!framebuffer) {
         std::fprintf(stderr, "[Yoghourt] KrKr spatial copy failed: IOSurface FBO egl=0x%x\n", eglGetError());
         RestoreGLState(state);
