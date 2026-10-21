@@ -1,0 +1,27 @@
+// Oracle probe for the original gfxEffect.dll on krkrz (Windows).
+// Writes every pixel of every case to probe-result.txt next to the exe.
+// Run: convert this file and cases.tjs to UTF-16LE with BOM, rename this
+// file to startup.tjs, then tvpwin32.exe <dir>.
+// The expected hashes in startup.tjs come from the original DLL running in an
+// x86 emulator (SSE2 mesh and edge code, scalar renderer). A real CPU runs the
+// SSE2 renderer, which skips the last 8 rows: compare those rows separately.
+var out = [];
+var outPath = System.exePath + "probe-result.txt";
+try {
+    Plugins.link("gfxEffect.dll");
+    Scripts.execStorage("cases.tjs");
+    var win = new Window();
+    var prim = new Layer(win, null);
+    prim.setImageSize(32, 32);
+    fireRunCases(win, function(name, l, w, h) {
+        for (var y = 0; y < h; y++)
+            for (var x = 0; x < w; x++)
+                out.add(name + " " + x + " " + y + " " + "%08x".sprintf(fireGetPixel(l, x, y)));
+        out.save(outPath);
+    });
+} catch (e) {
+    out.add("ERROR " + e.message);
+}
+out.add("PROBE_DONE");
+out.save(outPath);
+System.exit(0);

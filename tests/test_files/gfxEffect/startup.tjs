@@ -1,15 +1,69 @@
-// gfxEffect.dll smoke test: the compatibility shim only exposes the gfxFire
-// class. The original plugin is closed source, so no drawing surface exists.
+// gfxEffect.dll smoke test: the gfxFire class.
+// Usage: krkr2 <this dir>. The script ends the process with System.exit(0).
+// Expected hashes come from the original DLL running in an x86 emulator with
+// the SSE2 mesh and edge code and the scalar renderer (see oracle-startup.tjs
+// for the Windows probe, which has not been run). Each hash is FNV-style over
+// the 0xAARRGGBB pixels.
 Scripts.execStorage("../common/plugin_assert.tjs");
-function check(cond, msg) {
-    pluginAssertTrue(msg, cond);
+Plugins.link("gfxEffect.dll");
+Scripts.execStorage("cases.tjs");
+
+var expected = %[
+    "red-64" => 0x5fc7a22a,
+    "red-64-subclass" => 0x5fc7a22a,
+    "blue-bilinear-edge" => 0xc941a97b,
+    "white-extreme-bounds" => 0xfbe78d1c,
+    "custom-two-seeds" => 0x21298835
+];
+// Set to true to print every pixel (FIRE_PX) for a diff with the oracle.
+var dumpAll = false;
+
+// Property defaults and setter validation (out of range values are ignored).
+{
+    var f = new gfxFire();
+    pluginAssertEqual("default forceH", -1, f.forceH);
+    pluginAssertEqual("default forceV", 0, f.forceV);
+    pluginAssertEqual("default boundRangeH", 8, f.boundRangeH);
+    pluginAssertEqual("default boundRangeV", 4, f.boundRangeV);
+    pluginAssertEqual("default numOfBlurForCoolMap", 20, f.numOfBlurForCoolMap);
+    pluginAssertEqual("default coolRange", 1, f.coolRange);
+    pluginAssertEqual("default coolStrength", 160, f.coolStrength);
+    pluginAssertEqual("default denominator", 320, f.coolParticleDensityDenominator);
+    pluginAssertEqual("default numerator", 35, f.coolParticleDensityNumerator);
+    pluginAssertEqual("default isRed", true, f.isRed);
+    pluginAssertEqual("default numOfSeeds", 0, f.numOfSeeds);
+    f.forceH = 9; pluginAssertEqual("forceH range", -1, f.forceH);
+    f.forceH = -7; pluginAssertEqual("forceH min", -7, f.forceH);
+    f.boundRangeH = 0; pluginAssertEqual("boundRangeH min", 8, f.boundRangeH);
+    f.boundRangeH = 17; pluginAssertEqual("boundRangeH max", 8, f.boundRangeH);
+    f.boundRangeH = 16; pluginAssertEqual("boundRangeH 16", 16, f.boundRangeH);
+    f.coolRange = 0; pluginAssertEqual("coolRange zero", 1, f.coolRange);
+    f.coolStrength = 255; pluginAssertEqual("coolStrength max", 160, f.coolStrength);
+    f.coolParticleDensityDenominator = 0;
+    pluginAssertEqual("denominator zero", 320, f.coolParticleDensityDenominator);
+    f.textureFilterType = 5; pluginAssertEqual("textureFilterType bool", 1, f.textureFilterType);
+    f.scalingCoeff = 0.5;
+    pluginAssertTrue("scalingCoeff range", f.scalingCoeff < 0.001);
+    f.applyBlue(); pluginAssertEqual("applyBlue", false, f.isRed);
+    f.applyRed(); pluginAssertEqual("applyRed", true, f.isRed);
+    f.seedX = 5; pluginAssertEqual("seedX without seeds", 0, f.seedX);
+    f.finalize();
 }
 
-Plugins.link("gfxEffect.dll");
-
-var fire = new gfxFire();
-check(fire != void, "gfxFire constructs");
-fire.finalize();
-
+var win = new Window();
+var prim = new Layer(win, null);
+prim.setImageSize(32, 32);
+fireRunCases(win, function(name, l, w, h) {
+    var hash = 2166136261;
+    for (var y = 0; y < h; y++)
+        for (var x = 0; x < w; x++) {
+            var p = fireGetPixel(l, x, y);
+            hash = ((hash ^ p) * 16777619) & 0xFFFFFFFF;
+            if (dumpAll)
+                Debug.message("FIRE_PX " + name + " " + x + " " + y + " " + "%08x".sprintf(p));
+        }
+    Debug.message("FIRE_HASH " + name + " " + "%08x".sprintf(hash));
+    pluginAssertEqual(name, expected[name], hash);
+});
 pluginSmokePass("gfxEffect.dll");
 System.exit(0);

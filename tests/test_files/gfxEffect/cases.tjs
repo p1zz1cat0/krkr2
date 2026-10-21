@@ -1,0 +1,134 @@
+// gfxFire cases shared by the krkr2 fixture and the Windows oracle.
+// Keep this file ASCII: the oracle host (krkrz 2015) reads it as UTF-16LE.
+//
+// fireRunCases(win, emit) calls emit(name, layer, width, height) after each
+// case. Pixels are read as 0xAARRGGBB through normalized getMainPixel and
+// getMaskPixel, so both hosts give the same values. Pixels are written with
+// fillRect, because setMainPixel differs between the two hosts.
+//
+// All sizes are multiples of 16. randomSeed is always set first, because the
+// global Mersenne Twister of the DLL is shared by all gfxFire objects.
+
+// krkr2 getMainPixel returns 0x00BBGGRR, krkrz returns 0x00RRGGBB.
+var fireSwapRB = false;
+function fireCalibrate(win) {
+    var l = new Layer(win, win.primaryLayer);
+    l.setImageSize(1, 1);
+    l.fillRect(0, 0, 1, 1, 0xFF112233);
+    fireSwapRB = (l.getMainPixel(0, 0) & 0xFFFFFF) == 0x332211;
+    invalidate l;
+}
+
+function fireGetPixel(l, x, y) {
+    var c = l.getMainPixel(x, y) & 0xFFFFFF;
+    if (fireSwapRB)
+        c = ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF);
+    return (l.getMaskPixel(x, y) << 24) | c;
+}
+
+function fireNewLayer(win, w, h) {
+    var l = new Layer(win, win.primaryLayer);
+    l.setImageSize(w, h);
+    return l;
+}
+
+// A seed layer: every pixel has alpha 255, so the heat is 255 everywhere.
+function fireSeedLayer(win, w, h) {
+    var l = fireNewLayer(win, w, h);
+    l.fillRect(0, 0, w, h, 0xFF000000);
+    return l;
+}
+
+function fireCycles(f, n) {
+    for (var i = 0; i < n; i++)
+        f.cycle();
+}
+
+// The games define FireController extends GenericFlip, gfxFire and call the
+// native constructor and finalize with SUPER, so the class must be derivable.
+class FireSub extends gfxFire {
+    function FireSub() {
+        super.gfxFire();
+    }
+    function finalize() {
+        super.finalize();
+    }
+}
+
+function fireRunCases(win, emit) {
+    fireCalibrate(win);
+
+    // Default settings, nearest filter, red table.
+    var l = fireNewLayer(win, 64, 64);
+    var f = new gfxFire();
+    f.randomSeed = 1;
+    f.init(l, 1);
+    f.seedLayer = fireSeedLayer(win, 32, 8);
+    f.seedX = 16; f.seedY = 40;
+    fireCycles(f, 6);
+    emit("red-64", l, 64, 64);
+
+    // The same run on a TJS subclass must give the same pixels.
+    l = fireNewLayer(win, 64, 64);
+    f = new FireSub();
+    f.randomSeed = 1;
+    f.init(l, 1);
+    f.seedLayer = fireSeedLayer(win, 32, 8);
+    f.seedX = 16; f.seedY = 40;
+    fireCycles(f, 6);
+    emit("red-64-subclass", l, 64, 64);
+
+    // Bilinear filter, edge smoothing, blue table.
+    l = fireNewLayer(win, 96, 80);
+    f = new gfxFire();
+    f.randomSeed = 7;
+    f.textureFilterType = 1;
+    f.edgeSmoothing = true;
+    f.init(l, 1);
+    f.applyBlue();
+    f.setFireSeed(fireSeedLayer(win, 32, 8));
+    f.setFireSeedPos(16, 40);
+    fireCycles(f, 8);
+    emit("blue-bilinear-edge", l, 96, 80);
+
+    // Strong warp: mesh points move out of the layer, white table.
+    l = fireNewLayer(win, 160, 112);
+    f = new gfxFire();
+    f.randomSeed = 9;
+    f.boundRangeH = 16; f.boundRangeV = 16;
+    f.forceH = 7; f.forceV = 7;
+    f.init(l, 1);
+    f.applyWhite();
+    f.seedLayer = fireSeedLayer(win, 32, 8);
+    f.seedX = 16; f.seedY = 40;
+    fireCycles(f, 6);
+    emit("white-extreme-bounds", l, 160, 112);
+
+    // Two seeds, custom colour table, other cool map settings, and a new
+    // warp map and cool map in the middle of the run.
+    l = fireNewLayer(win, 128, 96);
+    f = new gfxFire();
+    f.randomSeed = 3;
+    f.coolRange = 20;
+    f.coolStrength = 100;
+    f.numOfBlurForCoolMap = 10;
+    f.coolParticleDensityNumerator = 50;
+    f.coolParticleDensityDenominator = 200;
+    f.scalingCoeff = 0.0002;
+    f.init(l, 2);
+    var table = fireNewLayer(win, 256, 1);
+    for (var i = 0; i < 256; i++) {
+        var a = (i * 5 + 7) & 255;
+        table.fillRect(i, 0, 1, 1, (a << 24) | (i << 16) | (((i * 3) & 255) << 8) | (255 - i));
+    }
+    f.setCustomColorTable(table);
+    f.setFireSeed(fireSeedLayer(win, 32, 8), 0);
+    f.setFireSeedPos(16, 40, 0);
+    f.setFireSeed(fireSeedLayer(win, 24, 6), 1);
+    f.setFireSeedPos(70, 60, 1);
+    fireCycles(f, 3);
+    f.updateWarpMap();
+    f.updateCoolMap();
+    fireCycles(f, 3);
+    emit("custom-two-seeds", l, 128, 96);
+}
