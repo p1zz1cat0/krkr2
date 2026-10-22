@@ -30,5 +30,28 @@ characters = renderer.getCharacters(0, 0);
 pluginAssertEqual("new default enlarged", 29, characters[3].size);
 pluginAssertEqual("new default restored", 22, characters[4].size);
 pluginAssertTrue("repeat bold retained", characters[4].bold);
+// The original TextRender.dll reads lowercase setDefault keys and centers
+// with align/valign = 0. RIDDLE JOKER choice buttons use exactly this call.
+var centered = new TextRenderBase();
+centered.setDefault(%["fontsize" => 36, "align" => 0, "valign" => 0]);
+pluginAssertEqual("lowercase fontsize", 36, centered.defaultFontSize);
+pluginAssertEqual("default align", 0, centered.defaultAlign);
+pluginAssertEqual("default valign", 0, centered.defaultValign);
+centered.setRenderSize(1000, 80);
+centered.render("ABCD", 0, 0, 0, false);
+centered.done();
+characters = centered.getCharacters(0, 0);
+var left = characters[0].x;
+var right = characters[3].x + characters[3].cw;
+pluginAssertEqual("centered size", 36, characters[0].size);
+pluginAssertTrue("centered horizontally", left > 0 && (left - (1000 - right)) <= 1 && ((1000 - right) - left) <= 1);
+pluginAssertEqual("centered vertically", 22, characters[0].y);
+centered.done();
+pluginAssertEqual("second done keeps position", left, centered.getCharacters(0, 0)[0].x);
+centered.clear();
+centered.render("%RAB", 0, 0, 0, false);
+centered.done();
+characters = centered.getCharacters(0, 0);
+pluginAssertEqual("right aligned", 1000, characters[1].x + characters[1].cw);
 pluginSmokePass("TextRender.dll");
 System.exit(0);

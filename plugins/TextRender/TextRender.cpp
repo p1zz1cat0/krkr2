@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 #define NCB_MODULE_NAME TJS_W("TextRender.dll")
 
 extern "C" void TVPTextRenderPluginAnchor() {}
@@ -77,6 +79,17 @@ using RgbColor = uint32_t;
 
 #define getprop(d, p) getprop_t(d, p, )
 
+// Read the dictionary key `key` into `p`. Use this when the original
+// TextRender.dll key is not the same as the member name.
+#define getprop_key_t(d, key, p, ty)                                           \
+    {                                                                          \
+        tTJSVariant v;                                                         \
+        if(TJS_SUCCEEDED(d->PropGet(0, TJS_W(key), nullptr, &v, d)) &&         \
+           v.Type() != tvtVoid) {                                              \
+            p = ty(v);                                                         \
+        }                                                                      \
+    }
+
 #define getprop_ensure_deref(d, p, e)                                          \
     {                                                                          \
         tTJSVariant v;                                                         \
@@ -104,6 +117,8 @@ struct TextRenderState {
     int lineSpacing = 6;
     int pitch = 0;
     int lineSize = 0;
+    int align = -1;  // -1 left, 0 center, 1 right
+    int valign = -1; // -1 top, 0 center, 1 bottom
 
     bool renderOver = false;
     int renderDelay = 1000;
@@ -157,6 +172,21 @@ struct TextRenderState {
         getprop(dict, lineSpacing);
         getprop(dict, pitch);
         getprop(dict, lineSize);
+        getprop(dict, align);
+        getprop(dict, valign);
+
+        // The original TextRender.dll reads lowercase keys. Games call
+        // setDefault(%["fontsize" => ..., "align" => 0, ...]), for example
+        // the RIDDLE JOKER choice buttons. Read them after the camelCase
+        // keys, so that the original spelling wins.
+        getprop_key_t(dict, "fontsize", fontSize, );
+        getprop_key_t(dict, "color", chColor, static_cast<tjs_int>);
+        getprop_key_t(dict, "rubysize", rubySize, );
+        getprop_key_t(dict, "rubyoffset", rubyOffset, );
+        getprop_key_t(dict, "shadowcolor", shadowColor, static_cast<tjs_int>);
+        getprop_key_t(dict, "edgecolor", edgeColor, static_cast<tjs_int>);
+        getprop_key_t(dict, "linespacing", lineSpacing, );
+        getprop_key_t(dict, "linesize", lineSize, );
     }
 
     static TextRenderState from(tTJSVariant t) {
@@ -221,6 +251,8 @@ struct CharacterInfo {
     RgbColor shadow = NULL; //
 
     ttstr text = TJS_W("");
+
+    int align = -1; // layout only; not given to the script
 
     // -------------------------------------------------------------- //
 
@@ -334,6 +366,7 @@ public:
     property_accessor(lineSpacing, int, m_state.lineSpacing);
     property_accessor(pitch, int, m_state.pitch);
     property_accessor(lineSize, int, m_state.lineSize);
+    property_accessor(align, int, m_state.align);
 
     property_accessor(renderOver, bool, m_state.renderOver);
     property_accessor(renderDelay, int, m_state.renderDelay);
@@ -363,6 +396,8 @@ public:
     property_accessor(defaultLineSpacing, int, m_default.lineSpacing);
     property_accessor(defaultPitch, int, m_default.pitch);
     property_accessor(defaultLineSize, int, m_default.lineSize);
+    property_accessor(defaultAlign, int, m_default.align);
+    property_accessor(defaultValign, int, m_default.valign);
 
 private:
     int m_boxWidth = 0;
@@ -384,6 +419,7 @@ private:
 
     std::vector<CharacterInfo> m_characters{};
     std::vector<CharacterInfo> m_buffer{};
+    size_t m_alignedCount = 0; // m_characters before this index are aligned
     uint32_t m_mode = 0;
 
     void pushCharacter(tjs_char ch);
@@ -391,6 +427,7 @@ private:
     void performLinebreak();
     void flush(bool force = false);
     void updateFont();
+    void applyAlignment();
 };
 
 enum TextRenderAlignment {
@@ -633,14 +670,14 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         dbg_print(TJS_W("reset"));
                         resetFont();
                         break;
-                    case 'C': // TODO: Centre
-                        dbg_print(TJS_W("centre"));
+                    case 'C':
+                        m_state.align = kTextRenderAlignmentCenter;
                         break;
-                    case 'R': // TODO: Right
-                        dbg_print(TJS_W("right"));
+                    case 'R':
+                        m_state.align = kTextRenderAlignmentRight;
                         break;
-                    case 'L': // TODO: Left
-                        dbg_print(TJS_W("left"));
+                    case 'L':
+                        m_state.align = kTextRenderAlignmentLeft;
                         break;
                     case 'l': {
                         dbg_print(TJS_W("left"));
@@ -960,6 +997,7 @@ void TextRenderBase::pushCharacter(tjs_char ch) {
         (m_state.edge ? m_state.edgeColor : 0),
         (m_state.shadow ? m_state.shadowColor : 0),
         (ttstr() + ch),
+        m_state.align,
     };
 
     m_buffer.push_back(std::move(info));
@@ -1065,6 +1103,7 @@ void TextRenderBase::clear() {
     dbg_print(TJS_W("clear character buffer and format"));
 
     m_characters.clear();
+    m_alignedCount = 0;
 
     m_state = m_default;
     m_overflow = false;
@@ -1095,6 +1134,51 @@ void TextRenderBase::updateFont() {
 void TextRenderBase::done() {
     dbg_print(TJS_W("flush character buffer"));
     flush();
+    applyAlignment();
+}
+
+// Move each line by its align value inside m_boxWidth, and move all lines by
+// m_default.valign inside m_boxHeight. Left/top (-1) does not move anything.
+// A line is a run of characters with the same y. Only the characters added
+// after the last call are moved, so a second done() does not move them again.
+void TextRenderBase::applyAlignment() {
+    size_t const first = m_alignedCount;
+    m_alignedCount = m_characters.size();
+    if(first >= m_characters.size()) {
+        return;
+    }
+
+    int textBottom = 0;
+    for(size_t begin = first; begin < m_characters.size();) {
+        size_t end = begin;
+        int right = 0;
+        while(end < m_characters.size() &&
+              m_characters[end].y == m_characters[begin].y) {
+            right = std::max(right, m_characters[end].x + m_characters[end].cw);
+            textBottom = std::max(textBottom,
+                                  m_characters[end].y + m_characters[end].size);
+            ++end;
+        }
+
+        int const align = m_characters[end - 1].align;
+        if(align != kTextRenderAlignmentLeft) {
+            int const space = m_boxWidth - right;
+            int const dx = align == kTextRenderAlignmentCenter ? space / 2 : space;
+            for(size_t i = begin; i < end; ++i) {
+                m_characters[i].x += dx;
+            }
+        }
+        begin = end;
+    }
+
+    if(m_default.valign != kTextRenderAlignmentLeft) {
+        int const space = m_boxHeight - textBottom;
+        int const dy =
+            m_default.valign == kTextRenderAlignmentCenter ? space / 2 : space;
+        for(size_t i = first; i < m_characters.size(); ++i) {
+            m_characters[i].y += dy;
+        }
+    }
 }
 
 void TextRenderBase::resetFont() { m_state = m_default; }
@@ -1151,6 +1235,7 @@ NCB_REGISTER_CLASS(TextRenderBase) {
     property_delegate(lineSpacing);
     property_delegate(pitch);
     property_delegate(lineSize);
+    property_delegate(align);
 
     property_delegate(defaultBold);
     property_delegate(defaultItalic);
@@ -1165,4 +1250,6 @@ NCB_REGISTER_CLASS(TextRenderBase) {
     property_delegate(defaultLineSpacing);
     property_delegate(defaultPitch);
     property_delegate(defaultLineSize);
+    property_delegate(defaultAlign);
+    property_delegate(defaultValign);
 };
