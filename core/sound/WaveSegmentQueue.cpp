@@ -34,7 +34,8 @@ void tTVPWaveSegmentQueue::Enqueue(const tTVPWaveSegment &segment) {
         // 既存のセグメントが 1 個以上ある
         tTVPWaveSegment &last = Segments.back();
         // 最後のセグメントとこれから追加しようとするセグメントが連続してるか？
-        if(last.Start + last.Length == segment.Start &&
+        if(last.Length > 0 && segment.Length > 0 &&
+           last.Start + last.Length == segment.Start &&
            (double)last.FilteredLength / last.Length ==
                (double)segment.FilteredLength / segment.Length) {
             // 連続していて、かつ、比率も完全に同じなので
@@ -104,7 +105,8 @@ void tTVPWaveSegmentQueue::Dequeue(tTVPWaveSegmentQueue &dest,
             tjs_int64 newlength = static_cast<tjs_int64>(
                 (double)Segments.front().Length /
                 (double)Segments.front().FilteredLength * remain);
-            if(newlength > 0)
+            // Keep rendered tail frames at the fixed source position.
+            if(newlength > 0 || Segments.front().Length == 0)
                 dest.Enqueue(
                     tTVPWaveSegment(Segments.front().Start, newlength, remain));
 
@@ -113,8 +115,7 @@ void tTVPWaveSegmentQueue::Dequeue(tTVPWaveSegmentQueue &dest,
             Segments.front().Start += newlength;
             Segments.front().Length -= newlength;
             Segments.front().FilteredLength -= remain;
-            if(Segments.front().Length == 0 ||
-               Segments.front().FilteredLength == 0) {
+            if(Segments.front().FilteredLength == 0) {
                 // ぶった切った結果 (線形補完した結果の誤差で)
                 // 長さが0になってしまった
                 Segments.pop_front(); // セグメントを捨てる
@@ -186,7 +187,7 @@ void tTVPWaveSegmentQueue::Scale(tjs_int64 new_total_filtered_length) {
     // からっぽのSegments の除去
     for(std::deque<tTVPWaveSegment>::iterator i = Segments.begin();
         i != Segments.end();) {
-        if(i->FilteredLength == 0 || i->Length == 0)
+        if(i->FilteredLength == 0)
             i = Segments.erase(i);
         else
             i++;

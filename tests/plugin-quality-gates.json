@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "sourceExclusions": [
+    {"path": "plugins/wfBasicEffect/STK/**", "classification": "third-party", "reason": "STK v4.6.0 with documented instance-rate/reset patch; maintained adapter remains scanned"},
     {"path": "plugins/wfTypicalDSP/DSPFilters/**", "classification": "third-party", "reason": "Unmodified MIT DSPFilters acc49170; maintained wave adapter remains scanned"},
     {"path": "plugins/csvParser/**", "classification": "third-party", "reason": "Upstream KAG parser compatibility source"},
     {"path": "plugins/layerExBtoA/**", "classification": "third-party", "reason": "Upstream wtnbgo plugin port"},
@@ -16,6 +17,7 @@
     {"path": "plugins/layerExShimmer/oracle/**", "classification": "third-party", "reason": "Ignored upstream layerExShimmer source snapshot"}
   ],
   "plugins": [
+    {"name": "wfBasicEffect", "dll": "wfBasicEffect.dll", "sourceRoots": ["plugins/wfBasicEffect"], "platforms": ["linux", "macos"], "buildTarget": "wfBasicEffect-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/wfBasicEffect", "marker": "PLUGIN_SMOKE_PASS plugin=wfBasicEffect.dll", "timeoutSeconds": 30, "anchor": "TVPWfBasicEffectPluginAnchor"},
     {"name": "wfTypicalDSP", "dll": "wfTypicalDSP.dll", "sourceRoots": ["plugins/wfTypicalDSP"], "platforms": ["linux", "macos"], "buildTarget": "wfTypicalDSP-dll", "ctestLabel": "plugin", "fixture": "tests/test_files/wfTypicalDSP", "marker": "PLUGIN_SMOKE_PASS plugin=wfTypicalDSP.dll", "timeoutSeconds": 30, "anchor": "TVPWfTypicalDSPPluginAnchor"},
     {"name": "TextRender", "dll": "TextRender.dll", "sourceRoots": ["plugins/TextRender"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/TextRender", "marker": "PLUGIN_SMOKE_PASS plugin=TextRender.dll", "timeoutSeconds": 30, "anchor": "TVPTextRenderPluginAnchor"},
     {"name": "drawdeviceD3D", "dll": "drawdeviceD3D.dll", "sourceRoots": ["plugins/DrawDeviceD3D"], "platforms": ["linux", "macos"], "buildTarget": "plugin-tests", "ctestLabel": "plugin", "fixture": "tests/test_files/drawdeviceD3D", "marker": "PLUGIN_SMOKE_PASS plugin=drawdeviceD3D.dll", "timeoutSeconds": 30, "anchor": "TVPDrawDeviceD3DPluginAnchor", "smokeKind": "gui"},

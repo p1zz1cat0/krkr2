@@ -29,6 +29,7 @@ extern "C" void YoghourtCursorTick() {}
 extern "C" void TVPGetLangNamePluginAnchor() {}
 extern "C" void TVPShrinkCopyPluginAnchor() {}
 extern "C" void TVPWfTypicalDSPPluginAnchor() {}
+extern "C" void TVPWfBasicEffectPluginAnchor() {}
 extern "C" void TVPLayerExRasterPluginAnchor() {}
 extern "C" void TVPLayerExAreaAveragePluginAnchor() {}
 extern "C" void TVPLayerExShimmerPluginAnchor() {}

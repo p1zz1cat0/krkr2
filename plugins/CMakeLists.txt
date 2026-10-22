@@ -53,6 +53,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     getLangName/getLangName.cpp
     shrinkCopy/shrinkCopy.cpp
     wfTypicalDSP/wfTypicalDSP.cpp
+    wfBasicEffect/wfBasicEffect.cpp
     layerExRaster/layerExRaster.cpp
     layerExAreaAverage/layerExAreaAverage.cpp
     layerExShimmer/layerExShimmer.cpp
@@ -167,3 +168,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE MINIZIP::minizip-ng)
 # 导出；unofficial-sqlite3 是它的 CMake 目标名，随 manifest 一起安装。
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE unofficial::sqlite3::sqlite3)
+
+add_library(wfBasicEffectSTK STATIC
+    wfBasicEffect/STK/src/Stk.cpp
+    wfBasicEffect/STK/src/Delay.cpp
+    wfBasicEffect/STK/src/OnePole.cpp
+    wfBasicEffect/STK/src/FreeVerb.cpp
+)
+target_include_directories(wfBasicEffectSTK PUBLIC wfBasicEffect/STK/include)
+set_target_properties(wfBasicEffectSTK PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(${PROJECT_NAME} PUBLIC wfBasicEffectSTK)

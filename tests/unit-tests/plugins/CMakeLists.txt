@@ -3,6 +3,7 @@ project(TestPlugins LANGUAGES CXX)
 
 set(SOURCES
         wfTypicalDSP-dll.cpp
+        wfBasicEffect-dll.cpp
         getLangName-dll.cpp
         psbfile-dll.cpp
         shrinkCopy-dll.cpp
