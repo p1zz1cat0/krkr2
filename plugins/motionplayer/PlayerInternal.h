@@ -335,18 +335,27 @@ namespace motion {
                     return cacheMotion(runtime, requestKey, resolvedKey,
                                        snapshot);
                 }
-            } else if(LOGGER) {
+            } else if(static std::unordered_set<std::string> loggedMisses;
+                      LOGGER && loggedMisses.insert(requestKey).second) {
                 // Forensic: a motion cross-reference that resolved to no
                 // storage. Shows what the resolver was asked for and how much
                 // was already cached when the storage load was attempted.
+                // Log each key one time: a child layer retries the lookup on
+                // each frame.
                 LOGGER->warn(
                     "emote.motion.miss key='{}' cached={} storageResolved=0",
                     requestKey, runtime.motionsByKey.size());
             }
 
+            // Fallback: use only modules that are already loaded. Do not call
+            // load() here. load() opens the storage, and a missing storage
+            // throws "Cannot open storage" up to the game script. Game data
+            // can refer to a motion in a file that the scene did not load
+            // (RIDDLE JOKER sd103.mtn refers to motion/SD102/AAemo). Then
+            // return nullptr, so that the child layer draws nothing.
             if(resourceManager != nullptr) {
                 for(const auto &candidate : candidates) {
-                    const auto loaded = resourceManager->load(candidate);
+                    const auto loaded = resourceManager->findLoaded(candidate);
                     if(const auto snapshot =
                            detail::lookupModuleSnapshot(loaded)) {
                         return cacheMotion(runtime, requestKey,
