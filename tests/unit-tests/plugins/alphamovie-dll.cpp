@@ -120,13 +120,20 @@ void px(const std::vector<uint8_t> &bgra, int w, int x, int y,
 
 } // namespace
 
-TEST_CASE("AlphaMovie BitReader unstuffs 0xFF00 and honors markers") {
-    // 0x5A 0xFF 0x00 0xA5 → 0xFF00 应还原为一个 0xFF 字面量
-    const uint8_t data[] = { 0x5A, 0xFF, 0x00, 0xA5 };
+TEST_CASE("AlphaMovie BitReader reads 0xFF bytes as plain data") {
+    // AMV 熵流没有 JPEG byte stuffing（bug 0033）：0xFF 00 是两个数据字节，
+    // 0xFF D9 也不是 marker。真实文件里这两种序列都有。
+    const uint8_t data[] = { 0x5A, 0xFF, 0x00, 0xFF, 0xD9, 0xA5 };
     amvdec::BitReader br(data, sizeof(data));
     CHECK(br.bits(8) == 0x5A);
     CHECK(br.bits(8) == 0xFF);
+    CHECK(br.bits(8) == 0x00);
+    CHECK(br.bits(8) == 0xFF);
+    CHECK(br.bits(8) == 0xD9);
     CHECK(br.bits(8) == 0xA5);
+    CHECK_FALSE(br.hasFailed());
+    br.bit();
+    CHECK(br.hasFailed());
 }
 
 TEST_CASE("AlphaMovie HuffTable decodes standard DC categories") {

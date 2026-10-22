@@ -38,7 +38,7 @@
 //        - zlib 展开失败时通过 plugin logger 输出警告 (行为仍回退为
 //          不透明 alpha=255，与原版一致)。
 //        - 帧长度与 stream 边界在扫描阶段校验，避免声明长度导致错误分配。
-//        - 熵流 EOF、marker、非法 Huffman code 和越界 ZRL 明确报告损坏。
+//        - 熵流 EOF、非法 Huffman code 和越界 ZRL 明确报告损坏。
 //        - blit 使用 64 位坐标计算，避免极端 Left/Top 绕回。
 //     4. 解码缓冲保持上游的 BGRA；blit 时经 common/LayerPixel.h 的
 //        copyBgraRow 转为 fork 的 Layer 通道布局 (上游直接 memcpy)。
@@ -193,7 +193,10 @@ struct HuffTable {
 	}
 };
 
-// エントロピー用ビットリーダ (JPEG 由来: 0xFF00 バイトスタッフを解除)
+// Bit reader for the entropy stream.
+// AMV entropy has no JPEG byte stuffing: 0xFF is a plain data byte, and
+// 0xFF 0x00 is two data bytes. Do not unstuff. Real files (RIDDLE JOKER and
+// the wamsoft SDK samples) are consumed exactly only with this rule.
 struct BitReader {
 	const tjs_uint8 *p, *end;
 	tjs_uint32 acc;   // 現在のバイトのビット
@@ -207,13 +210,7 @@ struct BitReader {
 				failed = true;
 				return 0;
 			}
-			tjs_uint8 b = *p++;
-			if (b == 0xFF) {
-				// 0xFF00 は literal 0xFF。その他の marker は壊れた熵流。
-				if (p < end && *p == 0x00) p++;
-				else failed = true;
-			}
-			acc = b; cnt = 8;
+			acc = *p++; cnt = 8;
 		}
 		cnt--;
 		return (acc >> cnt) & 1;

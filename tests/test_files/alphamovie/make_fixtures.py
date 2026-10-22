@@ -52,17 +52,11 @@ def dc_block(diff, table, eob):
     return dc_bits(diff, table) + eob
 
 
-def stuff(bitstr):
-    """位串 → 字节，0xFF 后插入 0x00 (JPEG byte stuffing)。"""
+def pack(bitstr):
+    """位串 → 字节。AMV 熵流不做 JPEG byte stuffing，0xFF 原样写出。"""
     pad = (8 - len(bitstr) % 8) % 8
-    bitstr += "1" * pad  # 与标准编码器一致的填充（解码端到标记即停）
-    out = bytearray()
-    for i in range(0, len(bitstr), 8):
-        b = int(bitstr[i:i + 8], 2)
-        out.append(b)
-        if b == 0xFF:
-            out.append(0x00)
-    return bytes(out)
+    bitstr += "1" * pad
+    return bytes(int(bitstr[i:i + 8], 2) for i in range(0, len(bitstr), 8))
 
 
 def encode_frame_jpeg(frame_num, left, top, w, h, y_values, a_values,
@@ -81,7 +75,7 @@ def encode_frame_jpeg(frame_num, left, top, w, h, y_values, a_values,
     for v in a_values:                                  # A (继续共享同一 luma 预测子)
         bits += dc_block(v - pred, DC_LUMA, EOB_LUMA)
         pred = v
-    entropy = stuff(bits)
+    entropy = pack(bits)
     header = b"FRAM" + struct.pack("<IIhhHH", 12 + len(entropy), frame_num,
                                     left, top, w, h)
     return header + entropy
@@ -97,7 +91,7 @@ def encode_frame_zlib(frame_num, left, top, w, h, y_values, alpha_plane,
     for v in y_values:
         bits += dc_block(v - prev, DC_LUMA, EOB_LUMA)
         prev = v
-    color = stuff(bits)
+    color = pack(bits)
     alpha_z = zlib.compress(bytes(alpha_plane), 6)
     size = 16 + len(alpha_z) + len(color)
     header = b"FRAM" + struct.pack("<IIhhHHI", size, frame_num, left, top,
