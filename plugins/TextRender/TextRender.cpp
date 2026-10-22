@@ -1,3 +1,20 @@
+/**
+ * @file      textrender.cc
+ * @author    Hikaru Terazono (3c1u) <3c1u@vulpesgames.tokyo>
+ * @brief     Drop-in replacement for TextRender.dll.
+ * @date      2020-08-16
+ *
+ * @copyright Copyright (c) 2020 Hikaru Terazono. All rights reserved.
+ *
+ */
+
+// Source: https://github.com/3c1u/TextRender (commit 2fe2957), dual-licensed
+// MIT or Apache-2.0. Yoghourt uses it under the MIT License; the full text is
+// in docs/TEXTRENDER_LICENSE.txt. The upstream is a work in progress, not the
+// original TextRender.dll. Yoghourt changes: original lowercase setDefault
+// keys, align/valign, and the %; reset code. Known gaps: see the Sbectrum
+// feature for TextRender.
+
 #include "ncbind.hpp"
 
 #include <spdlog/spdlog.h>
