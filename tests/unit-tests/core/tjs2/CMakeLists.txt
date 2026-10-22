@@ -3,6 +3,7 @@ project(TestTjs2 LANGUAGES CXX)
 
 set(SOURCES
         tjs.cpp
+        tjsDebugThreads.cpp
         tjsString.cpp
 )
 

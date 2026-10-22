@@ -15,6 +15,7 @@
 #include "tjsHashSearch.h"
 #include "tjsInterCodeGen.h"
 #include "tjsGlobalStringMap.h"
+#include <mutex>
 
 namespace TJS {
 
@@ -140,6 +141,14 @@ namespace TJS {
     class tTJSObjectHashMap;
 
     tTJSObjectHashMap *TJSObjectHashMap;
+
+    // Worker threads run TJS too (for example the xp3filter.tjs decoder on
+    // the sound decode thread). Every engine adds its objects to the same
+    // hash map and changes the same reference counts, so this lock guards
+    // the hash map, its log and the reference counts of both registries.
+    // It is recursive because a warning can print while the lock is held.
+    static std::recursive_mutex TJSDebugRegistryMutex;
+    typedef std::lock_guard<std::recursive_mutex> tTJSDebugRegistryLock;
 
     class tTJSObjectHashMap {
         typedef tTJSHashTable<void *, tTJSObjectHashMapRecord,
@@ -388,10 +397,14 @@ namespace TJS {
     };
 
     //---------------------------------------------------------------------------
-    void TJSAddRefObjectHashMap() { tTJSObjectHashMap::AddRef(); }
+    void TJSAddRefObjectHashMap() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
+        tTJSObjectHashMap::AddRef(); }
 
     //---------------------------------------------------------------------------
-    void TJSReleaseObjectHashMap() { tTJSObjectHashMap::Release(); }
+    void TJSReleaseObjectHashMap() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
+        tTJSObjectHashMap::Release(); }
 
     //---------------------------------------------------------------------------
     void TJSAddObjectHashRecord(void *object) {
@@ -414,6 +427,7 @@ namespace TJS {
         static ttstr InitialType(TJS_W("unknown type"));
         rec.Type = InitialType;
 
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap) {
             TJSObjectHashMap->Add(object, rec);
         } else if(TJSObjectHashMapLog) {
@@ -425,6 +439,7 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     void TJSRemoveObjectHashRecord(void *object) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap) {
             TJSObjectHashMap->Remove(object);
         } else if(TJSObjectHashMapLog) {
@@ -435,6 +450,7 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     void TJSObjectHashSetType(void *object, const ttstr &type) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap) {
             TJSObjectHashMap->SetType(object, type);
         } else if(TJSObjectHashMapLog) {
@@ -447,6 +463,7 @@ namespace TJS {
     //---------------------------------------------------------------------------
     void TJSSetObjectHashFlag(void *object, tjs_uint32 flags_to_change,
                               tjs_uint32 bits) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap) {
             TJSObjectHashMap->SetFlag(object, flags_to_change, bits);
         } else if(TJSObjectHashMapLog) {
@@ -459,12 +476,14 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     void TJSReportAllUnfreedObjects(iTJSConsoleOutput *output) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap)
             TJSObjectHashMap->ReportAllUnfreedObjects(output);
     }
 
     //---------------------------------------------------------------------------
     bool TJSObjectHashAnyUnfreed() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap)
             return TJSObjectHashMap->AnyUnfreed();
         return false;
@@ -472,6 +491,7 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     void TJSObjectHashMapSetLog(tTJSBinaryStream *stream) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         // Set log object. The log file object should not freed until
         // the program (the program is the Process, not RTL nor TJS2
         // framework).
@@ -482,24 +502,28 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     void TJSWriteAllUnfreedObjectsToLog() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap && TJSObjectHashMapLog)
             TJSObjectHashMap->WriteAllUnfreedObjectsToLog();
     }
 
     //---------------------------------------------------------------------------
     void TJSWarnIfObjectIsDeleting(iTJSConsoleOutput *output, void *object) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap)
             TJSObjectHashMap->WarnIfObjectIsDeleting(output, object);
     }
 
     //---------------------------------------------------------------------------
     void TJSReplayObjectHashMapLog() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap && TJSObjectHashMapLog)
             TJSObjectHashMap->ReplayLog();
     }
 
     //---------------------------------------------------------------------------
     ttstr TJSGetObjectTypeInfo(void *object) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap)
             return TJSObjectHashMap->GetType(object);
         return {};
@@ -507,6 +531,7 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     tjs_uint32 TJSGetObjectHashCheckFlag(void *object) {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
         if(TJSObjectHashMap)
             return TJSObjectHashMap->GetFlag(object);
         return 0;
@@ -562,7 +587,9 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     class tTJSStackTracer {
-        std::vector<tTJSStackRecord> Stack;
+        // A call stack belongs to one thread. Worker threads that run TJS
+        // (see TJSDebugRegistryMutex) keep their own stack here.
+        static thread_local std::vector<tTJSStackRecord> Stack;
 
         tjs_int RefCount;
 
@@ -656,11 +683,17 @@ namespace TJS {
         }
     };
 
-    //---------------------------------------------------------------------------
-    void TJSAddRefStackTracer() { tTJSStackTracer::AddRef(); }
+    thread_local std::vector<tTJSStackRecord> tTJSStackTracer::Stack;
 
     //---------------------------------------------------------------------------
-    void TJSReleaseStackTracer() { tTJSStackTracer::Release(); }
+    void TJSAddRefStackTracer() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
+        tTJSStackTracer::AddRef(); }
+
+    //---------------------------------------------------------------------------
+    void TJSReleaseStackTracer() {
+        tTJSDebugRegistryLock lock(TJSDebugRegistryMutex);
+        tTJSStackTracer::Release(); }
 
     //---------------------------------------------------------------------------
     void TJSStackTracerPush(tTJSInterCodeContext *context, bool in_try) {

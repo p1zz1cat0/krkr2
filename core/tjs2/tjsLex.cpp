@@ -18,6 +18,7 @@
 #include "tjsCompileControl.h"
 #include "tjsScriptBlock.h"
 #include "tjsObject.h"
+#include <mutex>
 
 namespace TJS {
 
@@ -887,9 +888,14 @@ namespace TJS {
     static tTJSCustomObject *TJSReservedWordHash = nullptr;
     static bool TJSReservedWordHashInit = false;
     static tjs_int TJSReservedWordHashRefCount;
+    // All engines share this table, and the xp3filter.tjs engine compiles
+    // on worker threads. A hit in tTJSCustomObject::Find can move the
+    // symbol to the front of its chain, so a lookup also changes the table.
+    static std::mutex TJSReservedWordHashMutex;
 
     //---------------------------------------------------------------------------
     void TJSReservedWordsHashAddRef() {
+        std::lock_guard<std::mutex> lock(TJSReservedWordHashMutex);
         if(TJSReservedWordHashRefCount == 0) {
             TJSReservedWordHashInit = false;
             TJSReservedWordHash = new tTJSCustomObject();
@@ -899,6 +905,7 @@ namespace TJS {
 
     //---------------------------------------------------------------------------
     void TJSReservedWordsHashRelease() {
+        std::lock_guard<std::mutex> lock(TJSReservedWordHashMutex);
         TJSReservedWordHashRefCount--;
 
         if(TJSReservedWordHashRefCount == 0) {
@@ -919,6 +926,7 @@ namespace TJS {
     TJSRegisterReservedWordsHash(TJS_W(word), value)
 
     static void TJSInitReservedWordsHashTable() {
+        std::lock_guard<std::mutex> lock(TJSReservedWordHashMutex);
         if(TJSReservedWordHashInit)
             return;
         TJSReservedWordHashInit = true;
@@ -1531,11 +1539,13 @@ namespace TJS {
 
         tjs_int retnum;
 
-        if(BareWord)
+        if(BareWord) {
             retnum = -1;
-        else
+        } else {
+            std::lock_guard<std::mutex> lock(TJSReservedWordHashMutex);
             retnum = TJSReservedWordHash->GetValueInteger(str.c_str(),
                                                           str.GetHint());
+        }
 
         BareWord = false;
 
