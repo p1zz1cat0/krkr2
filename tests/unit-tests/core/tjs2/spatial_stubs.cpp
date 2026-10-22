@@ -28,6 +28,7 @@ extern "C" void YoghourtCursorTick() {}
 // 不链接插件库，PluginImpl.cpp 引用这些锚点时由本文件补全。
 extern "C" void TVPGetLangNamePluginAnchor() {}
 extern "C" void TVPShrinkCopyPluginAnchor() {}
+extern "C" void TVPWfTypicalDSPPluginAnchor() {}
 extern "C" void TVPLayerExRasterPluginAnchor() {}
 extern "C" void TVPLayerExAreaAveragePluginAnchor() {}
 extern "C" void TVPLayerExShimmerPluginAnchor() {}

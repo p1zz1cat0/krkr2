@@ -34,6 +34,7 @@
 // TVPLoadInternalPlugins() 调用这些锚点，强制链接器各保留一份注册单元。
 extern "C" void TVPGetLangNamePluginAnchor();
 extern "C" void TVPShrinkCopyPluginAnchor();
+extern "C" void TVPWfTypicalDSPPluginAnchor();
 extern "C" void TVPLayerExRasterPluginAnchor();
 extern "C" void TVPLayerExAreaAveragePluginAnchor();
 extern "C" void TVPLayerExShimmerPluginAnchor();
@@ -149,6 +150,7 @@ void TVPLoadInternalPlugins() {
     // 锚点：强制链接器保留 PRIVATE 的注册型插件翻译单元。
     TVPGetLangNamePluginAnchor();
     TVPShrinkCopyPluginAnchor();
+    TVPWfTypicalDSPPluginAnchor();
     TVPLayerExRasterPluginAnchor();
     TVPLayerExAreaAveragePluginAnchor();
     TVPLayerExShimmerPluginAnchor();

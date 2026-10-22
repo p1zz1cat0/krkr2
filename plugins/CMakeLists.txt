@@ -52,6 +52,7 @@ target_sources(${PROJECT_NAME} PRIVATE
 target_sources(${PROJECT_NAME} PRIVATE
     getLangName/getLangName.cpp
     shrinkCopy/shrinkCopy.cpp
+    wfTypicalDSP/wfTypicalDSP.cpp
     layerExRaster/layerExRaster.cpp
     layerExAreaAverage/layerExAreaAverage.cpp
     layerExShimmer/layerExShimmer.cpp
@@ -96,7 +97,20 @@ target_include_directories(${PROJECT_NAME} PUBLIC
     ${KRKR2PLUGIN_PATH}/simplebinder
     ${KRKR2PLUGIN_PATH}/xp3filter
 )
-target_link_libraries(${PROJECT_NAME} PUBLIC krkr2core)
+add_library(wfTypicalDSPFilters STATIC
+    wfTypicalDSP/DSPFilters/source/Biquad.cpp
+    wfTypicalDSP/DSPFilters/source/Butterworth.cpp
+    wfTypicalDSP/DSPFilters/source/Cascade.cpp
+    wfTypicalDSP/DSPFilters/source/Design.cpp
+    wfTypicalDSP/DSPFilters/source/Filter.cpp
+    wfTypicalDSP/DSPFilters/source/Param.cpp
+    wfTypicalDSP/DSPFilters/source/PoleFilter.cpp
+    wfTypicalDSP/DSPFilters/source/RootFinder.cpp
+    wfTypicalDSP/DSPFilters/source/State.cpp
+)
+target_include_directories(wfTypicalDSPFilters PUBLIC wfTypicalDSP/DSPFilters/include)
+set_target_properties(wfTypicalDSPFilters PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(${PROJECT_NAME} PUBLIC krkr2core wfTypicalDSPFilters)
 
 add_subdirectory(psdfile)
 add_subdirectory(psbfile)
