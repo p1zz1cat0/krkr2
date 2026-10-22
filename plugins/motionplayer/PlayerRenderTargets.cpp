@@ -344,8 +344,14 @@ namespace motion {
                         return alphaTest ? "AlphaBlend_color_a_AlphaTest"
                                          : "AlphaBlend_color_a";
                     }
-                    return alphaTest ? "AlphaBlend_color_AlphaTest"
-                                     : "AlphaBlend_color";
+                    // The target is straight alpha, cleared to A=0. Use the
+                    // "_d" variant that writes destination alpha, as the
+                    // software path does with bmAlphaOnAlpha. Plain
+                    // "AlphaBlend_color" keeps the destination alpha, so the
+                    // capture has A=0 and the layer is not visible (RIDDLE
+                    // JOKER logo and title art).
+                    return alphaTest ? "AlphaBlend_color_d_AlphaTest"
+                                     : "AlphaBlend_color_d";
             }
         }
 
