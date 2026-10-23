@@ -206,6 +206,168 @@ private:
     std::vector<float> ring_;
 };
 
+constexpr double Pi = 3.14159265358979323846;
+
+tjs_int Integer(const tTJSVariant &value) {
+    const auto result = pluginSafety::readBoundedInteger(value,
+        std::numeric_limits<tjs_int>::min(), std::numeric_limits<tjs_int>::max());
+    Require(static_cast<bool>(result));
+    return static_cast<tjs_int>(result.value);
+}
+
+class GainLimit : public WaveEffect {
+public:
+    GainLimit() { extendMs_ = 0; }
+    static tjs_error Create(GainLimit **result, tjs_int count, tTJSVariant **values, iTJSDispatch2 *) {
+        auto instance = std::make_unique<GainLimit>();
+        Init(nullptr, count, values, instance.get());
+        *result = instance.release();
+        return TJS_S_OK;
+    }
+    static tjs_error Init(tTJSVariant *result, tjs_int count, tTJSVariant **values, GainLimit *self) {
+        std::lock_guard<std::mutex> lock(self->mutex_);
+        if(count > 0) {
+            const float db = static_cast<float>(Real(*values[0], -120, 120));
+            const float threshold = count > 1 ? static_cast<float>(Real(*values[1], -16, 16)) : 1;
+            const auto mode = count > 2 ? Integer(*values[2]) : 0;
+            self->gain_ = static_cast<float>(std::pow(10.0, static_cast<double>(db / 20.0f)));
+            self->threshold_ = std::abs(threshold);
+            self->mode_ = mode;
+        }
+        if(result) result->Clear();
+        return TJS_S_OK;
+    }
+protected:
+    void Prepare(unsigned, unsigned) override {}
+    void ResetEffect() override {}
+    void ReleaseEffect() override {}
+    void Process(float &left, float &right) override { left = Apply(left); right = Apply(right); }
+private:
+    double Curve(double value) const {
+        switch(mode_) {
+        case 1: return value / (std::abs(value) + 1);
+        case 2: {
+            constexpr float halfPi = static_cast<float>(Pi / 2);
+            return std::atan(value * halfPi) / halfPi;
+        }
+        case 3: return value / std::hypot(value, 1.0);
+        default: return std::tanh(value);
+        }
+    }
+    float Apply(float sample) const {
+        // Use double intermediates to keep finite float input within range.
+        const double value = static_cast<double>(sample) * gain_;
+        if(mode_ == 0) return static_cast<float>(value);
+        if(mode_ < 1 || mode_ > 4 || threshold_ >= 1)
+            return static_cast<float>(std::clamp(value, -double(threshold_), double(threshold_)));
+        if(threshold_ < 0x1p-23f) return static_cast<float>(Curve(value));
+        const double excess = std::abs(value) - threshold_;
+        if(excess <= 0) return static_cast<float>(value);
+        const double room = 1.0 - threshold_;
+        return static_cast<float>(std::copysign(threshold_ + room * Curve(excess / room), value));
+    }
+    float gain_ = 1, threshold_ = 1;
+    tjs_int mode_ = 0;
+};
+
+class GraphicEqualizer : public WaveEffect {
+public:
+    GraphicEqualizer() { extendMs_ = 0; gains_.fill(1); }
+    static tjs_error Create(GraphicEqualizer **result, tjs_int count, tTJSVariant **values, iTJSDispatch2 *) {
+        auto instance = std::make_unique<GraphicEqualizer>();
+        for(tjs_int i = 0; i < count; ++i) {
+            const float gain = ReadGain(*values[i]);
+            if(i < 10) instance->gains_[i] = gain;
+        }
+        *result = instance.release();
+        return TJS_S_OK;
+    }
+    static tjs_error SetGain(tTJSVariant *result, tjs_int count, tTJSVariant **values, GraphicEqualizer *self) {
+        if(count < 2) return TJS_E_BADPARAMCOUNT;
+        const float gain = ReadGain(*values[1]);
+        const auto index = Integer(*values[0]);
+        std::lock_guard<std::mutex> lock(self->mutex_);
+        if(index >= 0 && index < 10) self->gains_[index] = gain;
+        if(result) result->Clear();
+        return TJS_S_OK;
+    }
+    static tjs_error GetGain(tTJSVariant *result, tjs_int count, tTJSVariant **values, GraphicEqualizer *self) {
+        if(count < 1) return TJS_E_BADPARAMCOUNT;
+        if(result) {
+            const auto index = Integer(*values[0]);
+            std::lock_guard<std::mutex> lock(self->mutex_);
+            *result = static_cast<double>(index >= 0 && index < 10 ? self->gains_[index] : 0);
+        }
+        return TJS_S_OK;
+    }
+protected:
+    void Prepare(unsigned rate, unsigned channels) override {
+        Require(rate > 32000);
+        constexpr double frequencies[] = {31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000};
+        std::array<Coefficient, 10> candidate{};
+        for(unsigned i = 0; i < candidate.size(); ++i) {
+            const bool middle = i > 0 && i < 9;
+            const double frequency = frequencies[i];
+            const double g = gains_[i];
+            const double t = static_cast<float>(std::tan((middle ? frequency * 2 / 3 : frequency) * Pi / rate));
+            const double a = g > 1 ? (t - 1) / (t + 1) :
+                i == 9 ? (g * t - 1) / (g * t + 1) : (t - g) / (t + g);
+            const double b = middle ? -std::cos(frequency * Pi / rate) * (1 - a) : 0;
+            auto &c = candidate[i];
+            c = {static_cast<float>(a), static_cast<float>(b), static_cast<float>((g - 1) / 2), g == 0};
+            Require(std::isfinite(c.a) && std::isfinite(c.b));
+            if(g != 0) {
+                Require(std::abs(c.a) < 1);
+                if(middle) Require(1.0 + c.b - c.a > 0 && 1.0 - c.b - c.a > 0);
+            }
+        }
+        coefficients_ = candidate;
+        channels_ = channels;
+        ResetEffect();
+    }
+    void Process(float &left, float &right) override {
+        left = Apply(left, histories_[0]);
+        if(channels_ == 2) right = Apply(right, histories_[1]);
+    }
+    void ResetEffect() override { histories_ = {}; }
+    void ReleaseEffect() override { ResetEffect(); channels_ = 0; }
+private:
+    struct Coefficient { float a = 0, b = 0, k = 0; bool zero = false; };
+    struct History { double s = 0, x1 = 0, x2 = 0, y1 = 0, y2 = 0; };
+    static float ReadGain(const tTJSVariant &value) {
+        const auto gain = static_cast<float>(Real(value, 0, 16));
+        Require(gain == 0 || gain >= 1.0f / 1024);
+        return gain;
+    }
+    float Apply(float input, std::array<History, 10> &history) const {
+        double output = 0;
+        for(unsigned i = 0; i < coefficients_.size(); ++i) {
+            const auto &c = coefficients_[i];
+            auto &h = history[i];
+            double allpass;
+            if(c.zero) {
+                // Cancel the marginal poles at zero gain before processing.
+                allpass = i == 0 ? input : -input;
+            } else if(i == 0 || i == 9) {
+                const double value = input - c.a * h.s;
+                allpass = c.a * value + h.s;
+                h.s = value;
+            } else {
+                allpass = ((-c.a * input + c.b * h.x1 + h.x2) - c.b * h.y1) + c.a * h.y2;
+                h.x2 = h.x1; h.x1 = input;
+                h.y2 = h.y1; h.y1 = allpass;
+            }
+            // Sum all ten branches. The sample has no unity normalization.
+            output += (i == 0 || i == 9 ? allpass + input : input - allpass) * c.k + input;
+        }
+        return static_cast<float>(output);
+    }
+    unsigned channels_ = 0;
+    std::array<float, 10> gains_{};
+    std::array<Coefficient, 10> coefficients_{};
+    std::array<std::array<History, 10>, 2> histories_{};
+};
+
 class StkFreeVerb : public WaveEffect {
 public:
     static tjs_error Create(StkFreeVerb **result, tjs_int count, tTJSVariant **values, iTJSDispatch2 *) {
@@ -292,6 +454,8 @@ void EnsureWaveSoundBuffer() {
 
 using basicEffect::DelayEffect;
 using basicEffect::StkFreeVerb;
+using basicEffect::GainLimit;
+using basicEffect::GraphicEqualizer;
 using basicEffect::EnsureWaveSoundBuffer;
 struct BasicEffectWaveOwner {};
 NCB_PRE_REGIST_CALLBACK(EnsureWaveSoundBuffer);
@@ -310,7 +474,20 @@ NCB_REGISTER_SUBCLASS(StkFreeVerb) {
     Property(TJS_W("mode"), &Class::GetMode, &Class::SetMode);
     Property(TJS_W("extend"), &Class::GetExtend, &Class::SetExtend);
 }
+NCB_REGISTER_SUBCLASS(GainLimit) {
+    Factory(&Class::Create);
+    Property(TJS_W("interface"), &Class::GetInterface, (int)0);
+    RawCallback(TJS_W("init"), &Class::Init, 0);
+}
+NCB_REGISTER_SUBCLASS(GraphicEqualizer) {
+    Factory(&Class::Create);
+    Property(TJS_W("interface"), &Class::GetInterface, (int)0);
+    RawCallback(TJS_W("setGain"), &Class::SetGain, 0);
+    RawCallback(TJS_W("getGain"), &Class::GetGain, 0);
+}
 NCB_ATTACH_CLASS(BasicEffectWaveOwner, WaveSoundBuffer) {
+    NCB_SUBCLASS(GainLimit, GainLimit);
+    NCB_SUBCLASS(GraphicEqualizer, GraphicEqualizer);
     NCB_SUBCLASS(DelayEffect, DelayEffect);
     NCB_SUBCLASS(StkFreeVerb, StkFreeVerb);
 }
