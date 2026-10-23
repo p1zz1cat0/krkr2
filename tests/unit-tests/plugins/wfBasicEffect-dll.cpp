@@ -380,3 +380,14 @@ TEST_CASE("GEQ handles zero gains and supported rate endpoints without marginal 
         REQUIRE(Render(filter, 999) == output);
     }
 }
+
+TEST_CASE("wfBasicEffect FreeVerb accepts the integer mode of game presets", "[plugin][audio]") {
+    // Preset Verb(0.30, 0.40, 0.15, 1.0, 0, 1000) from voice/rv_ライブハウス.ini.
+    tTJSVariant a(0.30), b(0.40), c(0.15), d(1.0), e(static_cast<tjs_int>(0)), f(static_cast<tjs_int>(1000));
+    tTJSVariant *values[] = {&a, &b, &c, &d, &e, &f};
+    basicEffect::StkFreeVerb *raw = nullptr;
+    REQUIRE(basicEffect::StkFreeVerb::Create(&raw, 6, values, nullptr) == TJS_S_OK);
+    std::unique_ptr<basicEffect::StkFreeVerb> filter(raw);
+    REQUIRE_FALSE(filter->GetMode());
+    REQUIRE(filter->GetExtend() == 1000);
+}

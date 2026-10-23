@@ -376,7 +376,9 @@ public:
         if(count > 1) instance->SetRoom(Real(*values[1], 0, 1));
         if(count > 2) instance->SetDamping(Real(*values[2], 0, 1));
         if(count > 3) instance->SetWidth(Real(*values[3], 0, 1));
-        if(count > 4) instance->SetMode(static_cast<bool>(*values[4]));
+        // Call operator bool directly. static_cast<bool> on a non-const
+        // variant selects operator iTJSDispatch2*, which throws for an int.
+        if(count > 4) instance->SetMode(values[4]->operator bool());
         if(count > 5) instance->SetExtend(Milliseconds(*values[5], MaxExtendMs));
         *result = instance.release();
         return TJS_S_OK;
