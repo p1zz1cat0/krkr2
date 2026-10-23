@@ -746,6 +746,12 @@ namespace motion::detail {
         int emptyDrawFrames = 0;
         const MotionSnapshot *emptyDrawWarnedMotion = nullptr;
         const MotionClip *emptyDrawWarnedClip = nullptr;
+        // Same diagnostic in the executor, plus missing source keys that
+        // already warned.
+        int executeEmptyFrames = 0;
+        const MotionSnapshot *executeEmptyWarnedMotion = nullptr;
+        const MotionClip *executeEmptyWarnedClip = nullptr;
+        std::unordered_set<std::string> emptyDrawMissingSources;
         std::string cachedParameterMotionPath;
         // Parameter-table ownership is (motion path, active clip). The table is
         // cached per clip so replaying another clip rebuilds its id/division/range axes.

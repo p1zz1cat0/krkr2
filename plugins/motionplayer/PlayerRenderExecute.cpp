@@ -2212,6 +2212,13 @@ namespace motion {
             return false;
         }
 
+        // Empty-draw diagnostic: why each item of this frame did not reach
+        // the target.
+        struct {
+            int opacity0 = 0, skipFlag = 0, clipEmpty = 0, preview = 0,
+                buildFail = 0, noSource = 0, meshInvalid = 0, noOutput = 0,
+                drawn = 0;
+        } skipCount;
         for(auto *itemPtr : executionItems) {
             if(!itemPtr) {
                 continue;
@@ -2224,20 +2231,20 @@ namespace motion {
             const auto opa =
                 static_cast<tjs_int>(std::clamp(item.opacity, 0, 255));
             if(opa <= 0) {
+                ++skipCount.opacity0;
                 continue;
             }
 
             // libkrkr2.so 0x6C7440 reads item+17/item+16 first, then updates
             // target Layer clip, and only then applies the preview item+18
             // gate.
-            if(item.skipFlag0) {
-                continue;
-            }
-            if(item.rawFlag16) {
+            if(item.skipFlag0 || item.rawFlag16) {
+                ++skipCount.skipFlag;
                 continue;
             }
             RenderClipRect targetLayerClip;
             if(!applyTargetLayerClipLike_0x6C7440(item, targetLayerClip)) {
+                ++skipCount.clipEmpty;
                 continue;
             }
             detail::logoChainTraceLogf(
@@ -2246,9 +2253,11 @@ namespace motion {
                 targetLayerClip.left, targetLayerClip.top,
                 targetLayerClip.right, targetLayerClip.bottom);
             if(_preview && item.skipFlag1) {
+                ++skipCount.preview;
                 continue;
             }
             if(!buildItemOutput(buildItemOutput, &item)) {
+                ++skipCount.buildFail;
                 continue;
             }
 
@@ -2257,6 +2266,19 @@ namespace motion {
                     auto source = resolveSourceObjectLike_0x6C1B70(item);
                     if(!source.bitmap || source.width <= 0 ||
                        source.height <= 0) {
+                        ++skipCount.noSource;
+                        // Warn one time for each missing source key.
+                        // ponytail: capped at 32 keys for each player.
+                        auto &warned = _runtime->emptyDrawMissingSources;
+                        if(warned.size() < 32 &&
+                           warned.insert(item.sourceKey).second) {
+                            LOGGER->warn(
+                                "emote.execute.source.miss path={} key={} "
+                                "node={} bitmap={} size={}x{}",
+                                motionPath, item.sourceKey, item.nodeIndex,
+                                source.bitmap ? 1 : 0, source.width,
+                                source.height);
+                        }
                         continue;
                     }
                     const tTVPRect sourceRect(0, 0, source.width,
@@ -2335,6 +2357,7 @@ namespace motion {
                     } else {
                         if(item.meshPoints.empty() || item.meshDivX < 2 ||
                            item.meshDivY < 2) {
+                            ++skipCount.meshInvalid;
                             continue;
                         }
                         auto worldMeshPoints =
@@ -2371,9 +2394,11 @@ namespace motion {
                                 "after");
 #endif
                         } else {
+                            ++skipCount.meshInvalid;
                             continue;
                         }
                     }
+                    ++skipCount.drawn;
                     detail::logoChainTraceLogf(
                         motionPath, "execute.copy", "0x6C7440",
                         _clampedEvalTime,
@@ -2415,6 +2440,7 @@ namespace motion {
                 auto *outputLayerObject = chooseItemOutputLayerObject(item);
                 auto *outputLayer = resolveNativeLayer(outputLayerObject);
                 if(!outputLayerObject || !outputLayer) {
+                    ++skipCount.noOutput;
                     continue;
                 }
 
@@ -2422,6 +2448,7 @@ namespace motion {
                 drawTargetLayer->OperateRect(
                     item.clipRect[0], item.clipRect[1],
                     outputLayer->GetMainImage(), localRect, blendMode, opa);
+                ++skipCount.drawn;
                 detail::logoChainTraceLogf(
                     motionPath, "execute.copy", "0x6C7440", _clampedEvalTime,
                     "branch={} nodeIndex={} clipRect=[{},{},{},{}] "
@@ -2483,6 +2510,35 @@ namespace motion {
                         "emote.execute copy failed node={} source={} error=unknown",
                         item.nodeIndex, item.sourceKey);
                 }
+            }
+        }
+
+        // Warn one time for each (motion, clip) when the executor puts
+        // nothing on the target for kEmptyDrawFrames frames in a row.
+        {
+            constexpr int kEmptyDrawFrames = 60;
+            const auto *motion = _runtime->activeMotion.get();
+            const auto *clip = _runtime->activeClip;
+            if(skipCount.drawn > 0) {
+                _runtime->executeEmptyFrames = 0;
+            } else if(++_runtime->executeEmptyFrames >= kEmptyDrawFrames &&
+                      (_runtime->executeEmptyWarnedMotion != motion ||
+                       _runtime->executeEmptyWarnedClip != clip)) {
+                _runtime->executeEmptyWarnedMotion = motion;
+                _runtime->executeEmptyWarnedClip = clip;
+                LOGGER->warn(
+                    "emote.execute.empty path={} clip={} frames={} items={} "
+                    "opacity0={} skipFlag={} clipEmpty={} preview={} "
+                    "buildFail={} noSource={} meshInvalid={} noOutput={} "
+                    "target={}x{} scratch={} time={:.2f}",
+                    motionPath, clip ? clip->label : std::string("<none>"),
+                    _runtime->executeEmptyFrames, executionItems.size(),
+                    skipCount.opacity0, skipCount.skipFlag,
+                    skipCount.clipEmpty, skipCount.preview,
+                    skipCount.buildFail, skipCount.noSource,
+                    skipCount.meshInvalid, skipCount.noOutput,
+                    renderLayer->GetWidth(), renderLayer->GetHeight(),
+                    graphScratchLayer ? 1 : 0, _clampedEvalTime);
             }
         }
 
