@@ -388,14 +388,24 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("flutter", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("flutter", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("flutter", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		// time (必須)
 		tTJSVariant tmp;
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("flutter", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// back (既定 0), slip (既定 8), alpha (既定 0xff)
 		tjs_uint32 back = 0;

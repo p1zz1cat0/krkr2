@@ -434,15 +434,23 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
-
-		tTJSVariant tmp;
+		extNagano::TraceTransitionStart("honeyturn", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("honeyturn", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("honeyturn", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		// time : 必須 ( 元コードも void なら失敗 )
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("honeyturn", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// size / twist / order / dir :
 		//   元 DLL (FUN_10006ec0) は size/twist/order を必須として読むが、
@@ -453,26 +461,15 @@ public:
 		tjs_int order = 2;  // 上->下
 		tjs_int dir   = 6;  // 右 ( 参考値・効果は近似 )
 
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("size"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 4, 4096);
-			if(!value) return TJS_E_FAIL;
-			size = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("twist"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, -4096, 4096);
-			if(!value) return TJS_E_FAIL;
-			twist = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("order"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 9);
-			if(!value) return TJS_E_FAIL;
-			order = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("dir"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 9);
-			if(!value) return TJS_E_FAIL;
-			dir = static_cast<tjs_int>(value.value);
-		}
+		tjs_int64 value = 0;
+		if(extNagano::ReadOptionNumber(options, TJS_W("size"), 4, 4096, &value))
+			size = static_cast<tjs_int>(value);
+		if(extNagano::ReadOptionNumber(options, TJS_W("twist"), -4096, 4096, &value))
+			twist = static_cast<tjs_int>(value);
+		if(extNagano::ReadOptionNumber(options, TJS_W("order"), 1, 9, &value))
+			order = static_cast<tjs_int>(value);
+		if(extNagano::ReadOptionNumber(options, TJS_W("dir"), 1, 9, &value))
+			dir = static_cast<tjs_int>(value);
 
 		pluginSafety::OperationBudget budget;
 		auto *created = new(std::nothrow) tTVPHoneyTurnTransHandler(

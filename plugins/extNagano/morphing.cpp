@@ -1,7 +1,7 @@
 #include "morphing.h"
 #include "common.h"
-#include <vector>
 #include <math.h>
+#include <vector>
 
 //---------------------------------------------------------------------------
 // morphing トランジション  (作者: ヤマモト)
@@ -322,10 +322,19 @@ static tjs_int ReadIntArray(iTVPSimpleOptionProvider *options,
 	// 要素数 ( Array.count )
 	tTJSVariant cntvar;
 	if(TJS_FAILED(arr->PropGet(0, TJS_W("count"), NULL, &cntvar, arr))) return -1;
-	const auto boundedCount = pluginSafety::readBoundedInteger(
-		cntvar, 0, extNagano::kMaxMorphElements);
-	if(!boundedCount) return -1;
-	tjs_int count = static_cast<tjs_int>(boundedCount.value);
+	if(cntvar.Type() != tvtInteger && cntvar.Type() != tvtReal) {
+		extNagano::TraceTransitionReject("morphing", "array count is not a number");
+		return -1;
+	}
+	const double rawCount = static_cast<double>(cntvar);
+	tjs_int count = static_cast<tjs_int>(rawCount);
+	if(count < 0) count = 0;
+	if(count > extNagano::kMaxMorphElements) {
+		extNagano::LogWarning(ttstr(TJS_W("morphing array is limited to ")) +
+		                       ttstr(extNagano::kMaxMorphElements) +
+		                       TJS_W(" elements"));
+		count = extNagano::kMaxMorphElements;
+	}
 
 	out.clear();
 	const auto bytes = pluginSafety::checkedElementBytes(
@@ -341,11 +350,15 @@ static tjs_int ReadIntArray(iTVPSimpleOptionProvider *options,
 	{
 		tTJSVariant e;
 		if(TJS_FAILED(arr->PropGetByNum(0, i, &e, arr))) return -1;
-		const auto coordinate = pluginSafety::readBoundedInteger(
-			e, -extNagano::kMaxMorphCoordinate,
-			extNagano::kMaxMorphCoordinate);
-		if(!coordinate) return -1;
-		out.push_back(static_cast<tjs_int>(coordinate.value));
+		const double raw = (e.Type() == tvtInteger || e.Type() == tvtReal)
+			? static_cast<double>(e) : 0.0;
+		if(e.Type() != tvtInteger && e.Type() != tvtReal) {
+			extNagano::TraceTransitionReject("morphing", "array element is not a number");
+			return -1;
+		}
+		const double limit = static_cast<double>(extNagano::kMaxMorphCoordinate);
+		const double clamped = raw < -limit ? -limit : (raw > limit ? limit : raw);
+		out.push_back(static_cast<tjs_int>(std::llround(clamped)));
 	}
 	return count;
 }
@@ -380,14 +393,24 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("morphing", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("morphing", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("morphing", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		// time
 		tTJSVariant tmp;
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("morphing", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// before / after 配列 (※ 実キーは "before"。仕様書の "befor" は誤記)
 		pluginSafety::OperationBudget operationBudget;

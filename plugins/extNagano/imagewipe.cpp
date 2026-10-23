@@ -291,12 +291,22 @@ public:
 		if(updatetype) *updatetype = tutDivisibleFade; // *param_10 = 0
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("imagewipe", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("imagewipe", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("imagewipe", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("imagewipe", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		iTVPScanLineProvider *scpro =
 			extNagano::CreateRuleProvider(options, imagepro, src1h);
@@ -304,13 +314,9 @@ public:
 
 		// dir (既定 0)
 		tjs_int dir = 0;
-		tTJSVariant dirvar;
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("dir"), &dirvar)) &&
-		   dirvar.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(dirvar, 0, 1);
-			if(!value) { scpro->Release(); return TJS_E_FAIL; }
-			dir = static_cast<tjs_int>(value.value);
-		}
+		tjs_int64 dirValue = 0;
+		if(extNagano::ReadOptionNumber(options, TJS_W("dir"), 0, 1, &dirValue))
+			dir = static_cast<tjs_int>(dirValue);
 
 		pluginSafety::OperationBudget budget;
 		auto *created = new(std::nothrow) tTVPImageWipeTransHandler(

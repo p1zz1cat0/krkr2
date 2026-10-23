@@ -377,14 +377,24 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("book", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("book", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("book", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		// time (必須)
 		tTJSVariant tmp;
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("book", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// dir (省略時は -1 = ランダム)
 		tjs_int dir = -1;

@@ -560,12 +560,22 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("3duniversal", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("3duniversal", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("3duniversal", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("3duniversal", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// type: "HSB" のとき HSB、それ以外(既定)は RGB
 		bool hsb = false;

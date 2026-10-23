@@ -574,14 +574,23 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("multiripple", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("multiripple", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("multiripple", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		// time は必須
-		tTJSVariant tmp;
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("multiripple", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// 以降は任意 ( 既定値は元 DLL では x87 経由で不明瞭なため妥当値を採用 )
 		tjs_int count     = 1;
@@ -591,36 +600,20 @@ public:
 		float   roundness = 1.0f;
 		double  delaylast = 1.0;
 
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("count"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 20);
-			if(!value) return TJS_E_FAIL;
-			count = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("wavecount"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 256);
-			if(!value) return TJS_E_FAIL;
-			wavecount = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("rwidth"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 1, 4096);
-			if(!value) return TJS_E_FAIL;
-			rwidth = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("maxdrift"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readBoundedInteger(tmp, 0, 4096);
-			if(!value) return TJS_E_FAIL;
-			maxdrift = static_cast<tjs_int>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("roundness"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readFiniteReal(tmp, 0.01, 16.0);
-			if(!value) return TJS_E_FAIL;
-			roundness = static_cast<float>(value.value);
-		}
-		if(TJS_SUCCEEDED(options->GetValue(TJS_W("delaylast"), &tmp)) && tmp.Type() != tvtVoid) {
-			const auto value = pluginSafety::readFiniteReal(tmp, 0.0, 20.0);
-			if(!value) return TJS_E_FAIL;
-			delaylast = value.value;
-		}
+		tjs_int64 value = 0;
+		if(extNagano::ReadOptionNumber(options, TJS_W("count"), 1, 20, &value))
+			count = static_cast<tjs_int>(value);
+		if(extNagano::ReadOptionNumber(options, TJS_W("wavecount"), 1, 256, &value))
+			wavecount = static_cast<tjs_int>(value);
+		if(extNagano::ReadOptionNumber(options, TJS_W("rwidth"), 1, 4096, &value))
+			rwidth = static_cast<tjs_int>(value);
+		if(extNagano::ReadOptionNumber(options, TJS_W("maxdrift"), 0, 4096, &value))
+			maxdrift = static_cast<tjs_int>(value);
+		double real = 0;
+		if(extNagano::ReadOptionReal(options, TJS_W("roundness"), 0.01, 16.0, &real))
+			roundness = static_cast<float>(real);
+		if(extNagano::ReadOptionReal(options, TJS_W("delaylast"), 0.0, 20.0, &real))
+			delaylast = real;
 
 		const auto travel = pluginSafety::checkedMultiply(
 			static_cast<size_t>(rwidth), static_cast<size_t>(wavecount));

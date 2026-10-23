@@ -67,8 +67,7 @@ tjs_error TJS_INTF_METHOD tTVPScanLineTransHandler::EndProcess()
 {
 	if(CurPos == Width) return TJS_S_FALSE; // 終了
 	return TJS_S_TRUE;
-}
-//---------------------------------------------------------------------------
+}//---------------------------------------------------------------------------
 tjs_error TJS_INTF_METHOD tTVPScanLineTransHandler::Process(tTVPDivisibleData *data)
 {
 	tjs_int pos = CurPos;
@@ -145,13 +144,23 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("scanline", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("scanline", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("scanline", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		tTJSVariant tmp;
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("scanline", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		*handler = new tTVPScanLineTransHandler(time, src1w, src1h);
 		return TJS_S_OK;

@@ -250,15 +250,25 @@ public:
 		if(updatetype) *updatetype = tutDivisible;
 		if(!handler) return TJS_E_FAIL;
 		if(!options) return TJS_E_FAIL;
-		if(src1w != src2w || src1h != src2h) return TJS_E_FAIL;
-		if(!extNagano::CheckImageSize(src1w, src1h)) return TJS_E_FAIL;
+		extNagano::TraceTransitionStart("zoomfade", options);
+		if(src1w != src2w || src1h != src2h) {
+			extNagano::TraceTransitionReject("zoomfade", "source and destination sizes differ");
+			return TJS_E_FAIL;
+		}
+		if(!extNagano::CheckImageSize(src1w, src1h)) {
+			extNagano::TraceTransitionReject("zoomfade", "image size exceeds the resource budget");
+			return TJS_E_FAIL;
+		}
 
 		tTJSVariant tmp;
 
 		// time は必須
 		bool timeOk = false;
 		tjs_uint64 time = extNagano::ReadRequiredTime(options, &timeOk);
-		if(!timeOk) return TJS_E_FAIL;
+		if(!timeOk) {
+			extNagano::TraceTransitionReject("zoomfade", "time option is missing or not a number");
+			return TJS_E_FAIL;
+		}
 
 		// zoom1 / zoom2 は任意。既定値は元DLL より zoom1=100(%), zoom2=200(%)。
 		tjs_int zoom1 = 100;  // 元画像の目標ズーム値 (FUN_10019190 の 0x64)

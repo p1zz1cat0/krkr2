@@ -110,9 +110,34 @@ var driveTransitions = function() {
     if (effectIndex >= effects.count && (frameCount % 3) == 2) {
         System.removeContinuousHandler(driveTransitions);
         destination.stopTransition();
+        verifyLenientOptions();
         pluginSmokePass("extNagano.dll");
         testWindow.visible = false;
         System.exit(0);
     }
 };
+
+// Games scale and compute transition options in script, so a duration or a
+// size often arrives as a real number or beyond the documented range. Those
+// requests must still start a transition.
+var expectTransition = function(name, options) {
+    var failure = null;
+    try {
+        destination.beginTransition(name, false, source, options);
+    } catch (e) {
+        failure = e;
+    }
+    destination.stopTransition();
+    pluginAssertEqual(name + " accepted", null, failure);
+};
+
+var verifyLenientOptions = function() {
+    expectTransition("scanline", %[time: 80.0]);
+    expectTransition("honeyturn", %[time: 80.0, size: 40.0, twist: 3.0, order: 9.5]);
+    expectTransition("honeyturn", %[time: 80, size: 40, order: 99, dir: -3]);
+    expectTransition("multiripple", %[time: 80, count: 20.0, rwidth: 20.0,
+        wavecount: 1.0, maxdrift: 32.0, delaylast: 1.5, roundness: 1]);
+    expectTransition("imagewipe", %[time: 80, rule: rule, dir: 0.0]);
+};
+
 System.addContinuousHandler(driveTransitions);
