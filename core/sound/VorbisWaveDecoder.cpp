@@ -9,6 +9,7 @@
 #include "StorageIntf.h"
 #include "DebugIntf.h"
 #include <algorithm>
+#include <vector>
 
 static const bool FloatExtraction =
     false; // true if output format is IEEE 32-bit float
@@ -320,6 +321,9 @@ class OpusWaveDecoder : public tTVPWaveDecoder // decoder interface
     tTVPWaveFormat Format; // output PCM format
     opus_int16 *Buffer, *pBuffer;
     int BufferRemain; // in samples
+    int SourceChannels = 0; // channels in the stream before the stereo mix
+    bool Multitrack = false; // mapping family 255: pairs of channels are tracks
+    std::vector<opus_int16> TrackBuffer; // all channels of one multitrack read
 
 private:
     int static read_func(void *datasource, unsigned char *ptr, int size) {
@@ -386,6 +390,22 @@ public:
         }
     }
 
+    // Read decoded PCM in the Format.Channels layout. bufsize is in values,
+    // the result is in samples per channel (as op_read).
+    int ReadPcm(opus_int16 *buf, int bufsize) {
+        if(SourceChannels <= 2)
+            return op_read(InputFile, buf, bufsize, nullptr);
+        if(!Multitrack)
+            return op_read_stereo(InputFile, buf, bufsize);
+        const int frames = std::min(bufsize / 2, 5760);
+        TrackBuffer.resize(static_cast<size_t>(frames) * SourceChannels);
+        const int res = op_read(InputFile, TrackBuffer.data(),
+                                frames * SourceChannels, nullptr);
+        if(res > 0)
+            TVPMixTrackPairsToStereo(TrackBuffer.data(), res, SourceChannels, buf);
+        return res;
+    }
+
     int BufferRead(opus_int16 *buf, int samples_to_read) {
         int res = std::min(BufferRemain, samples_to_read);
         memcpy(buf, pBuffer, res * Format.Channels * sizeof(opus_int16));
@@ -414,11 +434,9 @@ public:
             if(pBuffer) {
                 res = BufferRead(buf, remain);
             } else if(remain >= 5760) {
-                res = op_read(InputFile, buf, remain * Format.Channels,
-                              nullptr); // decode via ov_read
+                res = ReadPcm(buf, remain * Format.Channels);
             } else {
-                res =
-                    op_read(InputFile, Buffer, 5760 * Format.Channels, nullptr);
+                res = ReadPcm(Buffer, 5760 * Format.Channels);
                 if(res > remain) {
                     memcpy(buf, Buffer,
                            remain * Format.Channels * sizeof(opus_int16));
@@ -479,7 +497,10 @@ public:
         // set Format up
         Format.BitsPerSample = 16;
         Format.BytesPerSample = Format.BitsPerSample / 8;
-        Format.Channels = op_channel_count(InputFile, -1);
+        SourceChannels = op_channel_count(InputFile, -1);
+        Multitrack = op_head(InputFile, -1)->mapping_family == 255;
+        // The audio output takes 1 or 2 channels. Mix more channels to stereo.
+        Format.Channels = std::min(SourceChannels, 2);
         Format.IsFloat = false;
         Format.SamplesPerSec = 48000;
         Format.Seekable = op_seekable(InputFile) ? 0 : 2;

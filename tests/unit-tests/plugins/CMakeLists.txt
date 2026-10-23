@@ -21,6 +21,7 @@ set(SOURCES
         lzfs-dll.cpp
         json-dll.cpp
         multiimage-dll.cpp
+        opus-multitrack.cpp
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")

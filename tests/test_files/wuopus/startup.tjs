@@ -2,6 +2,7 @@
 // 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
 // 断言：本构建不携带 wuopus.dll 文件。Plugins.link 必须成功，
 // Plugins.CanLoadPlugin 必须为 true。旧脚本用这个结果选分支。
+// 多轨 Opus 由核心解码，并混成立体声。
 Scripts.execStorage("../common/plugin_assert.tjs");
 
 // CanLoadPlugin 由 PackinOne 模块附在 Plugins 上。先链接它，再探测。
@@ -9,6 +10,20 @@ Plugins.link("PackinOne.dll");
 Plugins.link("wuopus.dll");
 pluginAssertTrue("CanLoadPlugin reports wuopus",
     Plugins.CanLoadPlugin("wuopus.dll"));
+
+// Multitrack Opus (mapping family 255, 4 channels) opens through the core
+// Opus decoder and plays as stereo. Before bug 0037 it went to FFmpeg and
+// crashed in seek, and the 4 channel output failed in the sound buffer.
+var wsb = new WaveSoundBuffer(null);
+wsb.open("multitrack.opus");
+pluginAssertEqual("multitrack opus mixed to stereo", 2, wsb.channels);
+pluginAssertEqual("multitrack opus frequency", 48000, wsb.frequency);
+wsb.samplePosition = 48000;
+wsb.play();
+wsb.samplePosition = 24000;
+pluginAssertTrue("multitrack opus seek while playing", wsb.samplePosition >= 0);
+wsb.stop();
+invalidate wsb;
 
 pluginSmokePass("wuopus.dll");
 System.exit(0);
