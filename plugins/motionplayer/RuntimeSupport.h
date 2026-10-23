@@ -741,6 +741,11 @@ namespace motion::detail {
         bool emoteFirstEvalDiagLogged = false;
         std::string emoteDiagMotionPath;
         std::string emoteDiagLoggedClip;
+        // Empty-draw diagnostic: count of top-level prepares in a row with no
+        // drawable item, and the (motion, clip) pair that already warned.
+        int emptyDrawFrames = 0;
+        const MotionSnapshot *emptyDrawWarnedMotion = nullptr;
+        const MotionClip *emptyDrawWarnedClip = nullptr;
         std::string cachedParameterMotionPath;
         // Parameter-table ownership is (motion path, active clip). The table is
         // cached per clip so replaying another clip rebuilds its id/division/range axes.

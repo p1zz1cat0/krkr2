@@ -1671,6 +1671,43 @@ namespace motion {
                     item.objTriPriority);
             }
         }
+        // Warn one time for each (motion, clip) when a top-level player has
+        // no drawable item for kEmptyDrawFrames prepares in a row. Child
+        // items are merged into the parent list, so child players are not
+        // counted. ponytail: texture misses are not seen here, because the
+        // draw routes load textures later.
+        if(_parentPlayer == nullptr) {
+            constexpr int kEmptyDrawFrames = 60;
+            int skipped = 0, transparent = 0, noSource = 0, drawable = 0;
+            for(const auto &item : _runtime->preparedRenderItems) {
+                if(item.skipFlag0 || item.rawFlag16)
+                    ++skipped;
+                else if(item.opacity <= 0)
+                    ++transparent;
+                else if(item.sourceKey.empty())
+                    ++noSource;
+                else
+                    ++drawable;
+            }
+            const auto *motion = _runtime->activeMotion.get();
+            const auto *clip = _runtime->activeClip;
+            if(drawable > 0) {
+                _runtime->emptyDrawFrames = 0;
+            } else if(++_runtime->emptyDrawFrames >= kEmptyDrawFrames &&
+                      (_runtime->emptyDrawWarnedMotion != motion ||
+                       _runtime->emptyDrawWarnedClip != clip)) {
+                _runtime->emptyDrawWarnedMotion = motion;
+                _runtime->emptyDrawWarnedClip = clip;
+                LOGGER->warn(
+                    "emote.empty.draw path={} clip={} frames={} items={} "
+                    "skip={} opacity0={} noSource={} nodes={} time={:.2f}",
+                    motionPath, clip ? clip->label : std::string("<none>"),
+                    _runtime->emptyDrawFrames,
+                    _runtime->preparedRenderItems.size(), skipped,
+                    transparent, noSource, _runtime->nodes.size(),
+                    _clampedEvalTime);
+            }
+        }
         _renderItemInheritedFlag18 = savedInheritedFlag18;
         const bool ok = !_runtime->preparedRenderItems.empty();
 #if defined(KRKR2_WASMTIME_HEADLESS)
