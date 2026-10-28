@@ -223,6 +223,8 @@ struct TextRenderOptions {
     const tjs_char *leading = TJS_W("\\$([{?‘“（〔［｛〈《「『【￥＄￡");
     bool ignoreDelay = false;
     bool widthTimeScale = false;
+    bool ignoreOverY = false; // keep lines below the box (ignore_over/ignore_overy)
+    bool ignoreXr = false;    // ignore %n
     // Auto-indent brackets. A close pairs with the open at the same index.
     ttstr begin = TJS_W("「『（‘“〔［｛〈《");
     ttstr end = TJS_W("」』）’”〕］｝〉》");
@@ -254,6 +256,9 @@ struct TextRenderOptions {
         getprop_ensure_deref(dict, end, AsStringNoAddRef());
         getprop_key_t(dict, "ignore_delay", ignoreDelay, static_cast<tjs_int>);
         getprop_key_t(dict, "width_time_scale", widthTimeScale, static_cast<tjs_int>);
+        getprop_key_t(dict, "ignore_over", ignoreOverY, static_cast<tjs_int>);
+        getprop_key_t(dict, "ignore_overy", ignoreOverY, static_cast<tjs_int>);
+        getprop_key_t(dict, "ignore_xr", ignoreXr, static_cast<tjs_int>);
     }
 
     static TextRenderState from(tTJSVariant t) {
@@ -414,7 +419,11 @@ public:
     void clear();
     void done();
 
-    void newline() { LOGGER->warn("no support newline"); }
+    void newline();
+    int calcLineOffset(int index);
+    int get_renderLines() const { return static_cast<int>(m_lines.size()); }
+    int get_maxScrollLine() const;
+    int get_maxScrollOffset() const { return m_boxHeight - m_bottom; }
 
     void resetFont();
     void resetStyle();
@@ -456,12 +465,11 @@ public:
         }
         m_state.renderDelay = value;
     }
-    property_accessor(renderLeft, int, m_x);
-    int get_renderRight() const { return m_x + m_boxWidth; }
-    void set_renderRight(int v) { m_boxWidth = v - m_x; };
-    property_accessor(renderTop, int, m_y);
-    int get_renderBottom() const { return m_y + m_boxHeight; }
-    void set_renderBottom(int v) { m_boxHeight = v - m_y; };
+    // Bounds of the rendered text. done() sets them.
+    property_accessor(renderLeft, int, m_left);
+    property_accessor(renderRight, int, m_right);
+    property_accessor(renderTop, int, m_top);
+    property_accessor(renderBottom, int, m_bottom);
     property_accessor(renderText, ttstr, m_state.renderText);
     int get_renderCount() const { return m_state.renderText.length(); }
     void set_renderCount(int v) { throw "avoid to set renderCount"; };
@@ -500,7 +508,21 @@ private:
     bool m_lineStart = true;   // render() start, or after LF
     int m_depth = 0;           // bracket depth; can go below 0
     tjs_char m_opener = 0;     // open bracket that set the indent
-    bool m_overflow = false;
+    bool m_stopped = false;    // a line did not fit; render() stops
+
+    // One record for each closed line. The open line starts at
+    // m_characters[m_lineFirst].
+    struct LineInfo {
+        int top;
+        int thickness; // largest font size in the line, no line spacing
+    };
+    std::vector<LineInfo> m_lines{};
+    size_t m_lineFirst = 0;
+    int m_left = 0;
+    int m_top = 0;
+    int m_right = 0;
+    int m_bottom = 0;
+    int m_shiftY = 0; // valign move of the glyphs
 
     bool m_vertical = false;
 
@@ -532,10 +554,12 @@ private:
 
     void pushCharacter(tjs_char ch);
     void pushGraphicalCharacter(ttstr const &graph);
-    void performLinebreak();
+    bool breakLine();
+    void commit(size_t first, size_t last);
     void flush(bool force = false);
     void updateFont();
     void applyAlignment();
+    void updateBounds();
 };
 
 enum TextRenderAlignment {
@@ -551,6 +575,120 @@ enum TextRenderMode {
 };
 
 // -------------------------------------------------------------------
+
+// std::sort of the MSVC library that textrender.dll uses (0x10019060,
+// feature 0015 REVERSE section 13). It is not stable: same-delay characters
+// of two `same` tracks can change order above 32 items, and scripts see
+// that order. libc++ std::sort gives a different order, so this is a port.
+template <class It, class Less>
+static void msvcMed3(It a, It b, It c, Less less) {
+    if(less(*b, *a)) std::iter_swap(a, b);
+    if(less(*c, *b)) {
+        std::iter_swap(b, c);
+        if(less(*b, *a)) std::iter_swap(a, b);
+    }
+}
+
+template <class It, class Less>
+static void msvcMedian(It first, It mid, It last, Less less) {
+    auto const count = last - first; // last is the last element
+    if(count > 40) {
+        auto const step = (count + 1) / 8;
+        msvcMed3(first, first + step, first + 2 * step, less);
+        msvcMed3(mid - step, mid, mid + step, less);
+        msvcMed3(last - 2 * step, last - step, last, less);
+        msvcMed3(first + step, mid, last - step, less);
+    } else {
+        msvcMed3(first, mid, last, less);
+    }
+}
+
+template <class It, class Less>
+static std::pair<It, It> msvcPartition(It first, It last, Less less) {
+    It mid = first + (last - first) / 2;
+    msvcMedian(first, mid, last - 1, less);
+    It pFirst = mid;
+    It pLast = pFirst + 1;
+    auto same = [&](It a, It b) { return !less(*a, *b) && !less(*b, *a); };
+    while(first < pFirst && same(pFirst - 1, pFirst)) --pFirst;
+    while(pLast < last && same(pLast, pFirst)) ++pLast;
+    It gFirst = pLast;
+    It gLast = pFirst;
+    for(;;) {
+        for(; gFirst < last; ++gFirst) {
+            if(less(*pFirst, *gFirst)) continue;
+            if(less(*gFirst, *pFirst)) break;
+            if(pLast != gFirst) std::iter_swap(pLast, gFirst);
+            ++pLast;
+        }
+        for(; first < gLast; --gLast) {
+            if(less(*(gLast - 1), *pFirst)) continue;
+            if(less(*pFirst, *(gLast - 1))) break;
+            if(--pFirst != gLast - 1) std::iter_swap(pFirst, gLast - 1);
+        }
+        if(gLast == first && gFirst == last) return {pFirst, pLast};
+        if(gLast == first) {
+            if(pLast != gFirst) std::iter_swap(pFirst, pLast);
+            ++pLast;
+            std::iter_swap(pFirst++, gFirst++);
+        } else if(gFirst == last) {
+            if(--gLast != --pFirst) std::iter_swap(gLast, pFirst);
+            std::iter_swap(pFirst, --pLast);
+        } else {
+            std::iter_swap(gFirst++, --gLast);
+        }
+    }
+}
+
+template <class It, class Less>
+static void msvcInsertion(It first, It last, Less less) {
+    if(first == last) return;
+    for(It next = first + 1; next != last; ++next) {
+        auto value = std::move(*next);
+        if(less(value, *first)) {
+            std::move_backward(first, next, next + 1);
+            *first = std::move(value);
+        } else {
+            It hole = next;
+            for(It prev = hole - 1; less(value, *prev); --prev) {
+                *hole = std::move(*prev);
+                hole = prev;
+            }
+            *hole = std::move(value);
+        }
+    }
+}
+
+template <class It, class Less>
+static void msvcSortRange(It first, It last, std::ptrdiff_t ideal, Less less) {
+    for(;;) {
+        if(last - first <= 32) {
+            msvcInsertion(first, last, less);
+            return;
+        }
+        if(ideal <= 0) {
+            // ponytail: libc++ heap order, not the MSVC one. Only an
+            // adversarial delay pattern gets here.
+            std::make_heap(first, last, less);
+            std::sort_heap(first, last, less);
+            return;
+        }
+        auto const mid = msvcPartition(first, last, less);
+        ideal = ideal / 2 + ideal / 4;
+        if(mid.first - first < last - mid.second) {
+            msvcSortRange(first, mid.first, ideal, less);
+            first = mid.second;
+        } else {
+            msvcSortRange(mid.second, last, ideal, less);
+            last = mid.first;
+        }
+    }
+}
+
+template <class It, class Less>
+static void msvcSort(It first, It last, Less less) {
+    msvcSortRange(first, last, last - first, less);
+}
 
 TextRenderBase::TextRenderBase() {}
 
@@ -625,16 +763,15 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
     m_lineStart = true;
     m_depth = 0;
     m_opener = 0;
+    m_stopped = false;
 
-    for(size_t i = 0; i < len; ++i) {
+    for(size_t i = 0; i < len && !m_stopped; ++i) {
         auto ch = text[i];
 
         switch(ch) {
             case '\n':
-                // Discard an incomplete ruby group before a line break.
-                discardRuby();
                 flush();
-                performLinebreak();
+                if(!m_stopped) breakLine();
                 m_lineStart = true;
                 break;
             case '%':
@@ -775,11 +912,11 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         else if(cursor > i + 1)
                             i = cursor - 1;
 
-                        if(linebreaks > 0) discardRuby();
+                        // Only a real LF is a line start for auto-indent.
+                        if(m_options.ignoreXr) break;
                         flush();
-                        if(linebreaks > 0) m_lineStart = true;
-                        for(int line = 0; line < linebreaks; ++line)
-                            performLinebreak();
+                        for(int line = 0; line < linebreaks && !m_stopped; ++line)
+                            breakLine();
 
                         break;
                     }
@@ -895,9 +1032,8 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
                 switch(ch) {
                     case 'n':
-                        discardRuby();
                         flush();
-                        performLinebreak();
+                        if(!m_stopped) breakLine();
                         break;
                     case 't':
                         pushCharacter('\t');
@@ -1052,21 +1188,63 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
     finishTiming(all);
 
-    if(m_y > m_boxHeight) {
-        m_overflow = true;
-        set_renderOver(true);
-    } else {
-        m_overflow = false;
-        set_renderOver(false);
-    }
-
-    return !m_overflow;
+    return !m_state.renderOver;
 }
 
-void TextRenderBase::performLinebreak() {
-    auto rasterizer = GetCurrentRasterizer();
+// Close the open line (textrender.dll 0x10011300). If the line goes below
+// the box, set renderOver. Without ignore_over, drop the glyphs of the line,
+// keep the pending ruby and stop render(). Else record the line, move the
+// pen to the next line and drop the pending ruby group.
+bool TextRenderBase::breakLine() {
+    int thickness = m_state.fontSize;
+    for(size_t i = m_lineFirst; i < m_characters.size(); ++i) {
+        thickness = std::max(thickness, m_characters[i].size);
+    }
+    if(m_boxHeight > 0 && m_boxHeight < m_y + thickness) {
+        m_state.renderOver = true;
+        if(!m_options.ignoreOverY) {
+            m_characters.erase(m_characters.begin() + m_lineFirst, m_characters.end());
+            m_alignedCount = std::min(m_alignedCount, m_characters.size());
+            m_x = m_indent;
+            m_stopped = true;
+            return false;
+        }
+    }
+    m_lines.push_back({m_y, thickness});
+    m_lineFirst = m_characters.size();
     m_x = m_indent;
-    m_y += rasterizer->GetAscentHeight() + m_state.lineSpacing;
+    m_y += thickness + m_state.lineSpacing;
+    discardRuby();
+    return true;
+}
+
+void TextRenderBase::newline() {
+    flush();
+    if(m_characters.size() > m_lineFirst) breakLine();
+}
+
+// Return the offset of a line. Out of range gives renderBottom.
+int TextRenderBase::calcLineOffset(int index) {
+    // textrender.dll terminates the process here (0xC0000417).
+    if(index < 0) {
+        TVPThrowExceptionMessage(TJS_W("TextRender: negative line index"));
+    }
+    // ponytail: horizontal only; the dll gives the box width for vertical
+    // text, add it when vertical layout exists.
+    return static_cast<size_t>(index) < m_lines.size() ? 0 : m_bottom;
+}
+
+// The first line to show so that the last lines fill the box.
+int TextRenderBase::get_maxScrollLine() const {
+    int rest = m_boxHeight;
+    for(size_t i = m_lines.size(); i > 0; --i) {
+        int const thickness = m_lines[i - 1].thickness;
+        if(rest <= thickness) {
+            return i == m_lines.size() ? 0 : static_cast<int>(i);
+        }
+        rest -= thickness;
+    }
+    return 0;
 }
 
 void TextRenderBase::pushGraphicalCharacter(ttstr const &graph) {
@@ -1282,6 +1460,13 @@ void TextRenderBase::emitCharacter(tjs_char ch, std::vector<RubyInfo> ruby, bool
     m_lineStart = false;
 }
 
+void TextRenderBase::commit(size_t first, size_t last) {
+    for(size_t i = first; i < last; ++i) {
+        m_characters.push_back(m_buffer[i]);
+        m_state.renderText += m_buffer[i].text;
+    }
+}
+
 void TextRenderBase::flush(bool force) {
     if(m_buffer.empty()) {
         return;
@@ -1293,8 +1478,10 @@ void TextRenderBase::flush(bool force) {
     // Keep indent changes local until the characters are placed. A retry
     // (flush(true) below) must start the new line at the old indent.
     auto indent = m_indent;
+    size_t placed = 0; // m_buffer before this index is committed
 
-    for(auto &ch : m_buffer) {
+    for(size_t k = 0; k < m_buffer.size(); ++k) {
+        auto &ch = m_buffer[k];
         auto advance_width = ch.cw;
         if(ch.hang) {
             x -= advance_width;
@@ -1303,12 +1490,21 @@ void TextRenderBase::flush(bool force) {
 
         if(m_boxWidth < new_x) {
             if(force) {
+                // The line thickness needs the glyphs of this line.
+                commit(placed, k);
+                placed = k;
                 m_indent = indent;
-                performLinebreak();
+                if(!breakLine()) {
+                    m_buffer.clear();
+                    return;
+                }
                 x = m_x;
                 new_x = advance_width + x + m_state.pitch;
             } else {
-                performLinebreak();
+                if(!breakLine()) {
+                    m_buffer.clear();
+                    return;
+                }
                 flush(true);
                 return;
             }
@@ -1326,12 +1522,9 @@ void TextRenderBase::flush(bool force) {
         }
     }
 
+    commit(placed, m_buffer.size());
     m_x = x;
     m_indent = indent;
-    m_characters.insert(m_characters.end(), m_buffer.begin(), m_buffer.end());
-    for(size_t i = 0; i < m_buffer.size(); i++) {
-        m_state.renderText += m_buffer.at(i).text;
-    }
     m_buffer.clear();
 }
 
@@ -1384,7 +1577,11 @@ void TextRenderBase::clear() {
 
     m_state = m_default;
     m_state.renderDelay = 0;
-    m_overflow = false;
+    m_stopped = false;
+    m_lines.clear();
+    m_lineFirst = 0;
+    m_left = m_top = m_right = m_bottom = 0;
+    m_shiftY = 0;
 
     m_x = 0;
     m_y = 0;
@@ -1413,11 +1610,15 @@ void TextRenderBase::updateFont() {
 void TextRenderBase::done() {
     dbg_print(TJS_W("flush character buffer"));
     flush();
+    // The dll closes the last line only if it holds glyphs. A pending ruby
+    // group alone stays for the next render().
+    if(m_characters.size() > m_lineFirst) breakLine();
     applyAlignment();
-    std::stable_sort(m_characters.begin(), m_characters.end(),
-                     [](CharacterInfo const &a, CharacterInfo const &b) {
-                         return a.delay < b.delay;
-                     });
+    updateBounds();
+    msvcSort(m_characters.begin(), m_characters.end(),
+             [](CharacterInfo const &a, CharacterInfo const &b) {
+                 return a.delay < b.delay;
+             });
 }
 
 // Move each line by its align value inside m_boxWidth, and move all lines by
@@ -1431,15 +1632,12 @@ void TextRenderBase::applyAlignment() {
         return;
     }
 
-    int textBottom = 0;
     for(size_t begin = first; begin < m_characters.size();) {
         size_t end = begin;
         int right = 0;
         while(end < m_characters.size() &&
               m_characters[end].y == m_characters[begin].y) {
             right = std::max(right, m_characters[end].x + m_characters[end].cw);
-            textBottom = std::max(textBottom,
-                                  m_characters[end].y + m_characters[end].size);
             ++end;
         }
 
@@ -1454,13 +1652,30 @@ void TextRenderBase::applyAlignment() {
         begin = end;
     }
 
-    if(m_default.valign != kTextRenderAlignmentLeft) {
-        int const space = m_boxHeight - textBottom;
+    if(m_default.valign != kTextRenderAlignmentLeft && !m_lines.empty()) {
+        int const space = m_boxHeight - (m_lines.back().top + m_lines.back().thickness);
         int const dy =
             m_default.valign == kTextRenderAlignmentCenter ? space / 2 : space;
         for(size_t i = first; i < m_characters.size(); ++i) {
             m_characters[i].y += dy;
         }
+        m_shiftY = dy;
+    }
+}
+
+// Set renderLeft/Top/Right/Bottom. Top and bottom come from the line
+// records (line spacing not included), moved by valign like the glyphs.
+void TextRenderBase::updateBounds() {
+    m_left = m_top = m_right = m_bottom = 0;
+    if(m_lines.empty()) {
+        return;
+    }
+    m_top = m_lines.front().top + m_shiftY;
+    m_bottom = m_lines.back().top + m_lines.back().thickness + m_shiftY;
+    for(size_t i = 0; i < m_characters.size(); ++i) {
+        auto const &ch = m_characters[i];
+        m_left = i == 0 ? ch.x : std::min(m_left, ch.x);
+        m_right = std::max(m_right, ch.x + ch.cw);
     }
 }
 
@@ -1530,6 +1745,10 @@ NCB_REGISTER_CLASS(TextRenderBase) {
     NCB_METHOD(clear);
     NCB_METHOD(done);
     NCB_METHOD(newline);
+    NCB_METHOD(calcLineOffset);
+    NCB_PROPERTY_RO(renderLines, get_renderLines);
+    NCB_PROPERTY_RO(maxScrollLine, get_maxScrollLine);
+    NCB_PROPERTY_RO(maxScrollOffset, get_maxScrollOffset);
 
     NCB_METHOD(resetFont);
     NCB_METHOD(resetStyle);
