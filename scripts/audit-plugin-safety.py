@@ -18,7 +18,8 @@ from pathlib import Path
 
 
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"}
-SKIP_PARTS = {".git", "out", "build", "external", "third_party", "third-party"}
+# "origin" holds local, git-ignored reverse-engineering material (see .gitignore).
+SKIP_PARTS = {".git", "out", "build", "external", "third_party", "third-party", "origin"}
 WAIVER_RE = re.compile(
     r"^\s*//\s*plugin-safety:\s*allow\s+(KPS\d{3})\s+--\s+(.+?)\s*$"
 )

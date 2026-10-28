@@ -218,8 +218,9 @@ struct TextRenderOptions {
         "%),:;]}????。，、．：；゛゜ヽヾゝゞ々’”）〕］｝〉》」』】°′″℃￠％‰　!."
         "?=?????????????？！ーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ");
     const tjs_char *leading = TJS_W("\\$([{?‘“（〔［｛〈《「『【￥＄￡");
-    const tjs_char *begin = TJS_W("「『（‘“〔［｛〈《");
-    const tjs_char *end = TJS_W("」』）’”〕］｝〉》");
+    // Auto-indent brackets. A close pairs with the open at the same index.
+    ttstr begin = TJS_W("「『（‘“〔［｛〈《");
+    ttstr end = TJS_W("」』）’”〕］｝〉》");
 
     // -------------------------------------------------------------- //
 
@@ -242,6 +243,10 @@ struct TextRenderOptions {
         if(!dict) {
             return;
         }
+
+        // The original replaces the whole set for each key.
+        getprop_ensure_deref(dict, begin, AsStringNoAddRef());
+        getprop_ensure_deref(dict, end, AsStringNoAddRef());
     }
 
     static TextRenderState from(tTJSVariant t) {
@@ -270,6 +275,12 @@ struct CharacterInfo {
     ttstr text = TJS_W("");
 
     int align = -1; // layout only; not given to the script
+
+    // Auto-indent actions. flush() does them when it places the character,
+    // because the indent is the cursor after the character.
+    bool hang = false;        // move back by cw before placing
+    bool setIndent = false;   // indent = cursor after this character
+    bool resetIndent = false; // indent = 0
 
     // -------------------------------------------------------------- //
 
@@ -423,10 +434,15 @@ private:
     int m_x = 0;
     int m_y = 0;
 
+    // m_indent stays after done(). The other auto-indent state is for one
+    // render() call only (textrender.dll keeps it in locals).
     int m_indent = 0;
     int m_autoIndent = 0;
+    bool m_renderStart = true; // no character yet in this render()
+    bool m_lineStart = true;   // render() start, or after LF
+    int m_depth = 0;           // bracket depth; can go below 0
+    tjs_char m_opener = 0;     // open bracket that set the indent
     bool m_overflow = false;
-    bool m_isBeginningOfLine = true;
 
     bool m_vertical = false;
 
@@ -512,10 +528,22 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
     auto const len = text.GetLen();
 
+    m_autoIndent = autoIndent;
+    m_renderStart = true;
+    m_lineStart = true;
+    m_depth = 0;
+    m_opener = 0;
+
     for(size_t i = 0; i < len; ++i) {
         auto ch = text[i];
 
         switch(ch) {
+            case '\n':
+                // A top-level LF is a line break. CR stays a character.
+                flush();
+                performLinebreak();
+                m_lineStart = true;
+                break;
             case '%':
                 if(!readchar(text, i, ch)) {
                     TVPThrowExceptionMessage(
@@ -949,7 +977,6 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 void TextRenderBase::performLinebreak() {
     auto rasterizer = GetCurrentRasterizer();
     m_x = m_indent;
-    m_isBeginningOfLine = true;
     m_y += rasterizer->GetAscentHeight() + m_state.lineSpacing;
 }
 
@@ -966,6 +993,16 @@ static bool findchInChars(const tjs_char *chz, tjs_char ch) {
     return false;
 }
 
+// Return the index of ch in chars, or -1.
+static int indexOfChar(ttstr const &chars, tjs_char ch) {
+    for(tjs_int i = 0, n = chars.GetLen(); i < n; i++) {
+        if(chars[i] == ch) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void TextRenderBase::pushCharacter(tjs_char ch) {
     if((0xD800 <= ch && ch <= 0xDBFF) /* upper surrogate-pair */
        || (0xDC00 <= ch && ch <= 0xDFFF) /* lower surrogate-pair */) {
@@ -974,9 +1011,6 @@ void TextRenderBase::pushCharacter(tjs_char ch) {
 
     auto isLeadingChar = findchInChars(m_options.leading, ch);
     auto isFollowingChar = findchInChars(m_options.following, ch);
-    auto isIndent = findchInChars(m_options.begin, ch);
-    auto isIndentDecr = findchInChars(m_options.end, ch);
-
     uint32_t current;
 
     if(isLeadingChar) {
@@ -1017,27 +1051,38 @@ void TextRenderBase::pushCharacter(tjs_char ch) {
         m_state.align,
     };
 
-    m_buffer.push_back(std::move(info));
-
-    if(m_autoIndent) {
-        // pre-indent
-        if(m_isBeginningOfLine && m_autoIndent < 0) {
-            m_x -= advance_width;
-        }
-
-        if(isIndent) {
-            m_indent = m_x + advance_width;
-            // TODO: register pair
-        }
-
-        if(isIndentDecr && m_indent > 0) {
-            flush(); // FIXME: not safe?
-            m_indent = 0;
+    // Auto-indent, as textrender.dll does it (feature 0015, REVERSE 10):
+    // - autoIndent < 0: the first character of render() hangs left when it
+    //   is an open bracket.
+    // - An open bracket at line start with depth 0 sets the indent.
+    // - A close bracket at depth 1 that pairs with that open clears it.
+    // - Each open adds 1 to depth and each close removes 1.
+    if(m_autoIndent != 0) {
+        int const open = indexOfChar(m_options.begin, ch);
+        if(open >= 0) {
+            info.hang = m_autoIndent < 0 && m_renderStart;
+            if(m_lineStart && m_depth == 0) {
+                info.setIndent = true;
+                m_opener = ch;
+            }
+            ++m_depth;
+        } else {
+            int const close = indexOfChar(m_options.end, ch);
+            if(close >= 0) {
+                if(m_depth == 1 && m_opener != 0 &&
+                   indexOfChar(m_options.begin, m_opener) == close) {
+                    info.resetIndent = true;
+                }
+                --m_depth;
+            }
         }
     }
 
+    m_buffer.push_back(std::move(info));
+
     m_mode = current;
-    m_isBeginningOfLine = false;
+    m_renderStart = false;
+    m_lineStart = false;
 }
 
 void TextRenderBase::flush(bool force) {
@@ -1048,13 +1093,20 @@ void TextRenderBase::flush(bool force) {
     // try place all characters in the same line
 
     auto x = m_x;
+    // Keep indent changes local until the characters are placed. A retry
+    // (flush(true) below) must start the new line at the old indent.
+    auto indent = m_indent;
 
     for(auto &ch : m_buffer) {
         auto advance_width = ch.cw;
+        if(ch.hang) {
+            x -= advance_width;
+        }
         auto new_x = advance_width + x + m_state.pitch;
 
         if(m_boxWidth < new_x) {
             if(force) {
+                m_indent = indent;
                 performLinebreak();
                 x = m_x;
                 new_x = advance_width + x + m_state.pitch;
@@ -1069,9 +1121,16 @@ void TextRenderBase::flush(bool force) {
         ch.y = m_y;
 
         x = new_x;
+        if(ch.setIndent) {
+            indent = x;
+        }
+        if(ch.resetIndent) {
+            indent = 0;
+        }
     }
 
     m_x = x;
+    m_indent = indent;
     m_characters.insert(m_characters.end(), m_buffer.begin(), m_buffer.end());
     for(size_t i = 0; i < m_buffer.size(); i++) {
         m_state.renderText += m_buffer.at(i).text;
@@ -1129,7 +1188,8 @@ void TextRenderBase::clear() {
     m_y = 0;
     m_indent = 0;
 
-    m_isBeginningOfLine = true;
+    m_renderStart = true;
+    m_lineStart = true;
 
     updateFont();
 }
