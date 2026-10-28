@@ -1118,10 +1118,9 @@ int TextRenderBase::measure(ttstr const &text, int size) {
     return width;
 }
 
+// Each UTF-16 code unit is one character, also a surrogate half
+// (textrender.dll does the same; see decision 0026).
 void TextRenderBase::pushCharacter(tjs_char ch) {
-    if((0xD800 <= ch && ch <= 0xDFFF)) {
-        TVPThrowExceptionMessage(TJS_W("unexpected character: surrogate pair"));
-    }
     if(m_pendingText.GetLen() == 0 && m_rubyText.GetLen() == 0 && m_rubyRemaining == 0) {
         emitCharacter(ch, {}, false);
         return;
@@ -1197,10 +1196,6 @@ void TextRenderBase::pushCharacter(tjs_char ch) {
 }
 
 void TextRenderBase::emitCharacter(tjs_char ch, std::vector<RubyInfo> ruby, bool rubyArray) {
-    if((0xD800 <= ch && ch <= 0xDBFF) /* upper surrogate-pair */
-       || (0xDC00 <= ch && ch <= 0xDFFF) /* lower surrogate-pair */) {
-        TVPThrowExceptionMessage(TJS_W("unexpected character: surrogate pair"));
-    }
 
     auto isLeadingChar = findchInChars(m_options.leading, ch);
     auto isFollowingChar = findchInChars(m_options.following, ch);
