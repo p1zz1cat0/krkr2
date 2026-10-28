@@ -129,6 +129,19 @@ spatial_dir="${YOGHOURT_SPATIAL_PRESENTER_DIR:-${repo_root:h:h}/RuntimeSupport/S
 relay_dir="${YOGHOURT_SURFACE_RELAY_DIR:-${repo_root:h:h}/RuntimeSupport/SurfaceRelay}"
 for configuration in debug release; do
   build_dir="$work_root_build/krkr2-gate/$configuration"
+  # Yoghourt runtime setup configures this tree from an archived source copy.
+  # CMake then refuses this source root. Drop the configuration, but keep
+  # vcpkg_installed (same as Yoghourt Scripts/bootstrap/common.sh).
+  cache="$build_dir/CMakeCache.txt"
+  if [[ -f "$cache" ]]; then
+    cached_source="$(sed -n 's/^CMAKE_HOME_DIRECTORY:INTERNAL=//p' "$cache" | head -n 1)"
+    if [[ "${cached_source:A}" != "${repo_root:A}" ]]; then
+      print "cmake-cache-invalidated=$build_dir (cached source ${cached_source:A} != ${repo_root:A})"
+      for entry in "$build_dir"/*(ND) "$build_dir"/.*(ND); do
+        [[ "${entry:t}" == vcpkg_installed ]] || rm -rf -- "$entry"
+      done
+    fi
+  fi
   run_logged "$configuration-configure" env VCPKG_ROOT="${VCPKG_ROOT:-}" \
     cmake -S "$repo_root" -B "$build_dir" -G Ninja \
       -DMACOS=ON \
