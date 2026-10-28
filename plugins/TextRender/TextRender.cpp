@@ -16,10 +16,13 @@
 // feature for TextRender.
 
 #include "ncbind.hpp"
+#include "common/PluginSafety.h"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 #define NCB_MODULE_NAME TJS_W("TextRender.dll")
 
@@ -138,7 +141,7 @@ struct TextRenderState {
     int valign = -1; // -1 top, 0 center, 1 bottom
 
     bool renderOver = false;
-    int renderDelay = 1000;
+    double renderDelay = 0;
     ttstr renderText = TJS_W("");
 
     // -------------------------------------------------------------- //
@@ -218,6 +221,8 @@ struct TextRenderOptions {
         "%),:;]}????。，、．：；゛゜ヽヾゝゞ々’”）〕］｝〉》」』】°′″℃￠％‰　!."
         "?=?????????????？！ーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ");
     const tjs_char *leading = TJS_W("\\$([{?‘“（〔［｛〈《「『【￥＄￡");
+    bool ignoreDelay = false;
+    bool widthTimeScale = false;
     // Auto-indent brackets. A close pairs with the open at the same index.
     ttstr begin = TJS_W("「『（‘“〔［｛〈《");
     ttstr end = TJS_W("」』）’”〕］｝〉》");
@@ -247,12 +252,32 @@ struct TextRenderOptions {
         // The original replaces the whole set for each key.
         getprop_ensure_deref(dict, begin, AsStringNoAddRef());
         getprop_ensure_deref(dict, end, AsStringNoAddRef());
+        getprop_key_t(dict, "ignore_delay", ignoreDelay, static_cast<tjs_int>);
+        getprop_key_t(dict, "width_time_scale", widthTimeScale, static_cast<tjs_int>);
     }
 
     static TextRenderState from(tTJSVariant t) {
         TextRenderState state{};
         state.deserialize(t);
         return state;
+    }
+};
+
+struct RubyInfo {
+    ttstr text;
+    double x = 0;
+    double y = 0;
+    int size = 0;
+
+    tTJSVariant serialize() const {
+        auto dict = TJSCreateDictionaryObject();
+        setprop(dict, text);
+        setprop(dict, x);
+        setprop(dict, y);
+        setprop(dict, size);
+        tTJSVariant result(dict, dict);
+        dict->Release();
+        return result;
     }
 };
 
@@ -275,6 +300,10 @@ struct CharacterInfo {
     ttstr text = TJS_W("");
 
     int align = -1; // layout only; not given to the script
+
+    double delay = 0;
+    std::vector<RubyInfo> ruby;
+    bool rubyArray = false;
 
     // Auto-indent actions. flush() does them when it places the character,
     // because the indent is the cursor after the character.
@@ -302,6 +331,22 @@ struct CharacterInfo {
         setprop_opt_t(dict, shadow, static_cast<tjs_int>);
 
         setprop(dict, text);
+        setprop(dict, delay);
+        if(!ruby.empty()) {
+            tTJSVariant value;
+            if(rubyArray) {
+                auto array = TJSCreateArrayObject();
+                value = tTJSVariant(array, array);
+                array->Release();
+                for(size_t i = 0; i < ruby.size(); ++i) {
+                    auto item = ruby[i].serialize();
+                    array->PropSetByNum(TJS_MEMBERENSURE, i, &item, array);
+                }
+            } else {
+                value = ruby.front().serialize();
+            }
+            dict->PropSet(TJS_MEMBERENSURE, TJS_W("ruby"), nullptr, &value, dict);
+        }
 
         auto res = tTJSVariant(dict, dict);
         dict->Release();
@@ -361,7 +406,7 @@ public:
     TextRenderBase();
     virtual ~TextRenderBase();
     bool render(tTJSString text, int autoIndent, int diff, int all,
-                bool _reserved);
+                bool same);
     void setRenderSize(int width, int height);
     void setDefault(tTJSVariant defaultSettings);
     void setOption(tTJSVariant options);
@@ -375,7 +420,14 @@ public:
     void resetStyle();
     tTJSVariant getKeyWait();
     void setKeyWait(tTJSVariant) { throw "no support setKeyWait"; };
-    int calcShowCount();
+    int calcShowCount(double elapsed);
+    double get_timeScale() const { return m_timeScale; }
+    void set_timeScale(double value) {
+        if(!std::isfinite(value) || value < 0) {
+            TVPThrowExceptionMessage(TJS_W("TextRender: invalid timeScale"));
+        }
+        m_timeScale = value;
+    }
 
     // property accessor
     property_accessor(vertical, bool, m_vertical);
@@ -397,7 +449,13 @@ public:
     property_accessor(align, int, m_state.align);
 
     property_accessor(renderOver, bool, m_state.renderOver);
-    property_accessor(renderDelay, int, m_state.renderDelay);
+    double get_renderDelay() const { return m_state.renderDelay * m_timeScale; }
+    void set_renderDelay(double value) {
+        if(!std::isfinite(value) || value < 0) {
+            TVPThrowExceptionMessage(TJS_W("TextRender: invalid renderDelay"));
+        }
+        m_state.renderDelay = value;
+    }
     property_accessor(renderLeft, int, m_x);
     int get_renderRight() const { return m_x + m_boxWidth; }
     void set_renderRight(int v) { m_boxWidth = v - m_x; };
@@ -454,6 +512,23 @@ private:
     std::vector<CharacterInfo> m_buffer{};
     size_t m_alignedCount = 0; // m_characters before this index are aligned
     uint32_t m_mode = 0;
+    double m_timeScale = 1;
+    double m_delay = 0;
+    double m_step = 0;
+    double m_baseStep = 0;
+    double m_lastDelay = 0;
+    size_t m_anchorIndex = 0;
+    double m_anchorTime = 0;
+    bool m_trackHasCharacters = false;
+    ttstr m_rubyText;
+    ttstr m_pendingText;
+    int m_rubyRemaining = 0;
+
+    void emitCharacter(tjs_char ch, std::vector<RubyInfo> ruby, bool rubyArray);
+    void discardRuby();
+    int measure(ttstr const &text, int size);
+    void scaleSegment(double factor);
+    void finishTiming(int all);
 
     void pushCharacter(tjs_char ch);
     void pushGraphicalCharacter(ttstr const &graph);
@@ -504,6 +579,9 @@ static void read_integer(tTJSString const &str, size_t &i, int &value) {
         }
 
         if('0' <= ch && ch <= '9') {
+            if(value > (std::numeric_limits<int>::max() - (ch - '0')) / 10) {
+                TVPThrowExceptionMessage(TJS_W("TextRender: integer out of range"));
+            }
             value = value * 10 + (ch - '0');
             continue;
         } else if(ch == '-') {
@@ -528,6 +606,20 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
     auto const len = text.GetLen();
 
+    flush();
+    if(!same) {
+        for(auto &ch : m_characters) ch.delay = 0;
+        m_state.renderDelay = 0;
+    }
+    m_anchorIndex = m_characters.size();
+    m_anchorTime = 0;
+    m_trackHasCharacters = false;
+    m_delay = 0;
+    m_lastDelay = 0;
+    m_baseStep = std::max(diff, 0);
+    m_step = m_baseStep;
+    if(all > 0 && m_step == 0) m_step = 1;
+
     m_autoIndent = autoIndent;
     m_renderStart = true;
     m_lineStart = true;
@@ -539,7 +631,8 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
         switch(ch) {
             case '\n':
-                // A top-level LF is a line break. CR stays a character.
+                // Discard an incomplete ruby group before a line break.
+                discardRuby();
                 flush();
                 performLinebreak();
                 m_lineStart = true;
@@ -556,23 +649,6 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         m_state.fontSize = m_default.fontSize;
                         updateFont();
                         break;
-                    case 't': {
-                        ttstr faceName{};
-
-                        while(true) {
-                            if(!readchar(text, i, ch)) {
-                                TVPThrowExceptionMessage(TJS_W(
-                                    "TextRenderBase::render() failed to "
-                                    "parse: expected character, found EOF"));
-                            }
-
-                            if(ch == ';')
-                                break;
-
-                            faceName += ch;
-                        }
-                        break;
-                    }
                     case 'f': {
                         ttstr faceName{};
 
@@ -699,7 +775,9 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         else if(cursor > i + 1)
                             i = cursor - 1;
 
+                        if(linebreaks > 0) discardRuby();
                         flush();
+                        if(linebreaks > 0) m_lineStart = true;
                         for(int line = 0; line < linebreaks; ++line)
                             performLinebreak();
 
@@ -743,46 +821,36 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                         m_state.pitch = value;
                         break;
                     }
-                    case 'd': {
+                    case 'd':
+                    case 'a':
+                    case 'w':
+                    case 't':
+                    case 'D': {
+                        auto const command = ch;
+                        bool const empty = i + 1 < len && text[i + 1] == ';';
                         int value = 0;
                         read_integer(text, i, value);
-                        // TODO: text speed
-                        break;
-                    }
-                    case 'w': {
-                        int value = 0;
-                        read_integer(text, i, value);
-                        // TODO: wait
-                        break;
-                    }
-                    case 'D': // %D[0-9]+; || %D$.+;
-                    {
-                        if(ch == '$') {
-                            ttstr labelName{};
-
-                            while(true) {
-                                if(!readchar(text, i, ch)) {
-                                    TVPThrowExceptionMessage(TJS_W(
-                                        "TextRenderBase::render() failed to "
-                                        "parse: expected character, found "
-                                        "EOF"));
-                                }
-
-                                if(ch == ';')
-                                    break;
-
-                                labelName += ch;
-                            }
-
-                            // TODO: labelName
-
+                        double const amount = std::max(value, 0);
+                        if(m_options.ignoreDelay) break;
+                        if(command == 'd') {
+                            m_step = m_baseStep * (empty ? 100 : amount) / 100;
+                        } else if(command == 'a') {
+                            m_step = empty ? m_baseStep : amount;
+                        } else if(command == 'w') {
+                            m_delay += m_baseStep * amount / 100;
+                        } else if(command == 't') {
+                            m_delay += amount;
                         } else {
-                            int value = 0;
-                            read_integer(text, i, value);
-
-                            // TODO: label?
+                            double const target = std::max(amount, m_anchorTime);
+                            double const span = m_delay - m_anchorTime;
+                            if(span > 0 && target < m_delay) {
+                                double const factor = (target - m_anchorTime) / span;
+                                scaleSegment(factor);
+                            }
+                            m_delay = target;
+                            m_anchorTime = target;
+                            m_anchorIndex = m_characters.size() + m_buffer.size();
                         }
-                        //
                         break;
                     }
                     case '0':
@@ -827,6 +895,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
 
                 switch(ch) {
                     case 'n':
+                        discardRuby();
                         flush();
                         performLinebreak();
                         break;
@@ -869,7 +938,25 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
                     ruby += ch;
                 }
 
-                // TODO: implement ruby
+                tjs_int comma = -1;
+                for(tjs_int j = 0; j < ruby.GetLen(); ++j) {
+                    if(ruby[j] == ',') { comma = j; break; }
+                }
+                if(comma >= 0) {
+                    m_rubyText = ttstr(ruby.c_str(), comma);
+                    int count = 0;
+                    for(tjs_int j = comma + 1; j < ruby.GetLen(); ++j) {
+                        if(ruby[j] < '0' || ruby[j] > '9' ||
+                           count > (std::numeric_limits<int>::max() - 9) / 10) {
+                            TVPThrowExceptionMessage(TJS_W("TextRender: invalid ruby count"));
+                        }
+                        count = count * 10 + ruby[j] - '0';
+                    }
+                    m_rubyRemaining = count;
+                } else {
+                    m_rubyText = ruby;
+                    m_rubyRemaining = 0;
+                }
 
                 break;
             }
@@ -963,6 +1050,8 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
         }
     }
 
+    finishTiming(all);
+
     if(m_y > m_boxHeight) {
         m_overflow = true;
         set_renderOver(true);
@@ -1003,7 +1092,111 @@ static int indexOfChar(ttstr const &chars, tjs_char ch) {
     return -1;
 }
 
+void TextRenderBase::discardRuby() {
+    m_rubyText = TJS_W("");
+    m_pendingText = TJS_W("");
+    m_rubyRemaining = 0;
+}
+
+int TextRenderBase::measure(ttstr const &text, int size) {
+    auto rasterizer = GetCurrentRasterizer();
+    tTVPFont font{size, static_cast<tjs_uint32>(
+        (m_state.bold ? TVP_TF_BOLD : 0) | (m_state.italic ? TVP_TF_ITALIC : 0)),
+        0, m_state.face};
+    rasterizer->ApplyFont(font);
+    int width = 0, height = 0;
+    for(tjs_int i = 0; i < text.GetLen(); ++i) {
+        int cw = 0;
+        rasterizer->GetTextExtent(text[i], cw, height);
+        if(cw > 0 && width > std::numeric_limits<int>::max() - cw) {
+            updateFont();
+            TVPThrowExceptionMessage(TJS_W("TextRender: text width overflow"));
+        }
+        width += cw;
+    }
+    updateFont();
+    return width;
+}
+
 void TextRenderBase::pushCharacter(tjs_char ch) {
+    if((0xD800 <= ch && ch <= 0xDFFF)) {
+        TVPThrowExceptionMessage(TJS_W("unexpected character: surrogate pair"));
+    }
+    if(m_pendingText.GetLen() == 0 && m_rubyText.GetLen() == 0 && m_rubyRemaining == 0) {
+        emitCharacter(ch, {}, false);
+        return;
+    }
+    if(static_cast<size_t>(m_pendingText.GetLen()) >=
+       pluginSafety::kDefaultSingleAllocationLimit / sizeof(CharacterInfo)) {
+        TVPThrowExceptionMessage(TJS_W("TextRender: ruby group too large"));
+    }
+    m_pendingText += ch;
+    if(m_rubyRemaining > 0) {
+        --m_rubyRemaining;
+        return;
+    }
+
+    auto const count = m_pendingText.GetLen();
+    auto const bases = pluginSafety::checkedElementBytes(static_cast<size_t>(count),
+        sizeof(CharacterInfo) + sizeof(std::vector<RubyInfo>) + sizeof(double));
+    auto const accents = pluginSafety::checkedElementBytes(static_cast<size_t>(m_rubyText.GetLen()),
+        sizeof(RubyInfo) + sizeof(double));
+    pluginSafety::OperationBudget budget;
+    if(!bases || !accents ||
+       !pluginSafety::validateAllocationBudget(bases.value, budget) ||
+       !pluginSafety::validateAllocationBudget(accents.value, budget)) {
+        TVPThrowExceptionMessage(TJS_W("TextRender: ruby group too large"));
+    }
+    std::vector<std::vector<RubyInfo>> rubies(count);
+    if(m_rubyText.GetLen() != 0) {
+        if(count == 1) {
+            double const width = measure(m_pendingText, m_state.fontSize);
+            double const rubyWidth = measure(m_rubyText, m_state.rubySize);
+            rubies[0].push_back({m_rubyText, (width - rubyWidth) / 2,
+                                -double(m_state.rubySize) - m_state.rubyOffset,
+                                m_state.rubySize});
+        } else {
+            std::vector<double> widths;
+            double span = 0;
+            for(tjs_int i = 0; i < count; ++i) {
+                double const width = measure(ttstr() + m_pendingText[i], m_state.fontSize);
+                widths.push_back(width);
+                span += width;
+            }
+            span += double(m_state.pitch) * (count - 1);
+            span -= (widths.front() + widths.back()) / 2;
+            auto const rubyCount = m_rubyText.GetLen();
+            std::vector<double> rubyWidths;
+            double rubySpan = 0;
+            for(tjs_int i = 0; i < rubyCount; ++i) {
+                double const width = measure(ttstr() + m_rubyText[i], m_state.rubySize);
+                rubyWidths.push_back(width);
+                rubySpan += width;
+            }
+            rubySpan -= (rubyWidths.front() + rubyWidths.back()) / 2;
+            double x = widths.front() / 2 - std::max(0.0, rubySpan - span) / 2;
+            double const step = rubyCount > 1 ? std::max(span, rubySpan) / (rubyCount - 1) : 0;
+            size_t target = 0;
+            for(tjs_int i = 0; i < rubyCount; ++i) {
+                rubies[target].push_back({ttstr() + m_rubyText[i], x - rubyWidths[i] / 2,
+                    -double(m_state.rubySize) - m_state.rubyOffset, m_state.rubySize});
+                x += step;
+                double const width = widths[target] + m_state.pitch;
+                if(target + 1 < widths.size() && x > width) {
+                    ++target;
+                    x -= width;
+                }
+            }
+        }
+    }
+    auto text = m_pendingText;
+    discardRuby();
+    for(tjs_int i = 0; i < count; ++i) {
+        emitCharacter(text[i], std::move(rubies[i]), count > 1);
+    }
+}
+
+void TextRenderBase::emitCharacter(tjs_char ch, std::vector<RubyInfo> ruby, bool rubyArray) {
     if((0xD800 <= ch && ch <= 0xDBFF) /* upper surrogate-pair */
        || (0xDC00 <= ch && ch <= 0xDFFF) /* lower surrogate-pair */) {
         TVPThrowExceptionMessage(TJS_W("unexpected character: surrogate pair"));
@@ -1050,6 +1243,15 @@ void TextRenderBase::pushCharacter(tjs_char ch) {
         (ttstr() + ch),
         m_state.align,
     };
+
+    info.delay = m_delay;
+    info.ruby = std::move(ruby);
+    info.rubyArray = rubyArray;
+    m_lastDelay = m_delay;
+    double const widthScale = m_options.widthTimeScale ?
+        double(std::max(advance_width, 0)) / std::max(m_state.fontSize, 1) : 1;
+    m_delay += m_step * widthScale;
+    m_trackHasCharacters = true;
 
     // Auto-indent, as textrender.dll does it (feature 0015, REVERSE 10):
     // - autoIndent < 0: the first character of render() hangs left when it
@@ -1159,29 +1361,34 @@ void TextRenderBase::setOption(tTJSVariant options) {
 }
 
 tTJSVariant TextRenderBase::getCharacters(int start, int end) {
-    // TODO: only (0, 0) is observed
     auto array = TJSCreateArrayObject();
-    dbg_print(TVPFormatMessage(TJS_W("get characters: [%1, %2]"), start, end));
-
-    if((end < start) || (start == 0 && end == 0)) {
-        for(size_t i = 0, cnt = m_characters.size(); i < cnt; ++i) {
-            auto ch = m_characters[i].serialize();
-            array->PropSetByNum(TJS_MEMBERENSURE, i, &ch, array);
-        }
-    } else {
-        // TODO: unknown behaviour
+    tTJSVariant result(array, array);
+    array->Release();
+    size_t const first = static_cast<size_t>(std::max(start, 0));
+    size_t const available = first < m_characters.size() ? m_characters.size() - first : 0;
+    size_t const count = end > 0 ? std::min(available, static_cast<size_t>(end)) : available;
+    for(size_t i = 0; i < count; ++i) {
+        auto ch = m_characters[first + i].serialize();
+        array->PropSetByNum(TJS_MEMBERENSURE, i, &ch, array);
     }
-
-    return tTJSVariant(array, array);
+    return result;
 }
 
 void TextRenderBase::clear() {
     dbg_print(TJS_W("clear character buffer and format"));
 
     m_characters.clear();
+    m_buffer.clear();
+    discardRuby();
+    m_delay = m_step = m_baseStep = m_lastDelay = 0;
+    m_trackHasCharacters = false;
+    m_anchorIndex = 0;
+    m_anchorTime = 0;
+    m_mode = 0;
     m_alignedCount = 0;
 
     m_state = m_default;
+    m_state.renderDelay = 0;
     m_overflow = false;
 
     m_x = 0;
@@ -1212,6 +1419,10 @@ void TextRenderBase::done() {
     dbg_print(TJS_W("flush character buffer"));
     flush();
     applyAlignment();
+    std::stable_sort(m_characters.begin(), m_characters.end(),
+                     [](CharacterInfo const &a, CharacterInfo const &b) {
+                         return a.delay < b.delay;
+                     });
 }
 
 // Move each line by its align value inside m_boxWidth, and move all lines by
@@ -1258,9 +1469,17 @@ void TextRenderBase::applyAlignment() {
     }
 }
 
-void TextRenderBase::resetFont() { m_state = m_default; }
+void TextRenderBase::resetFont() { resetStyle(); }
 
-void TextRenderBase::resetStyle() { m_state = m_default; }
+void TextRenderBase::resetStyle() {
+    auto text = m_state.renderText;
+    double const duration = m_state.renderDelay;
+    bool const over = m_state.renderOver;
+    m_state = m_default;
+    m_state.renderText = text;
+    m_state.renderDelay = duration;
+    m_state.renderOver = over;
+}
 
 tTJSVariant TextRenderBase::getKeyWait() {
     iTJSDispatch2 *dsp = TJSCreateArrayObject();
@@ -1269,7 +1488,40 @@ tTJSVariant TextRenderBase::getKeyWait() {
     return ret;
 }
 
-int TextRenderBase::calcShowCount() { return m_characters.size(); }
+void TextRenderBase::scaleSegment(double factor) {
+    size_t index = 0;
+    auto retime = [&](CharacterInfo &info) {
+        if(index++ >= m_anchorIndex) {
+            info.delay = m_anchorTime + (info.delay - m_anchorTime) * factor;
+        }
+    };
+    for(auto &info : m_characters) retime(info);
+    for(auto &info : m_buffer) retime(info);
+    m_lastDelay = m_anchorTime + (m_lastDelay - m_anchorTime) * factor;
+}
+
+void TextRenderBase::finishTiming(int all) {
+    if(!m_trackHasCharacters) return;
+    double duration = m_lastDelay + m_baseStep;
+    if(all > m_anchorTime) {
+        // Keep previous synchronization segments fixed.
+        double const source = m_lastDelay + (m_baseStep > 0 ? m_baseStep : 1) - m_anchorTime;
+        if(source > 0) {
+            scaleSegment((all - m_anchorTime) / source);
+            duration = all;
+        }
+    }
+    m_state.renderDelay = std::max(m_state.renderDelay, duration);
+}
+
+int TextRenderBase::calcShowCount(double elapsed) {
+    for(size_t i = m_characters.size(); i > 0; --i) {
+        if(elapsed >= m_characters[i - 1].delay * m_timeScale) {
+            return static_cast<int>(i);
+        }
+    }
+    return 0;
+}
 
 // register the class
 NCB_REGISTER_CLASS(TextRenderBase) {
@@ -1292,6 +1544,7 @@ NCB_REGISTER_CLASS(TextRenderBase) {
     property_delegate(renderCount);
     property_delegate(renderOver);
     property_delegate(renderDelay);
+    property_delegate(timeScale);
     property_delegate(renderText);
     property_delegate(renderLeft);
     property_delegate(renderRight);
