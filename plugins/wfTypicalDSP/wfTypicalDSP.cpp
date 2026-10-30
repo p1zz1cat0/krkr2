@@ -18,11 +18,13 @@ namespace typicalDSP {
 constexpr unsigned BlockFrames = 1024;
 constexpr unsigned MaxChannels = 8;
 
-enum class Kind { LowPass, BandPass };
+enum class Kind { LowPass, HighPass, BandPass };
 
 std::unique_ptr<Dsp::Filter> MakeFilter(Kind kind) {
     if(kind == Kind::LowPass)
         return std::make_unique<Dsp::FilterDesign<Dsp::Butterworth::Design::LowPass<50>, 1>>();
+    if(kind == Kind::HighPass)
+        return std::make_unique<Dsp::FilterDesign<Dsp::Butterworth::Design::HighPass<50>, 1>>();
     return std::make_unique<Dsp::FilterDesign<Dsp::Butterworth::Design::BandPass<50>, 1>>();
 }
 
@@ -40,9 +42,10 @@ class WaveDSPFilter : public iTVPBasicWaveFilter, public tTVPSampleAndLabelSourc
 public:
     WaveDSPFilter(const ttstr &type, const ttstr &design) {
         if(design != TJS_W("Butterworth") ||
-           (type != TJS_W("LowPass") && type != TJS_W("BandPass")))
+           (type != TJS_W("LowPass") && type != TJS_W("HighPass") && type != TJS_W("BandPass")))
             TVPThrowExceptionMessage(TJS_W("wfTypicalDSP: unsupported type/design."));
-        kind_ = type == TJS_W("LowPass") ? Kind::LowPass : Kind::BandPass;
+        kind_ = type == TJS_W("LowPass") ? Kind::LowPass
+              : type == TJS_W("HighPass") ? Kind::HighPass : Kind::BandPass;
         params_ = MakeFilter(kind_)->getDefaultParams();
     }
 
@@ -61,7 +64,7 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto candidate = params_;
         bool autoRate = autoRate_;
-        const int parameterCount = kind_ == Kind::LowPass ? 3 : 4;
+        const int parameterCount = kind_ == Kind::BandPass ? 4 : 3;
         for(int i = 0; i < count; ++i) {
             if(values[i]->Type() == tvtVoid) {
                 if(i == 0) autoRate = true;

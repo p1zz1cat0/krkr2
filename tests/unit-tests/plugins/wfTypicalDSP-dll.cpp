@@ -43,8 +43,10 @@ void Set(typicalDSP::WaveDSPFilter &filter, double cutoff, double width = 0, int
     REQUIRE(filter.ApplyParams(6, values) == TJS_S_OK);
 }
 
-double Gain(bool band, double frequency, bool pcm = false, unsigned rate = 48000) {
-    typicalDSP::WaveDSPFilter filter(band ? TJS_W("BandPass") : TJS_W("LowPass"), TJS_W("Butterworth"));
+double Gain(bool band, double frequency, bool pcm = false, unsigned rate = 48000,
+            const tjs_char *type = nullptr) {
+    typicalDSP::WaveDSPFilter filter(type ? type : band ? TJS_W("BandPass") : TJS_W("LowPass"),
+                                     TJS_W("Butterworth"));
     Set(filter, band ? 1300 : 1080, band ? 1800 : 0);
     SineSource source(pcm, 2, rate);
     source.frequency = frequency;
@@ -78,6 +80,10 @@ TEST_CASE("wfTypicalDSP Butterworth processes float and PCM16 with source sample
             REQUIRE(Gain(true, 1300, pcm, rate) > 0.95);
             REQUIRE(Gain(true, 100, pcm, rate) < 0.1);
             REQUIRE(Gain(true, 8000, pcm, rate) < 0.05);
+            REQUIRE(Gain(false, 1080, pcm, rate, TJS_W("HighPass")) > 0.69);
+            REQUIRE(Gain(false, 1080, pcm, rate, TJS_W("HighPass")) < 0.72);
+            REQUIRE(Gain(false, 4000, pcm, rate, TJS_W("HighPass")) > 0.95);
+            REQUIRE(Gain(false, 270, pcm, rate, TJS_W("HighPass")) < 0.08);
         }
     }
 }
@@ -115,6 +121,10 @@ TEST_CASE("wfTypicalDSP reset, detach, validation and chunk continuity", "[plugi
     REQUIRE_FALSE(typicalDSP::ValidParams(typicalDSP::Kind::LowPass, params));
     params[1] = 2; params[2] = std::nan("");
     REQUIRE_FALSE(typicalDSP::ValidParams(typicalDSP::Kind::LowPass, params));
+    // CafeStella DSP_ドア越しSE.ini: HighPass_Butterworth(2, 10000) at 44100 Hz.
+    params[0] = 44100; params[1] = 2; params[2] = 10000;
+    REQUIRE(typicalDSP::ValidParams(typicalDSP::Kind::HighPass, params));
+    REQUIRE_THROWS(typicalDSP::WaveDSPFilter(TJS_W("BandStop"), TJS_W("Butterworth")));
 }
 
 TEST_CASE("wfTypicalDSP defers automatic sample-rate validation until connection", "[plugin][audio]") {
