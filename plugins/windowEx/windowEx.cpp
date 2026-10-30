@@ -3,6 +3,11 @@
 // source code url: https://github.com/wamsoft/windowEx
 //
 #include <cstdint>
+#include <vector>
+
+#if defined(__APPLE__)
+#include <CoreGraphics/CoreGraphics.h>
+#endif
 
 typedef unsigned long DWORD;
 
@@ -441,8 +446,11 @@ struct WindowEx {
     }
 
     // property maximized box
+    // macOS windows keep both title bar buttons enabled.
     static tjs_error getMaximizeBox(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                     iTJSDispatch2 *obj) {
+        if(r)
+            *r = true;
         return TJS_S_OK;
     }
 
@@ -454,6 +462,8 @@ struct WindowEx {
     // property minimized box
     static tjs_error getMinimizeBox(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                     iTJSDispatch2 *obj) {
+        if(r)
+            *r = true;
         return TJS_S_OK;
     }
 
@@ -463,7 +473,9 @@ struct WindowEx {
     }
 
     // property maximized
-    static bool isMaximized(iTJSDispatch2 *obj) { return true; }
+    // macOS windows have no maximize state machine here. Report the normal
+    // window state so that KAG can still read the property.
+    static bool isMaximized(iTJSDispatch2 *obj) { return false; }
 
     static tjs_error getMaximized(tTJSVariant *r, tjs_int n, tTJSVariant **p,
                                   iTJSDispatch2 *obj) {
@@ -961,12 +973,14 @@ NCB_ATTACH_CLASS_WITH_HOOK(WindowEx, Window) {
 
     RawCallback(TJS_W("minimize"), &Class::minimize, 0);
     RawCallback(TJS_W("maximize"), &Class::maximize, 0);
-    // RawCallback(TJS_W("maximizeBox"), &Class::getMaximizeBox,
-    // &Class::setMaximizeBox, 0); RawCallback(TJS_W("minimizeBox"),
-    // &Class::getMinimizeBox,      &Class::setMinimizeBox, 0);
-    // RawCallback(TJS_W("maximized"),           &Class::getMaximized,
-    // &Class::setMaximized, 0); RawCallback(TJS_W("minimized"),
-    // &Class::getMinimized,      &Class::setMinimized, 0);
+    RawCallback(TJS_W("maximizeBox"), &Class::getMaximizeBox,
+                &Class::setMaximizeBox, 0);
+    RawCallback(TJS_W("minimizeBox"), &Class::getMinimizeBox,
+                &Class::setMinimizeBox, 0);
+    RawCallback(TJS_W("maximized"), &Class::getMaximized,
+                &Class::setMaximized, 0);
+    RawCallback(TJS_W("minimized"), &Class::getMinimized,
+                &Class::setMinimized, 0);
     RawCallback(TJS_W("showRestore"), &Class::showRestore, 0);
     RawCallback(TJS_W("resetWindowIcon"), &Class::resetWindowIcon, 0);
     RawCallback(TJS_W("setWindowIcon"), &Class::setWindowIcon, 0);
@@ -1420,18 +1434,123 @@ NCB_ATTACH_CLASS_WITH_HOOK(PadEx, Pad) {
 }
 ////////////////////////////////////////////////////////////////
 
+////////////////////////////////////////////////////////////////
+
+#if defined(__APPLE__)
+// Write the rectangle as x, y, w, and h members.
+static void setDisplayRect(iTJSDispatch2 *dict, const CGRect &rect) {
+    const tjs_int values[4] = { static_cast<tjs_int>(rect.origin.x),
+                                static_cast<tjs_int>(rect.origin.y),
+                                static_cast<tjs_int>(rect.size.width),
+                                static_cast<tjs_int>(rect.size.height) };
+    const tjs_char *names[4] = { TJS_W("x"), TJS_W("y"), TJS_W("w"),
+                                 TJS_W("h") };
+    for(int i = 0; i < 4; i++) {
+        tTJSVariant value(values[i]);
+        dict->PropSet(TJS_MEMBERENSURE, names[i], 0, &value, dict);
+    }
+}
+
+// Write monitor and work members from one display.
+static void setDisplayEntry(iTJSDispatch2 *entry, CGDirectDisplayID display) {
+    iTJSDispatch2 *monitor = TJSCreateDictionaryObject();
+    setDisplayRect(monitor, CGDisplayBounds(display));
+    tTJSVariant monitor_value(monitor, monitor);
+    entry->PropSet(TJS_MEMBERENSURE, TJS_W("monitor"), 0, &monitor_value,
+                   entry);
+    monitor->Release();
+
+    // macOS has no separate work area here. The visible frame equals bounds.
+    iTJSDispatch2 *work = TJSCreateDictionaryObject();
+    setDisplayRect(work, CGDisplayBounds(display));
+    tTJSVariant work_value(work, work);
+    entry->PropSet(TJS_MEMBERENSURE, TJS_W("work"), 0, &work_value, entry);
+    work->Release();
+}
+#endif
+
 struct System {
     static tjs_int getDoubleClickTime() { return -1; }
 
     static tjs_error getDisplayMonitors(tTJSVariant *result, tjs_int numparams,
                                         tTJSVariant **param,
                                         iTJSDispatch2 *objthis) {
+#if defined(__APPLE__)
+        if(result == nullptr)
+            return TJS_S_OK;
+
+        uint32_t count = 0;
+        CGGetActiveDisplayList(0, nullptr, &count);
+        std::vector<CGDirectDisplayID> displays(count);
+        if(count != 0) {
+            if(CGGetActiveDisplayList(count, displays.data(), &count) !=
+               kCGErrorSuccess)
+                return TJS_S_OK;
+            displays.resize(count);
+        }
+
+        iTJSDispatch2 *list = TJSCreateDictionaryObject();
+        for(uint32_t i = 0; i < displays.size(); i++) {
+            iTJSDispatch2 *entry = TJSCreateDictionaryObject();
+            setDisplayEntry(entry, displays[i]);
+            tTJSVariant entry_value(entry, entry);
+            ttstr key(static_cast<tjs_int>(i));
+            list->PropSet(TJS_MEMBERENSURE, key.c_str(), key.GetHint(),
+                          &entry_value, list);
+            entry->Release();
+        }
+        {
+            tTJSVariant count_value(static_cast<tjs_int>(displays.size()));
+            list->PropSet(TJS_MEMBERENSURE, TJS_W("count"), 0, &count_value,
+                          list);
+        }
+        *result = tTJSVariant(list, list);
+        list->Release();
+#endif
         return TJS_S_OK;
     }
 
     static tjs_error getMonitorInfo(tTJSVariant *result, tjs_int numparams,
                                     tTJSVariant **param,
                                     iTJSDispatch2 *objthis) {
+        // Find the display that holds the requested point. Return its rect.
+#if defined(__APPLE__)
+        if(result == nullptr)
+            return TJS_S_OK;
+
+        const tjs_int x = numparams >= 1 ? static_cast<tjs_int>(*param[0]) : 0;
+        const tjs_int y = numparams >= 2 ? static_cast<tjs_int>(*param[1]) : 0;
+
+        uint32_t count = 0;
+        CGGetActiveDisplayList(0, nullptr, &count);
+        std::vector<CGDirectDisplayID> displays(count);
+        if(count != 0 &&
+           CGGetActiveDisplayList(count, displays.data(), &count) !=
+               kCGErrorSuccess)
+            return TJS_S_OK;
+        displays.resize(count);
+
+        CGDirectDisplayID hit = 0;
+        for(uint32_t i = 0; i < displays.size(); i++) {
+            const CGRect bounds = CGDisplayBounds(displays[i]);
+            if(x >= bounds.origin.x &&
+               x < bounds.origin.x + bounds.size.width &&
+               y >= bounds.origin.y &&
+               y < bounds.origin.y + bounds.size.height) {
+                hit = displays[i];
+                break;
+            }
+        }
+        if(hit == 0 && !displays.empty())
+            hit = displays[0];
+        if(hit == 0)
+            return TJS_S_OK;
+
+        iTJSDispatch2 *entry = TJSCreateDictionaryObject();
+        setDisplayEntry(entry, hit);
+        *result = tTJSVariant(entry, entry);
+        entry->Release();
+#endif
         return TJS_S_OK;
     }
 
