@@ -84,8 +84,13 @@ static inline tjs_uint8 clip8(double v) {
 	return (tjs_uint8)(v <= 0.0 ? 0 : (v >= 255.0 ? 255 : floor(v + 0.5)));
 }
 
+// A frame with zero width or height is an empty frame. The original plugin
+// accepts it and draws nothing. ATRI kaitei.amv and others contain such frames.
+static bool isEmptyFrame(tjs_int fw, tjs_int fh) { return fw == 0 || fh == 0; }
+
 static void validateFrameDimensions(tjs_int fw, tjs_int fh) {
-	if (fw <= 0 || fh <= 0 || (fw & 0x0f) || (fh & 0x0f) ||
+	if (isEmptyFrame(fw, fh)) return;
+	if (fw < 0 || fh < 0 || (fw & 0x0f) || (fh & 0x0f) ||
 		fw > kMaxFrameDimension || fh > kMaxFrameDimension)
 		TVPThrowExceptionMessage(TJS_W("File format error."));
 }
@@ -403,6 +408,7 @@ static void decodeFramePayloadToBGRA(
 	std::vector<tjs_uint8> &bgra)
 {
 	validateFrameDimensions(fw, fh);
+	if (isEmptyFrame(fw, fh)) { bgra.clear(); return; }
 	if ((alphaZLen && !alphaZ) || (colorLen && !color) ||
 		static_cast<tjs_uint64>(alphaZLen) + colorLen > kMaxFramePayloadBytes)
 		TVPThrowExceptionMessage(TJS_W("File format error."));

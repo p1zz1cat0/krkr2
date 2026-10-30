@@ -247,10 +247,12 @@ TEST_CASE("AlphaMovie rejects invalid frame dimensions") {
     CHECK_THROWS_AS(decodeFramePayloadToBGRA(quant, dcL, dcC, acL, acC, false,
                                              nullptr, 0, nullptr, 0, 20, 16, bgra),
                     eTJSError);
-    // 零尺寸
-    CHECK_THROWS_AS(decodeFramePayloadToBGRA(quant, dcL, dcC, acL, acC, false,
-                                             nullptr, 0, nullptr, 0, 0, 16, bgra),
-                    eTJSError);
+    // 零尺寸 = 空帧：原版放行且不绘制（ATRI kaitei.amv 等文件含这种帧）
+    bgra.assign(4, 0xff);
+    CHECK_NOTHROW(decodeFramePayloadToBGRA(quant, dcL, dcC, acL, acC, false,
+                                           nullptr, 0, nullptr, 0, 0, 16, bgra));
+    CHECK(bgra.empty());
+    CHECK_NOTHROW(validateFrameDimensions(0, 0));
     // 超过 4096 上限（原版会按 uint16 直接分配数 GB 平面）
     CHECK_THROWS_AS(decodeFramePayloadToBGRA(quant, dcL, dcC, acL, acC, false,
                                              nullptr, 0, nullptr, 0, 8192, 16, bgra),
