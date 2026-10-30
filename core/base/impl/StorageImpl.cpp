@@ -494,8 +494,9 @@ bool TVPRemoveFile(const ttstr &name) {
 // TVPRemoveFolder
 //---------------------------------------------------------------------------
 bool TVPRemoveFolder(const ttstr &name) {
+    // unlink cannot remove a directory on macOS or Linux. Use rmdir.
     tTJSNarrowStringHolder holder(name.c_str());
-    return !unlink(holder);
+    return !rmdir(holder);
 }
 //---------------------------------------------------------------------------
 

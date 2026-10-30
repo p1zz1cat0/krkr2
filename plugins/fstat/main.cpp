@@ -641,7 +641,7 @@ public:
         dir = TVPNormalizeStorageName(dir);
         TVPGetLocalName(dir);
 
-        const bool r = TVPDeleteFile(dir.AsNarrowStdString());
+        const bool r = TVPRemoveFolder(dir);
         if(!r) {
             TVPAddLog(ttstr(TJS_W("removeDirectory : ")) + dir +
                       TJS_W(" failed."));

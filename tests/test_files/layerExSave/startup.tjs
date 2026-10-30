@@ -10,13 +10,18 @@ Plugins.link("layerExSave.dll");
 
 // Core check: saveStruct into a folder that does not exist yet must work.
 // Games such as 少女领域 (MainWindow.tjs checkSave) enter ReadOnlyMode when it throws.
-// ponytail: leaves one empty folder per run under the ignored savedata dir; macOS
-// TVPDeleteFile uses unlink, so fstat.removeDirectory cannot clean it up.
+// fstat.removeDirectory then removes the folders again (it used unlink before).
+Plugins.link("fstat.dll");
 {
-    var newDir = System.dataPath + "mkdir-check-" + System.getTickCount() + "/sub/";
+    var rootDir = System.dataPath + "mkdir-check-" + System.getTickCount() + "/";
+    var newDir = rootDir + "sub/";
     check(!Storages.isExistentStorage(newDir + "savecheck"), "mkdir-check folder is new");
     (Array.saveStruct incontextof ["test"])(newDir + "savecheck");
     check(Storages.isExistentStorage(newDir + "savecheck"), "saveStruct creates missing folders");
+    check(Storages.deleteFile(newDir + "savecheck"), "deleteFile removes savecheck");
+    check(Storages.removeDirectory(newDir), "removeDirectory removes empty sub folder");
+    check(Storages.removeDirectory(rootDir), "removeDirectory removes empty root folder");
+    check(!Storages.isExistentDirectory(rootDir), "mkdir-check folder is gone");
 }
 
 // 保存产物写到本目录（.gitignore 已忽略 *.tlg / *.png）
