@@ -151,9 +151,14 @@ namespace TJS {
                                          tjs_int codepos) {
         if(TJSEnableDebugMode) {
             tTJS *tjs = context->GetBlock()->GetTJS();
+            // Add the VM ip and the context pointer to the message.
+            // Use them to find the failing instruction in a Scripts.dump()
+            // listing.
             tjs->OutputExceptionToConsole(
                 (msg + TJS_W(" at ") +
-                 context->GetPositionDescriptionString(codepos))
+                 context->GetPositionDescriptionString(codepos) +
+                 ttstr(fmt::sprintf(" ip=%d ctx=%p", codepos,
+                                    static_cast<const void *>(context))))
                     .c_str());
         }
     }
