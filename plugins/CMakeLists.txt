@@ -65,7 +65,11 @@ target_sources(${PROJECT_NAME} PRIVATE
     lzfs/lzfs.cpp
     steam/steam.cpp
     steam/KirikiriSteam.cpp
-    linkstubs/LinkStubs.cpp
+    linkstubs/kagexopt.cpp
+    linkstubs/krglhwebp.cpp
+    linkstubs/krmovie.cpp
+    linkstubs/menu.cpp
+    linkstubs/wuopus.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

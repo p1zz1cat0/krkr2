@@ -30,15 +30,18 @@ it retains staging output in a temporary build directory and must never replace
 
 ## Link-only module names
 
-`plugins/linkstubs/LinkStubs.cpp` declares module names that this build does not
-ship as DLL files. Each name makes `Plugins.link` succeed. Old KAG scripts
-select a branch from the link result. The file registers no TJS class and no TJS
-member.
+`plugins/linkstubs/` declares module names that this build does not ship as
+DLL files. One `.cpp` holds one name. Each name makes `Plugins.link` succeed.
+Old KAG scripts select a branch from the link result. These files register no
+TJS class and no TJS member.
 
 Add a name only when the core backs the module. A name whose TJS class is
 missing makes the script fail later with a TJS error. Do not add
 `dmmcloud.dll`, `krkrsteam.dll`, `win32ole.dll`, `k2compat.dll` or
 `kztouch.dll`.
+
+The step list and the templates are in `guides/0017-krkr2.md` of the host
+project.
 
 ## Known plugin origins
 
