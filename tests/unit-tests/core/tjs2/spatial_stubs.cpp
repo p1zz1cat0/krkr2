@@ -81,3 +81,4 @@ extern "C" void TVPKagexoptPluginAnchor() {}
 extern "C" void TVPKrmoviePluginAnchor() {}
 extern "C" void TVPMenuPluginAnchor() {}
 extern "C" void TVPWuopusPluginAnchor() {}
+extern "C" void TVPKrglhwebpPluginAnchor() {}

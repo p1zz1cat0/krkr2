@@ -176,8 +176,8 @@ public:
             TJS_W(".bpg"), TVPLoadGraphicRouter, TVPLoadHeaderRouter, nullptr,
             nullptr, nullptr));
         Handlers.push_back(tTVPGraphicHandlerType(
-            TJS_W(".webp"), TVPLoadGraphicRouter, TVPLoadHeaderRouter, nullptr,
-            nullptr, nullptr));
+            TJS_W(".webp"), TVPLoadGraphicRouter, TVPLoadHeaderRouter,
+            TVPSaveAsWebP, TVPAcceptSaveAsWebP, nullptr));
         Handlers.push_back(tTVPGraphicHandlerType(
             TJS_W(".bmp"), TVPLoadGraphicRouter, TVPLoadHeaderRouter,
             TVPSaveAsBMP, TVPAcceptSaveAsBMP, nullptr));

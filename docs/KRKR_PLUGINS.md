@@ -73,6 +73,7 @@ missing makes the script fail later with a TJS error. Do not add
 | json.dll               | https://github.com/wtnbgo/json                                                                          |
 | kagexopt.dll           | in-tree: plugins/linkstubs (link-only name; KAG parsing lives in the core)                               |
 | kirikiroid2.dll        | nan                                                                                                     |
+| krglhwebp.dll          | in-tree: plugins/linkstubs (link-only name; WebP codec lives in the core)                               |
 | krmovie.dll            | in-tree: plugins/linkstubs (link-only name; movie playback lives in the core)                            |
 | layerExAlpha.dll       | nan                                                                                                     |
 | layerExAreaAverage.dll | https://github.com/wtnbgo/layerExAreaAverage                                                            |

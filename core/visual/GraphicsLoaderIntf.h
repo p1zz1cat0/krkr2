@@ -240,6 +240,9 @@ extern void TVPSaveAsJXR(void *formatdata, tTJSBinaryStream *dst,
 extern void TVPSaveAsTLG(void *formatdata, tTJSBinaryStream *dst,
                          const iTVPBaseBitmap *image, const ttstr &mode,
                          iTJSDispatch2 *meta);
+extern void TVPSaveAsWebP(void *formatdata, tTJSBinaryStream *dst,
+                          const iTVPBaseBitmap *image, const ttstr &mode,
+                          iTJSDispatch2 *meta);
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -255,6 +258,8 @@ extern bool TVPAcceptSaveAsJXR(void *formatdata, const ttstr &type,
                                iTJSDispatch2 **dic);
 extern bool TVPAcceptSaveAsTLG(void *formatdata, const ttstr &type,
                                iTJSDispatch2 **dic);
+extern bool TVPAcceptSaveAsWebP(void *formatdata, const ttstr &type,
+                                iTJSDispatch2 **dic);
 //---------------------------------------------------------------------------
 
 void TVPSaveTextureAsBMP(tTJSBinaryStream *dst, class iTVPTexture2D *bmp,

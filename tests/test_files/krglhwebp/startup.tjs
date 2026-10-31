@@ -1,0 +1,99 @@
+// krglhwebp.dll 链接空壳 + 核心 WebP 编解码 smoke test
+// 用法：krkr2 <本目录>，脚本内 System.exit(0) 结束进程。
+//
+// 上游 krglhwebp 只有一件事：给 ".webp" 注册加载 / 头解析 / 保存 / 保存接受。
+// 本构建把 WebP 编解码放在核心 core/visual/LoadWEBP.cpp，插件只登记模块名。
+// 这里断言 link 成功，且编码后再解码能取回原像素。
+Scripts.execStorage("../common/plugin_assert.tjs");
+
+// CanLoadPlugin 由 PackinOne 模块附在 Plugins 上。先链接它，再探测。
+Plugins.link("PackinOne.dll");
+Plugins.link("krglhwebp.dll");
+pluginAssertTrue("CanLoadPlugin reports krglhwebp",
+                 Plugins.CanLoadPlugin("krglhwebp.dll"));
+
+// 保存产物写到本目录（.gitignore 已忽略 *.webp）
+var outDir = Storages.extractStoragePath(Storages.getPlacedPath("startup.tjs"));
+var testWindow = new Window();
+var baseLayer = new Layer(testWindow, null);
+
+function newLayer(w, h) {
+    var l = new Layer(testWindow, baseLayer);
+    l.setImageSize(w, h);
+    return l;
+}
+
+// R/B 互不相同、alpha 各异的 4x2 图样。通道顺序写反时读回必然不等。
+// 右下角留一个全透明像素：无损保存要连它的 RGB 一起保留。
+function makePattern() {
+    var l = newLayer(4, 2);
+    l.fillRect(0, 0, 1, 1, 0xFF102030);
+    l.fillRect(1, 0, 1, 1, 0x80A0B0C0);
+    l.fillRect(2, 0, 1, 1, 0xFF0000FF);
+    l.fillRect(3, 0, 1, 1, 0xFFFF0000);
+    l.fillRect(0, 1, 1, 1, 0x00000000);
+    l.fillRect(1, 1, 3, 1, 0xC0336699);
+    return l;
+}
+
+function assertSamePixels(name, a, b) {
+    pluginAssertTrue(name + " readable source", a.mainImageBuffer != 0);
+    pluginAssertTrue(name + " readable output", b.mainImageBuffer != 0);
+    pluginAssertEqual(name + " width", a.imageWidth, b.imageWidth);
+    pluginAssertEqual(name + " height", a.imageHeight, b.imageHeight);
+    for (var y = 0; y < a.imageHeight; y++)
+        for (var x = 0; x < a.imageWidth; x++) {
+            pluginAssertEqual(name + " rgb " + x + "," + y,
+                              a.getMainPixel(x, y), b.getMainPixel(x, y));
+            pluginAssertEqual(name + " alpha " + x + "," + y,
+                              a.getMaskPixel(x, y), b.getMaskPixel(x, y));
+        }
+}
+
+var src = makePattern();
+var losslessPath = outDir + "krglhwebp_smoke_lossless.webp";
+
+// 1. type 后缀 "webplossless"：无损，像素与 alpha 逐点相等
+src.saveLayerImage(losslessPath, "webplossless");
+var lossless = newLayer(1, 1);
+lossless.loadImages(losslessPath);
+assertSamePixels("lossless round trip", src, lossless);
+
+// 2. 头解析补齐了上游的字段
+var header = Bitmap.loadHeader(losslessPath);
+pluginAssertEqual("header width", 4, header.width);
+pluginAssertEqual("header height", 2, header.height);
+pluginAssertEqual("header bpp", 32, header.bpp);
+pluginAssertEqual("header has_alpha", 1, header.has_alpha);
+pluginAssertEqual("header has_animation", 0, header.has_animation);
+pluginAssertEqual("header format (2 = lossless)", 2, header.format);
+
+// 3. Bitmap.save 的 meta 字典透传给 libwebp；未知键忽略，越界值夹取
+var bmp = new Bitmap();
+bmp.load(losslessPath);
+var metaPath = outDir + "krglhwebp_smoke_meta.webp";
+bmp.save(metaPath, "webp", %[ lossless: 1, exact: 1, quality: 999, bogus_key: 1 ]);
+invalidate bmp;
+var metaLayer = newLayer(1, 1);
+metaLayer.loadImages(metaPath);
+assertSamePixels("meta lossless round trip", src, metaLayer);
+
+// 4. 有损：质量 100 时尺寸不变，alpha 平面无损（透明像素仍为 0）
+var lossyPath = outDir + "krglhwebp_smoke_lossy.webp";
+src.saveLayerImage(lossyPath, "webp100");
+var lossy = newLayer(1, 1);
+lossy.loadImages(lossyPath);
+pluginAssertEqual("lossy width", 4, lossy.imageWidth);
+pluginAssertEqual("lossy height", 2, lossy.imageHeight);
+pluginAssertEqual("lossy keeps transparent pixel", 0,
+                 lossy.getMaskPixel(0, 1));
+pluginAssertEqual("lossy keeps half alpha", 0x80, lossy.getMaskPixel(1, 0));
+
+// 5. 保存选项对话框的数据源
+var options = Bitmap.getSaveOption("webp");
+pluginAssertTrue("getSaveOption returns a dictionary", options !== void);
+pluginAssertEqual("save option quality type", "range", options.quality.type);
+pluginAssertEqual("save option lossless type", "boolean", options.lossless.type);
+
+pluginSmokePass("krglhwebp.dll");
+System.exit(0);
