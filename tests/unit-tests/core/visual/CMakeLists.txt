@@ -3,6 +3,7 @@ project(TestVisualModule LANGUAGES CXX)
 
 set(SOURCES
         CursorFile
+        TextEncoding
 )
 
 string(REPLACE ".cpp" "" BASENAMES_SOURCES "${SOURCES}")

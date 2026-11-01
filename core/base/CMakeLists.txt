@@ -10,6 +10,7 @@ set(BASE_SOURCE_FILES
     ${BASE_PATH}/SysInitIntf.cpp
     ${BASE_PATH}/SystemIntf.cpp
     ${BASE_PATH}/TextStream.cpp
+    ${BASE_PATH}/TextEncoding.cpp
     ${BASE_PATH}/KAGParser.cpp
 
     ${BASE_PATH}/impl/EventImpl.cpp
