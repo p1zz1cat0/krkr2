@@ -51,8 +51,8 @@ extern "C" void TVPShrinkCopyPluginAnchor() {}
 
 struct LayerUtils
 {
-	// 一个像素的类型
-	typedef unsigned long PixelT;
+	// Each Layer pixel occupies four bytes on every platform.
+	typedef tjs_uint32 PixelT;
 
 	// 缓冲引用用的类型
 	typedef unsigned char UnitT;

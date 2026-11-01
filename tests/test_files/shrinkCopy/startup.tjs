@@ -22,7 +22,28 @@ dst.shrinkCopy(0, 0, 4, 4, src, 0, 0, 8, 8);
 check(dst.hasImage, "dst hasImage after shrinkCopy");
 check(dst.imageWidth == 4 && dst.imageHeight == 4, "dst size preserved");
 
-// 放大必须报错（仅缩小）
+for (var y = 0; y < 4; ++y) {
+    for (var x = 0; x < 4; ++x) {
+        check(dst.getMaskPixel(x, y) == 255, "shrinkCopy preserves opaque alpha");
+        check(dst.getMainPixel(x, y) == src.getMainPixel(0, 0), "shrinkCopy preserves color");
+    }
+}
+
+// Check the non-integer scale used by save thumbnails.
+src.setImageSize(496, 279);
+src.fillRect(0, 0, 248, 279, 0xFF193B75);
+src.fillRect(248, 0, 248, 279, 0xFFB75123);
+dst.setImageSize(224, 126);
+dst.shrinkCopy(0, 0, 224, 126, src, 0, 0, 496, 279);
+for (var y = 0; y < 126; ++y) {
+    for (var x = 0; x < 224; ++x) {
+        check(dst.getMaskPixel(x, y) == 255, "thumbnail alpha stays opaque");
+        check(dst.getMainPixel(x, y) == src.getMainPixel(x < 112 ? 0 : 248, 0), "thumbnail color stays intact");
+    }
+}
+
+src.setImageSize(8, 8);
+src.fillRect(0, 0, 8, 8, 0xFF7F3F1F);
 // 缩小 3 倍：目标尺寸按 ceil 改写
 var dst2 = new Layer(testWindow, src);
 dst2.setImageSize(1, 1);
