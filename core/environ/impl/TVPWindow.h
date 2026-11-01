@@ -66,6 +66,8 @@ public:
     [[nodiscard]] virtual tjs_int GetHeight() const = 0;
     virtual void GetWinSize(tjs_int &w, tjs_int &h) = 0;
     virtual void SetZoom(tjs_int numer, tjs_int denom) = 0;
+    // Change only the zoom used for drawing. The script zoom stays.
+    virtual void SetActualZoom(tjs_int numer, tjs_int denom) = 0;
     virtual void UpdateDrawBuffer(iTVPTexture2D *tex) = 0;
     virtual void InvalidateClose() = 0;
     virtual bool GetWindowActive() = 0;
@@ -409,6 +411,12 @@ public:
         denom = denom / a;
         ZoomNumer = numer;
         ZoomDenom = denom;
+        SetActualZoom(numer, denom);
+    }
+
+    void SetActualZoom(tjs_int numer, tjs_int denom) override {
+        if(numer <= 0 || denom <= 0)
+            return;
         ActualZoomDenom = denom;
         ActualZoomNumer = numer;
         RecalcPaintBox();

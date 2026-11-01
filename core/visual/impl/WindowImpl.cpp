@@ -1841,11 +1841,20 @@ bool tTJSNI_Window::GetShowScrollBars() const {
 //---------------------------------------------------------------------------
 void tTJSNI_Window::SetFullScreen(bool b) {
 #if CC_TARGET_PLATFORM == CC_PLATFORM_MAC
-    (void)b;
     static bool logged = false;
     if(!logged) {
         TVPAddLog(TJS_W("[Yoghourt] Window.fullScreen script request ignored; the host owns native fullscreen."));
         logged = true;
+    }
+    // KAG sets the inner size to the game size before it sets fullScreen.
+    // On Windows, fullscreen then scales the primary layer to fill the
+    // window. Do the same here, or the layer stays at the old zoom in the
+    // top-left of the larger inner area (ねこぱら Vol.3 first start).
+    if(b && _form && DrawDevice) {
+        tjs_int srcW = 0, srcH = 0;
+        DrawDevice->GetSrcSize(srcW, srcH);
+        if(srcW > 0)
+            _form->SetActualZoom(_form->GetWidth(), srcW);
     }
     return;
 #endif
