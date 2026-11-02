@@ -49,6 +49,9 @@ if(MACOS)
     endif()
     set(YOGHOURT_SPATIAL_PRESENTER_SOURCE
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/BorderImages.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/FrameCompositor.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/CuNNyScaler.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.h
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtDockIcon.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtDockIcon.h
@@ -94,6 +97,9 @@ if(MACOS)
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/RendererSelfTest.mm
             ${CMAKE_CURRENT_SOURCE_DIR}/platforms/apple/macos/YoghourtSpatialAdapter.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtSpatialPresenter.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/BorderImages.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/FrameCompositor.mm
+            ${YOGHOURT_SPATIAL_PRESENTER_DIR}/CuNNyScaler.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/YoghourtWindowPresentation.mm
             ${YOGHOURT_SPATIAL_PRESENTER_DIR}/WindowPresentationComponentTest.mm
             ${YOGHOURT_SURFACE_RELAY_DIR}/IOSurfaceRing.mm
