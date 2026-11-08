@@ -169,6 +169,7 @@ bool HasExtension(const char *extensions, const char *name) {
 
 ScalerMode ScalerFromEnvironment() {
     const char *value = std::getenv("YOGHOURT_SPATIAL_SCALER");
+    if (value && std::strcmp(value, "linear") == 0) return ScalerMode::linear;
     if (value && std::strcmp(value, "cunny") == 0) return ScalerMode::cuNNy;
     if (value && std::strcmp(value, "cunny+metalfx") == 0) return ScalerMode::cuNNyPlusMetalFX;
     return ScalerMode::metalFX;
@@ -178,7 +179,8 @@ const char *ScalerName() {
     const char *value = std::getenv("YOGHOURT_SPATIAL_SCALER");
     if (value && (std::strcmp(value, "cunny") == 0 ||
                   std::strcmp(value, "cunny+metalfx") == 0 ||
-                  std::strcmp(value, "metalfx") == 0)) {
+                  std::strcmp(value, "metalfx") == 0 ||
+                  std::strcmp(value, "linear") == 0)) {
         return value;
     }
     return "metalfx";

@@ -475,7 +475,7 @@ bool RunDeterministicAsyncSubmitTest(EGLState &state,
     return returnedBeforeSignal && completed;
 }
 
-bool RunSpatialCopyTest(EGLState &state, NSWindow *cocoaWindow) {
+bool RunSpatialCopyTest(EGLState &state, NSWindow *cocoaWindow, const char *scaler) {
     // Release the deleted program left current by the shader checks.
     glUseProgram(0);
     std::array<unsigned char, 16 * 16 * 4> pixels{};
@@ -515,7 +515,7 @@ bool RunSpatialCopyTest(EGLState &state, NSWindow *cocoaWindow) {
 
     const char *oldScaler = std::getenv("YOGHOURT_SPATIAL_SCALER");
     const std::string savedScaler = oldScaler ? oldScaler : "";
-    setenv("YOGHOURT_SPATIAL_SCALER", "metalfx", 1);
+    setenv("YOGHOURT_SPATIAL_SCALER", scaler, 1);
     YoghourtKrKrSpatialTestingHoldCompletions(true);
     bool passed = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     for (bool flipped : {false, true}) {
@@ -826,7 +826,9 @@ int YoghourtRunRendererSelfTest() {
             if (!RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::metalFX, 32) ||
                 !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::cuNNy, 16) ||
                 !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::metalFX, 8) ||
-                !RunSpatialCopyTest(state, cocoaWindow) ||
+                !RunDeterministicAsyncSubmitTest(state, contentView, ScalerMode::linear, 32) ||
+                !RunSpatialCopyTest(state, cocoaWindow, "metalfx") ||
+                !RunSpatialCopyTest(state, cocoaWindow, "linear") ||
                 !RunSpatialRingTest(state, glfwWindow, cocoaWindow)) {
                 LogFailure("asynchronous shared texture ring");
                 break;
