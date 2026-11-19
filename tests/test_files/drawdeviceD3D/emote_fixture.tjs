@@ -65,6 +65,28 @@ var moved = emoteBounds();
 pluginAssertEqual("layer matrix moves the model right", centered[0] + 40, moved[0]);
 pluginAssertEqual("layer matrix moves the model down", centered[1] + 30, moved[1]);
 emoteLayer.setMatrix(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+// A half-scale player on a double-scale layer must retain the same coverage.
+emoteDevice.capture(emoteCapture, 0);
+var scaledCapture = new Layer(new Window(), null);
+emote.setScale(0.05, 0, 0);
+emote.progress(0);
+emoteLayer.setMatrix(2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+emoteDevice.capture(scaledCapture, 0);
+pluginAssertTrue("scaled capture has readable pixels", scaledCapture.mainImageBuffer != 0);
+pluginAssertTrue("reference capture has readable pixels", emoteCapture.mainImageBuffer != 0);
+var scaleCoverageError = 0;
+var right = Math.min(emoteCapture.imageWidth - 1, centered[2] + 2);
+var bottom = Math.min(emoteCapture.imageHeight - 1, centered[3] + 2);
+for (var y = Math.max(0, centered[1] - 2); y <= bottom; y++)
+    for (var x = Math.max(0, centered[0] - 2); x <= right; x++)
+        scaleCoverageError += Math.abs(emoteCapture.getMaskPixel(x, y) -
+                                       scaledCapture.getMaskPixel(x, y));
+// The software rasterizer can round a few boundary pixels differently.
+pluginAssertTrue("layer scale preserves E-mote coverage, error=" + scaleCoverageError,
+                 scaleCoverageError <= 128);
+emoteLayer.setMatrix(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+emote.setScale(0.1, 0, 0);
+emote.progress(0);
 emote.visible = false;
 pluginAssertEqual("hidden player draws nothing", -1, emoteBounds()[2]);
 emote.visible = true;

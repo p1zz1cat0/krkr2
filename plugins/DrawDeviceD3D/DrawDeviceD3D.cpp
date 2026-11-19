@@ -24,43 +24,17 @@
 
 namespace {
 
-// Draws a premultiplied-alpha texture onto a straight-alpha target. The
-// geometry is the same as iTVPBaseBitmap::AffineBlt with a matrix: the matrix
-// moves pixel centers, and source pixel (0,0) covers (-0.5,-0.5)-(0.5,0.5).
-// This path is GPU only. GL puts the center of a pixel at +0.5, so add 0.5 to
-// the screen corners. Without it the frame is half a pixel off and linear
-// sampling makes the model soft. The shared blend-method table has no
-// bmAddAlphaOnAlpha, so this calls the GL method directly.
-void affineBltPremultipliedOnAlpha(tTVPBaseTexture &target, iTVPTexture2D *source,
-                                   tjs_int width, tjs_int height,
-                                   const t2DAffineMatrix &m, tTVPBBStretchType type) {
+// Blend the full premultiplied frame into the straight-alpha target.
+void blendPremultipliedFrame(tTVPBaseTexture &target, iTVPTexture2D *source,
+                             const tTVPRect &rect) {
     auto *mgr = TVPGetRenderManager();
     static iTVPRenderMethod *method = mgr->GetRenderMethod("AdditiveAlphaBlend_d");
     if(!method)
         return;
-    const auto at = [&m](tjs_real x, tjs_real y) {
-        return tTVPPointD{ m.a * x + m.c * y + m.tx, m.b * x + m.d * y + m.ty };
-    };
-    const auto gl = [&at](tjs_real x, tjs_real y) {
-        auto p = at(x, y);
-        return tTVPPointD{ p.x + 0.5, p.y + 0.5 };
-    };
-    const tTVPPointD lt = gl(-0.5, -0.5), rt = gl(width - 0.5, -0.5),
-                     lb = gl(-0.5, height - 0.5), rb = gl(width - 0.5, height - 0.5);
-    const tTVPPointD dst[6] = { lt, rt, lb, rt, lb, rb };
-    const tTVPPointD src[6] = {
-        { 0.0, 0.0 }, { static_cast<double>(width), 0.0 },
-        { 0.0, static_cast<double>(height) }, { static_cast<double>(width), 0.0 },
-        { 0.0, static_cast<double>(height) },
-        { static_cast<double>(width), static_cast<double>(height) },
-    };
-    static const int stretchTypeId = mgr->EnumParameterID("StretchType");
-    mgr->SetParameterInt(stretchTypeId, static_cast<int>(type & stTypeMask));
-    const tTVPRect rect(0, 0, target.GetWidth(), target.GetHeight());
-    tRenderTexQuadArray::Element texture[] = { tRenderTexQuadArray::Element(source, src) };
+    tRenderTexRectArray::Element textures[] = { { source, rect } };
     auto *targetTexture = target.GetTextureForRender(true, &rect);
-    mgr->OperateTriangles(method, 2, targetTexture, targetTexture, rect, dst,
-                          tRenderTexQuadArray(texture));
+    mgr->OperateRect(method, targetTexture, targetTexture, rect,
+                     tRenderTexRectArray(textures));
 }
 
 class D3DLayer;
@@ -559,10 +533,8 @@ private:
 
 // The E-mote player drawdeviceD3D.dll registers as D3DEmotePlayer: built on
 // a D3DLayer, loading by storage name and advancing by 60 fps frames. It
-// reuses motionplayer's EmotePlayer and renders each frame into its own
-// canvas with the model origin at the canvas center; the owning D3DLayer then
-// places that canvas with its matrix around the screen center, the original's
-// coordinate model (setCoord stays 0,0; stand positions are layer matrices).
+// reuses motionplayer's EmotePlayer. The layer matrix moves the model from
+// layer coordinates to the screen-centered device before rasterization.
 class DeviceEmotePlayer : public motion::EmotePlayer {
 public:
     static tjs_error factory(DeviceEmotePlayer **result, tjs_int numparams,
@@ -630,45 +602,34 @@ public:
                    tjs_int screenWidth, tjs_int screenHeight) {
         if(!getVisible())
             return;
-        // ponytail: fixed canvas of screen width x twice its height keeps a
-        // model raised by the layer matrix intact; size it from the model's
-        // bounds if close-ups need more resolution or wider poses clip.
-        const tjs_int canvasWidth = screenWidth;
-        const tjs_int canvasHeight = screenHeight * 2;
-        if(canvas_.getWidth() != canvasWidth || canvas_.getHeight() != canvasHeight) {
-            canvas_.setSize(canvasWidth, canvasHeight);
-            tTJSVariant values[6] = { 1.0, 0.0, 0.0, 1.0, canvasWidth / 2.0,
-                                      canvasHeight / 2.0 };
-            tTJSVariant *params[6] = { &values[0], &values[1], &values[2],
-                                       &values[3], &values[4], &values[5] };
-            setDrawAffineTranslateMatrixCompat(nullptr, 6, params, this);
-        }
+        if(canvas_.getWidth() != screenWidth || canvas_.getHeight() != screenHeight)
+            canvas_.setSize(screenWidth, screenHeight);
         canvas_.setPremultipliedOutputAllowed(true);
-        if(!getPlayer().renderToD3DAdaptor(&canvas_))
+
+        const std::array<double, 6> drawAffine{
+            matrix[0], matrix[1], matrix[4], matrix[5],
+            matrix[12] + screenWidth / 2.0, matrix[13] + screenHeight / 2.0
+        };
+        if(!getPlayer().renderToD3DAdaptor(&canvas_, &drawAffine))
             return;
-        // screen = M * (canvas - canvasCenter) + translation + screenCenter
-        t2DAffineMatrix transform = { matrix[0], matrix[1], matrix[4], matrix[5], 0, 0 };
-        const tjs_real cx = canvasWidth / 2.0, cy = canvasHeight / 2.0;
-        transform.tx = matrix[12] + screenWidth / 2.0 - (transform.a * cx + transform.c * cy);
-        transform.ty = matrix[13] + screenHeight / 2.0 - (transform.b * cx + transform.d * cy);
-        const auto stretch = getSmoothing() ? stLinear : stNearest;
+
+        const tTVPRect rect(0, 0, screenWidth, screenHeight);
         if(auto *premultiplied = canvas_.premultipliedOutput()) {
-            affineBltPremultipliedOnAlpha(target, premultiplied, canvasWidth,
-                                          canvasHeight, transform, stretch);
+            blendPremultipliedFrame(target, premultiplied, rect);
             return;
         }
         auto *texture = canvas_.targetTexture();
         if(!texture)
             return;
-        if(!canvasView_ || viewedTexture_ != texture) {
-            auto view = std::make_unique<tTVPBaseTexture>(canvasWidth, canvasHeight);
+        if(!canvasView_ || viewedTexture_ != texture ||
+           canvasView_->GetWidth() != static_cast<tjs_uint>(screenWidth) ||
+           canvasView_->GetHeight() != static_cast<tjs_uint>(screenHeight)) {
+            auto view = std::make_unique<tTVPBaseTexture>(screenWidth, screenHeight);
             view->AssignTexture(texture);
             canvasView_ = std::move(view);
             viewedTexture_ = texture;
         }
-        target.AffineBlt(tTVPRect(0, 0, target.GetWidth(), target.GetHeight()),
-                         canvasView_.get(), tTVPRect(0, 0, canvasWidth, canvasHeight),
-                         transform, bmAlphaOnAlpha, 255, nullptr, false, stretch);
+        target.Blt(0, 0, canvasView_.get(), rect, bmAlphaOnAlpha, 255, false);
     }
 
 private:

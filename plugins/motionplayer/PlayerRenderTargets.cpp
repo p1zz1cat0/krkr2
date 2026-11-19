@@ -780,7 +780,8 @@ namespace motion {
         return true;
     }
 
-    bool Player::renderToD3DAdaptor(D3DAdaptor *adaptor) {
+    bool Player::renderToD3DAdaptor(
+        D3DAdaptor *adaptor, const std::array<double, 6> *targetAffine) {
         if(!adaptor || adaptor->getWidth() <= 0 || adaptor->getHeight() <= 0) {
             return false;
         }
@@ -801,6 +802,35 @@ namespace motion {
             motionPath, "draw.d3d", "0x6D5B90", _clampedEvalTime,
             "adaptorSize={}x{} route=D3DAdaptor_renderFromPlayer",
             adaptor->getWidth(), adaptor->getHeight());
+
+        // Keep the device transform out of the script-visible hit-test space.
+        auto &affine = _runtime->drawAffineMatrix;
+        struct RestoreAffine {
+            std::array<double, 6> &affine;
+            const std::array<double, 6> saved;
+            bool &haveDrawBounds;
+            bool active;
+            ~RestoreAffine() {
+                if(active) {
+                    affine = saved;
+                    haveDrawBounds = false;
+                }
+            }
+        } restore{affine, affine, _runtime->hasLastPreparedDrawBounds, targetAffine != nullptr};
+        if(targetAffine) {
+            const auto &[a, b, c, d, x, y] = *targetAffine;
+            const auto &[pa, pb, pc, pd, px, py] = restore.saved;
+            // The camera offset is in layer space. The render path adds it
+            // after this affine, so remove that addition from the translation.
+            const double layerX = px + _cameraOffsetX;
+            const double layerY = py + _cameraOffsetY;
+            affine = {
+                a * pa + c * pb, b * pa + d * pb,
+                a * pc + c * pd, b * pc + d * pd,
+                a * layerX + c * layerY + x - _cameraOffsetX,
+                b * layerX + d * layerY + y - _cameraOffsetY
+            };
+        }
 
         prepareRenderItems();
         applyPreparedRenderItemTranslateOffsets();

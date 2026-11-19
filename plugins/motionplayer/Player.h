@@ -265,8 +265,10 @@ namespace motion {
         void setUseD3D(bool v) { _d3dDrawMode = v; }
         bool getUseD3D() const { return _d3dDrawMode; }
         // Renders the current frame into a native adaptor owned by the caller
-        // (DrawDeviceD3D's D3DEmotePlayer); script draw() routes here too.
-        bool renderToD3DAdaptor(D3DAdaptor *adaptor);
+        // (DrawDeviceD3D's D3DEmotePlayer). The affine maps layer coordinates
+        // to this target for one draw. Script draw() uses the player affine.
+        bool renderToD3DAdaptor(D3DAdaptor *adaptor,
+                                const std::array<double, 6> *targetAffine = nullptr);
 
         // Aligned to libkrkr2.so +1052: ttstr, not bool
         void setMeshline(ttstr v) { _meshline = v; }
