@@ -3,20 +3,67 @@ set -eu
 
 repo_root="${0:A:h:h}"
 manifest="$repo_root/tests/plugin-quality-gates.json"
+usage() {
+  print -u2 "usage: $0 (--all | --plugin=<name>) [--scanner-only]"
+}
+
 mode=""
 plugin=""
 skip_build=0
-if [[ "${1:-}" == "--all" && $# == 1 ]]; then
-  mode=all
-elif [[ "${1:-}" == "--plugin" && $# == 2 ]]; then
-  mode=plugin
-  plugin="$2"
-elif [[ "${1:-}" == "--scanner-only" && $# == 1 ]]; then
-  mode=all
-  skip_build=1
-else
-  print -u2 "usage: $0 --all | --plugin <name> | --scanner-only"
-  exit 64
+while (( $# > 0 )); do
+  case "$1" in
+    --all)
+      if [[ -n "$mode" && "$mode" != all ]]; then
+        print -u2 -- "--all cannot be combined with --plugin"
+        usage
+        exit 64
+      fi
+      mode=all
+      ;;
+    --plugin=*)
+      if [[ "$mode" == all ]]; then
+        print -u2 -- "--plugin cannot be combined with --all"
+        usage
+        exit 64
+      fi
+      mode=plugin
+      plugin="${1#--plugin=}"
+      [[ -n "$plugin" ]] || { usage; exit 64; }
+      ;;
+    --plugin)
+      if [[ "$mode" == all ]]; then
+        print -u2 -- "--plugin cannot be combined with --all"
+        usage
+        exit 64
+      fi
+      shift
+      (( $# > 0 )) || { print -u2 -- "--plugin needs a value"; usage; exit 64; }
+      mode=plugin
+      plugin="$1"
+      ;;
+    --scanner-only)
+      skip_build=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      print -u2 -- "unknown argument: $1"
+      usage
+      exit 64
+      ;;
+  esac
+  shift
+done
+
+if [[ -z "$mode" ]]; then
+  if (( skip_build )); then
+    mode=all
+  else
+    usage
+    exit 64
+  fi
 fi
 
 # Session logs and macos build trees live under the host project's .work
@@ -49,7 +96,7 @@ if [[ -z "${VCPKG_ROOT:-}" ]]; then
     export VCPKG_ROOT="$work_root_build/vcpkg"
   else
     print -u2 "quality-gate: VCPKG_ROOT 未设置，且 $work_root_build/vcpkg 不存在。"
-    print -u2 "  先跑一次 Scripts/bootstrap-runtimes.sh build krkr2，或显式导出 VCPKG_ROOT。"
+    print -u2 "  先跑一次 ./build krkr2，或显式导出 VCPKG_ROOT。"
     exit 78
   fi
 fi
