@@ -1,0 +1,152 @@
+function checkDeviceOffsetAPI(dev) {
+    pluginAssertEqual("offset X starts at zero", 0, dev.offsetX);
+    pluginAssertEqual("offset Y starts at zero", 0, dev.offsetY);
+    dev.setOffset(2.5, -1.5);
+    pluginAssertEqual("setOffset preserves fractional X", 2.5, dev.offsetX);
+    pluginAssertEqual("setOffset preserves fractional Y", -1.5, dev.offsetY);
+    dev.offsetX = -3.5;
+    pluginAssertEqual("offsetX write preserves Y", -1.5, dev.offsetY);
+    dev.offsetY = 4.5;
+    pluginAssertEqual("offsetY write preserves X", -3.5, dev.offsetX);
+    pluginAssertEqual("offsetY write updates Y", 4.5, dev.offsetY);
+
+    var invalid = [0.0 / 0.0, 1.0 / 0.0, -1.0 / 0.0, 1e30, -1e30];
+    var rejected = false;
+    for (var i = 0; i < invalid.count; i++) {
+        rejected = false;
+        try { dev.setOffset(7, invalid[i]); } catch (e) { rejected = true; }
+        pluginAssertTrue("invalid offset Y is rejected", rejected);
+        pluginAssertEqual("failed pair preserves X", -3.5, dev.offsetX);
+        pluginAssertEqual("failed pair preserves Y", 4.5, dev.offsetY);
+        rejected = false;
+        try { dev.setOffset(invalid[i], 7); } catch (e) { rejected = true; }
+        pluginAssertTrue("invalid offset X is rejected", rejected);
+        pluginAssertEqual("failed X preserves both coordinates", 4.5, dev.offsetY);
+    }
+    rejected = false;
+    try { dev.offsetX = 1e30; } catch (e) { rejected = true; }
+    pluginAssertTrue("out-of-range property is rejected", rejected);
+    pluginAssertEqual("failed property preserves X", -3.5, dev.offsetX);
+    rejected = false;
+    try { dev.setOffset(1); } catch (e) { rejected = true; }
+    pluginAssertTrue("setOffset requires two arguments", rejected);
+    pluginAssertEqual("missing argument preserves Y", 4.5, dev.offsetY);
+    dev.setOffset(0, 0);
+    pluginAssertEqual("offset X resets", 0, dev.offsetX);
+    pluginAssertEqual("offset Y resets", 0, dev.offsetY);
+}
+
+function checkDeviceOffsetPixels(dev) {
+    var win = new Window();
+    win.drawDevice = dev;
+    var primary = new Layer(win, null);
+    primary.setImageSize(32, 24);
+    primary.setSizeToImageSize();
+    primary.type = ltAlpha;
+    primary.visible = true;
+    primary.fillRect(0, 0, 32, 24, 0);
+    primary.fillRect(2, 3, 3, 3, 0xff2468b0);
+    primary.frontIndex = -10;
+
+    var output = new Layer(new Window(), null);
+    var source = new Layer(new Window(), null);
+    source.setImageSize(4, 4);
+    source.fillRect(0, 0, 4, 4, 0xffb06428);
+    var image = new D3DImage(dev);
+    image.load(source);
+    var scene = new D3DLayer(dev);
+    scene.frontIndex = 10;
+    var picture = new D3DPicture(scene, image);
+    picture.blendMode = ltOpaque;
+    picture.assignImageRange(0, 0, 4, 4, -4, -3);
+    scene.setMatrix(2, 0, 0, 0, 0, 2, 0, 0,
+                    0, 0, 1, 0, 0, 0, 0, 1);
+    dev.capture(output, 0);
+    var nativePixel = output.getMainPixel(3, 4);
+    var picturePixel = output.getMainPixel(11, 9);
+    pluginAssertTrue("offset fixture draws the primary", nativePixel != 0);
+    pluginAssertTrue("offset fixture draws the scaled picture", picturePixel != 0);
+
+    dev.setOffset(3, -2);
+    dev.capture(output, 0);
+    pluginAssertEqual("offset moves native primary right and up", nativePixel,
+                      output.getMainPixel(6, 2));
+    pluginAssertEqual("offset moves picture after its scale", picturePixel,
+                      output.getMainPixel(17, 7));
+    pluginAssertEqual("offset moves picture above its old extent", picturePixel,
+                      output.getMainPixel(14, 4));
+    pluginAssertEqual("offset clears the old picture position", 0,
+                      output.getMaskPixel(8, 10));
+    pluginAssertEqual("offset clears the old primary position", 0,
+                      output.getMaskPixel(3, 4));
+    pluginAssertEqual("offset is not multiplied by the layer scale", 0,
+                      output.getMaskPixel(20, 7));
+    dev.capture(output, 10);
+    pluginAssertEqual("bounded capture retains the primary offset", nativePixel,
+                      output.getMainPixel(6, 2));
+    pluginAssertEqual("bounded capture excludes the picture", 0,
+                      output.getMaskPixel(14, 7));
+
+    dev.setOffset(-3, 2);
+    dev.capture(output, 0);
+    pluginAssertEqual("negative offset clips primary at the device edge", nativePixel,
+                      output.getMainPixel(0, 6));
+    pluginAssertEqual("negative offset moves the picture left", picturePixel,
+                      output.getMainPixel(6, 12));
+    pluginAssertEqual("negative offset moves the picture down", picturePixel,
+                      output.getMainPixel(8, 14));
+    dev.setOffset(0, 0);
+    dev.capture(output, 0);
+    pluginAssertEqual("reset restores the primary", nativePixel,
+                      output.getMainPixel(3, 4));
+    pluginAssertEqual("reset restores the picture", picturePixel,
+                      output.getMainPixel(11, 9));
+    pluginAssertEqual("reset clears the old picture offset position", 0,
+                      output.getMaskPixel(6, 12));
+    pluginAssertEqual("reset clears the old primary offset position", 0,
+                      output.getMaskPixel(0, 6));
+
+    dev.setOffset(-0.25, 0);
+    dev.capture(output, 0);
+    var edgeAlpha = output.getMaskPixel(1, 4);
+    dev.setOffset(-0.75, 0);
+    dev.capture(output, 0);
+    pluginAssertTrue("fractional offset changes sampled edge pixels",
+                     output.getMaskPixel(1, 4) > edgeAlpha);
+    dev.setOffset(2.5, -1.5);
+    dev.capture(output, 0);
+    pluginAssertEqual("fractional offset keeps the picture interior", picturePixel,
+                      output.getMainPixel(14, 8));
+    pluginAssertEqual("fractional offset keeps the primary interior", nativePixel,
+                      output.getMainPixel(6, 3));
+    dev.setOffset(3, -2);
+    dev.startTransition(%[method: "crossfade"]);
+    source.fillRect(0, 0, 4, 4, 0xff40a870);
+    image.load(source);
+    dev.capture(output, 0);
+    pluginAssertEqual("transition snapshot applies offset once", picturePixel,
+                      output.getMainPixel(12, 4));
+    dev.transState = 0;
+    dev.capture(output, 0);
+    var targetPixel = output.getMainPixel(12, 4);
+    pluginAssertTrue("transition target keeps the offset", targetPixel != 0 &&
+                     targetPixel != picturePixel);
+    dev.capture(output, 0);
+    pluginAssertEqual("repeated transition capture keeps the offset", targetPixel,
+                      output.getMainPixel(12, 4));
+    dev.stopTransition();
+    source.fillRect(0, 0, 4, 4, 0xffb06428);
+    image.load(source);
+    dev.setOffset(0, 0);
+    dev.setSize(40, 30);
+    dev.setOffset(4, -3);
+    dev.capture(output, 0);
+    pluginAssertEqual("resize keeps device-space offset", picturePixel,
+                      output.getMainPixel(22, 12));
+    dev.setOffset(0, 0);
+}
+
+checkDeviceOffsetAPI(new DrawDeviceD3D(32, 24));
+checkDeviceOffsetAPI(new D3D(32, 24));
+checkDeviceOffsetPixels(new DrawDeviceD3D(32, 24));
+checkDeviceOffsetPixels(new D3D(32, 24));

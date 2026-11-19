@@ -46,6 +46,16 @@ emoteDevice.setSize(640, 480);
 var enlarged = emoteBounds();
 pluginAssertEqual("resizing moves the model to the new center", centered[0] + 160,
                   enlarged[0]);
+emoteDevice.setOffset(-13, 7);
+var shaken = emoteBounds();
+pluginAssertEqual("device offset moves E-mote left", enlarged[0] - 13, shaken[0]);
+pluginAssertEqual("device offset moves E-mote down", enlarged[1] + 7, shaken[1]);
+pluginAssertEqual("device offset preserves E-mote width", enlarged[2] - 13, shaken[2]);
+pluginAssertEqual("device offset preserves E-mote height", enlarged[3] + 7, shaken[3]);
+emoteDevice.setOffset(0, 0);
+var unshaken = emoteBounds();
+pluginAssertEqual("reset restores E-mote X", enlarged[0], unshaken[0]);
+pluginAssertEqual("reset restores E-mote Y", enlarged[1], unshaken[1]);
 emoteDevice.setSize(320, 240);
 var restored = emoteBounds();
 pluginAssertEqual("shrinking restores the model position", centered[0], restored[0]);

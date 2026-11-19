@@ -204,6 +204,8 @@ invalidate childA;
 pluginAssertTrue("invalidated layers leave children",
                  childDevice.children.count == 1 && childDevice.children[0] === childB);
 
+Scripts.execStorage("offset_fixture.tjs");
+
 Scripts.execStorage("multi_primary_fixture.tjs");
 
 Scripts.execStorage("transition_update_fixture.tjs");

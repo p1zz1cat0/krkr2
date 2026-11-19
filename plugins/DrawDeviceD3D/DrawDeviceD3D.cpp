@@ -174,6 +174,21 @@ public:
         setSize(width, height);
     }
 
+    tjs_real getOffsetX() const { return offsetX_; }
+    tjs_real getOffsetY() const { return offsetY_; }
+    void setOffsetX(tjs_real value) { setOffset(value, offsetY_); }
+    void setOffsetY(tjs_real value) { setOffset(offsetX_, value); }
+    void setOffset(tjs_real x, tjs_real y) {
+        constexpr tjs_real limit = std::numeric_limits<tjs_int>::max() / 4;
+        if(!std::isfinite(x) || !std::isfinite(y) ||
+           std::abs(x) > limit || std::abs(y) > limit)
+            TVPThrowExceptionMessage(TJS_W("DrawDeviceD3D offset is out of range"));
+        offsetX_ = x;
+        offsetY_ = y;
+        if(Window)
+            Window->RequestUpdate();
+    }
+
     tjs_real getTransState() const { return transState_; }
     void setTransState(tjs_real value) {
         if(!std::isfinite(value))
@@ -258,6 +273,8 @@ private:
     tjs_int width_ = 0;
     tjs_int height_ = 0;
     std::array<tjs_int, 4> screenRect_{};
+    tjs_real offsetX_ = 0;
+    tjs_real offsetY_ = 0;
     tjs_uint32 clearColor_ = 0;
     tjs_int stretchType_ = 2;
     tjs_real bicubicParam_ = -0.5;
@@ -696,10 +713,14 @@ tTJSVariant DrawDeviceD3D::getChildren() const {
 void D3DLayer::draw(tTVPBaseTexture &target) const {
     if(!device_)
         return;
+    // Apply device offsets in screen pixels after the layer transform.
+    auto matrix = matrix_;
+    matrix[12] += device_->getOffsetX();
+    matrix[13] += device_->getOffsetY();
     for(auto *picture : pictures_)
-        picture->draw(target, matrix_, device_->getWidth(), device_->getHeight());
+        picture->draw(target, matrix, device_->getWidth(), device_->getHeight());
     for(auto *emote : emotes_)
-        emote->composite(target, matrix_, device_->getWidth(), device_->getHeight());
+        emote->composite(target, matrix, device_->getWidth(), device_->getHeight());
 }
 
 DrawDeviceD3D::~DrawDeviceD3D() {
@@ -803,10 +824,19 @@ iTVPBaseBitmap *DrawDeviceD3D::compose(tjs_int frontIndexLimit) {
         }
         manager->UpdateToDrawDevice();
         auto *buffer = manager->GetDrawBuffer();
-        if(buffer)
-            composite_->Blt(0, 0, buffer,
-                            tTVPRect(0, 0, buffer->GetWidth(), buffer->GetHeight()),
-                            ltAlpha, 255, false);
+        if(buffer) {
+            const tTVPRect source(0, 0, buffer->GetWidth(), buffer->GetHeight());
+            if(std::floor(offsetX_) == offsetX_ && std::floor(offsetY_) == offsetY_) {
+                composite_->Blt(static_cast<tjs_int>(offsetX_),
+                                static_cast<tjs_int>(offsetY_), buffer, source,
+                                ltAlpha, 255, false);
+            } else {
+                const t2DAffineMatrix transform = {1, 0, 0, 1, offsetX_, offsetY_};
+                composite_->AffineBlt(tTVPRect(0, 0, width_, height_), buffer,
+                                      source, transform, bmAlphaOnAlpha,
+                                      255, nullptr, false);
+            }
+        }
     };
 
     // Draw the selected plane. Both kinds of layer use the same index order.
@@ -1013,6 +1043,9 @@ NCB_REGISTER_CLASS(DrawDeviceD3D) {
     NCB_METHOD(checkEnable);
     NCB_METHOD(setScreenRect);
     NCB_METHOD(setPrimarySize);
+    NCB_METHOD(setOffset);
+    NCB_PROPERTY(offsetX, getOffsetX, setOffsetX);
+    NCB_PROPERTY(offsetY, getOffsetY, setOffsetY);
     NCB_PROPERTY(transState, getTransState, setTransState);
     NCB_METHOD(startTransition);
     NCB_METHOD(stopTransition);
@@ -1042,6 +1075,9 @@ NCB_REGISTER_CLASS(D3D) {
     NCB_METHOD(checkEnable);
     NCB_METHOD(setScreenRect);
     NCB_METHOD(setPrimarySize);
+    NCB_METHOD(setOffset);
+    NCB_PROPERTY(offsetX, getOffsetX, setOffsetX);
+    NCB_PROPERTY(offsetY, getOffsetY, setOffsetY);
     NCB_PROPERTY(transState, getTransState, setTransState);
     NCB_METHOD(startTransition);
     NCB_METHOD(stopTransition);
